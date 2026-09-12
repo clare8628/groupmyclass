@@ -132,7 +132,7 @@ function publicBoard({ withUnassigned = true } = {}) {
       ${!state.session ? `
         <div class="board-actions">
           <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="show-student-login">
-            <span class="btn-icon">🎓</span> 學生登入 Student login
+            <span class="btn-icon">🎓</span> 擔任組長之學生登入 Student login
           </button>
         </div>` : ''}
     </div>
@@ -143,7 +143,7 @@ function publicBoard({ withUnassigned = true } = {}) {
       <div class="banner-content">
         <div class="banner-main">
           <div class="course-year-tag">${esc(c ? (c.year || '未設學年度') : '尚未選擇學年度')}</div>
-          <div class="course-subject-title">${esc(c ? (c.subject || '（未命名科目）') : '請先於上方或左側選擇課程')}</div>
+          <div class="course-subject-title">${esc(c ? (c.subject || '（未命名科目）') : '請先於左側課程列表選擇課程')}</div>
         </div>
         ${c ? `
           <div class="course-meta-tags">
@@ -157,7 +157,7 @@ function publicBoard({ withUnassigned = true } = {}) {
     <!-- 學生登入區塊嵌入於此 -->
     ${loginMode === 'student' ? loginCard() : ''}
 
-    ${!c ? `<p class="file-path empty-notice">請先於上方「課程 Courses」區塊點選欲查看分組的學年度與科目。</p>` : ''}
+    ${!c ? `<p class="file-path empty-notice">請先於左側「課程選擇」樹狀清單中點選欲查看分組的學年度與科目。</p>` : ''}
 
     ${c ? (c.groups.length ? `<div class="group-grid">${c.groups.map(g => {
       const list = members(c, g.id);
@@ -215,7 +215,7 @@ function loginCard() {
     const c = cur();
     return `<div class="login-bar embedded" id="login">
       <div class="login-header">
-        <strong>學生登入 Student login</strong>
+        <strong>擔任組長之學生登入 Student login</strong>
         <button class="tab-btn close" type="button" data-act="close-login" title="關閉 Close">✕</button>
       </div>
       <form data-act="login-student" class="inline-form">
@@ -223,7 +223,7 @@ function loginCard() {
         <div class="form-group"><label>學號 Student ID（密碼）</label><input type="password" name="sid" placeholder="410001" required autocomplete="off"></div>
         <button class="btn btn-primary" type="submit">登入 Sign in</button>
       </form>
-      <p class="file-path">目前登入課程：<b>${esc(c ? courseLabel(c) : '請先選擇課程')}</b>。登入後可擔任組長並挑選組員。</p>
+      <p class="file-path">目前登入課程：<b>${esc(c ? courseLabel(c) : '請先於左側選擇課程')}</b>。登入後可擔任組長並挑選組員。</p>
     </div>`;
   }
   if (loginMode === 'teacher') {
@@ -241,13 +241,60 @@ function loginCard() {
   return '';
 }
 
+/* ---- 目前選取的課程展示區塊（與左側 Step 2 樹狀區塊產生連動感） ---- */
+function courseSelectionBlock() {
+  const c = cur();
+  return `<section class="block-section courses-overview-section" id="courses-block">
+    <div class="block-header">
+      <div class="block-title-wrap">
+        <span class="step-badge">Step 2 選擇結果</span>
+        <h2>課程選擇 Courses</h2>
+      </div>
+      <div class="courses-link-indicator">
+        <span class="link-pulse-dot"></span>
+        <span class="link-label">連動自左側課程樹</span>
+      </div>
+    </div>
+    <div class="course-selection-card">
+      <div class="selection-accent-connector"></div>
+      ${c ? `
+        <div class="selected-course-details">
+          <div class="selected-meta">
+            <span class="selected-year-badge">${esc(c.year || '未分類')} 學年度</span>
+            <span class="selected-status-tag">目前已選中 Selected</span>
+          </div>
+          <h3 class="selected-subject-name">${esc(c.subject || '（未命名科目）')}</h3>
+          <div class="selected-specs">
+            <div class="spec-item"><span class="spec-label">學生總數</span><span class="spec-val">${c.students.length} 人</span></div>
+            <div class="spec-item"><span class="spec-label">組別設定</span><span class="spec-val">${c.groups.length} 組（每組 ${c.groupSize} ± ${c.tolerance} 人）</span></div>
+            <div class="spec-item"><span class="spec-label">分組進度</span><span class="spec-val">${c.students.filter(s => s.groupId).length} 人已分組 / ${unassigned(c).length} 人待分組</span></div>
+          </div>
+        </div>
+      ` : `
+        <div class="empty-selection-guide">
+          <div class="guide-arrow">👈</div>
+          <div class="guide-text">
+            <strong>請點選左側樹狀列表選擇課程</strong>
+            <p>點選任一學年度下的科目，即可在此立即載入該科目的分組設定與現況。</p>
+          </div>
+        </div>
+      `}
+    </div>
+  </section>`;
+}
+
 function authScreen() {
   return `
   ${loginMode === 'teacher' ? loginCard() : ''}
   <div class="home-flow">
     ${howto()}
-    ${courseTreePublic()}
-    <div class="flow-main">${publicBoard()}</div>
+    <div class="home-main-layout">
+      ${courseTreePublic()}
+      <div class="flow-main">
+        ${courseSelectionBlock()}
+        ${publicBoard()}
+      </div>
+    </div>
   </div>`;
 }
 
@@ -265,14 +312,14 @@ function howto() {
         <div class="step-num">1</div>
         <div class="step-info">
           <strong>選擇學年度與科目</strong>
-          <p>在下方的「課程」區塊中，點擊欲分組的學年度與科目查看分組名單。</p>
+          <p>在左側樹狀區塊中點選欲分組的<b>學年度 → 科目</b>，右側將即時載入該科目資料。</p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">2</div>
         <div class="step-info">
           <strong>學生登入開組</strong>
-          <p>想當<b>組長</b>請至「分組現況」點選<b>學生登入</b>（姓名+學號），並按下「我要當組長」。</p>
+          <p>想當<b>組長</b>請至「分組現況」點選<b>擔任組長之學生登入</b>（姓名+學號），並按下「我要當組長」。</p>
         </div>
       </div>
       <div class="howto-step-card">
@@ -293,7 +340,7 @@ function howto() {
   </section>`;
 }
 
-/* ---- 前台：課程選擇區塊（學年度 → 科目） ---- */
+/* ---- 前台：左側課程樹狀結構區塊（學年度 → 科目） ---- */
 function courseTreePublic() {
   const byYear = {};
   state.courses.forEach(c => {
@@ -301,26 +348,35 @@ function courseTreePublic() {
     (byYear[y] = byYear[y] || []).push(c);
   });
   const years = Object.keys(byYear).sort().reverse();
-  return `<section class="block-section courses-section" id="courses-block">
-    <div class="block-header">
+  return `<aside class="block-section tree-section" id="courses-tree-block">
+    <div class="block-header tree-header">
       <div class="block-title-wrap">
         <span class="step-badge">Step 2</span>
-        <h2>課程選擇 Courses</h2>
+        <h2>課程清單</h2>
       </div>
-      <p class="block-desc">點選學年度與科目，即可切換檢視與分組</p>
+      <p class="block-desc">選擇學年度與科目</p>
     </div>
-    ${years.length ? `
-      <div class="courses-years-grid">${years.map(y => `
-        <div class="course-year-card">
-          <div class="year-label">${esc(y)} 學年度</div>
-          <div class="course-buttons-list">${byYear[y].map(c => `
-            <button class="course-item-btn ${state.currentId === c.id ? 'active' : ''}" data-act="pick-course-node" data-id="${c.id}">
-              <span class="subj-name">${esc(c.subject || '（未命名科目）')}</span>
-              <span class="subj-badge">${c.students.length} 人 · ${c.groups.length} 組</span>
-            </button>`).join('')}</div>
-        </div>`).join('')}
-      </div>` : '<p class="file-path empty-notice">老師尚未建立任何課程。No courses yet.</p>'}
-  </section>`;
+    <div class="tree-content">
+      ${years.length ? years.map(y => `
+        <div class="tree-year">
+          <div class="tree-year-label">${esc(y)} 學年度</div>
+          <ul class="tree-list">${byYear[y].map(c => {
+            const active = state.currentId === c.id;
+            return `
+            <li class="${active ? 'active' : ''}">
+              <button class="tree-node-btn" data-act="pick-course-node" data-id="${c.id}">
+                <div class="node-main">
+                  <span class="node-icon">${active ? '👉' : '📘'}</span>
+                  <span class="node-name">${esc(c.subject || '（未命名科目）')}</span>
+                </div>
+                <span class="node-badge">${c.students.length}人·${c.groups.length}組</span>
+              </button>
+              ${active ? `<div class="tree-active-pointer" title="連接至右方課程選擇區塊"></div>` : ''}
+            </li>`;
+          }).join('')}</ul>
+        </div>`).join('') : '<p class="file-path empty-notice">老師尚未建立任何課程。No courses yet.</p>'}
+    </div>
+  </aside>`;
 }
 
 /* ---- 後台：左側課程樹 ---- */
