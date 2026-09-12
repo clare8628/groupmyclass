@@ -231,3 +231,430 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   .pw-form .form-group { flex: 1 1 100%; }
   .pw-form input { width: 100%; }
 }
+
+/* =========================================================
+   區塊化流程與操作順序樣式 (Step-based Block Design)
+   ========================================================= */
+.home-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  margin-top: 1.5rem;
+}
+
+.flow-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+/* 核心通用區塊外觀 */
+.block-section {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
+  border: 1px solid #eaeaea;
+  padding: 1.75rem;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
+}
+
+.block-section:hover {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.07);
+}
+
+.block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.block-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.block-title-wrap h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #2c3e50;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.block-desc {
+  font-size: 0.85rem;
+  color: #7f8c8d;
+  margin: 0;
+}
+
+/* 步驟編號徽章 Step Badge */
+.step-badge {
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 6px rgba(52, 152, 219, 0.3);
+  text-transform: uppercase;
+}
+
+.howto-section .step-badge {
+  background: linear-gradient(135deg, #e67e22, #d35400);
+  box-shadow: 0 2px 6px rgba(230, 126, 34, 0.3);
+}
+
+.courses-section .step-badge {
+  background: linear-gradient(135deg, #16a085, #1abc9c);
+  box-shadow: 0 2px 6px rgba(26, 188, 156, 0.3);
+}
+
+.unassigned-section .step-badge {
+  background: linear-gradient(135deg, #7f8c8d, #95a5a6);
+  box-shadow: 0 2px 6px rgba(149, 165, 166, 0.3);
+}
+
+.badge-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: #ecf0f1;
+  color: #2c3e50;
+  padding: 0.15rem 0.6rem;
+  border-radius: 12px;
+  margin-left: 0.4rem;
+}
+
+/* Step 1: 使用說明卡片群 */
+.howto-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem;
+}
+
+.howto-step-card {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  padding: 1rem;
+  background: #fdfaf6;
+  border: 1px solid #fae8d4;
+  border-radius: 8px;
+  transition: transform 0.15s ease;
+}
+
+.howto-step-card:hover {
+  transform: translateY(-2px);
+}
+
+.howto-step-card .step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e67e22;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.howto-step-card .step-info strong {
+  display: block;
+  font-size: 0.92rem;
+  color: #b34700;
+  margin-bottom: 0.25rem;
+}
+
+.howto-step-card .step-info p {
+  font-size: 0.82rem;
+  color: #665b52;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Step 2: 課程選擇網格 */
+.courses-years-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+}
+
+.course-year-card {
+  background: #fafbfc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.course-year-card .year-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #16a085;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.course-year-card .year-label::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #16a085;
+  border-radius: 50%;
+}
+
+.course-buttons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.course-item-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border: 1.5px solid #dcdfe6;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.course-item-btn:hover {
+  border-color: #3498db;
+  background: #f0f7fd;
+  transform: translateX(3px);
+}
+
+.course-item-btn.active {
+  border-color: #3498db;
+  background: #ebf5fb;
+  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.2);
+}
+
+.course-item-btn .subj-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #2c3e50;
+}
+
+.course-item-btn.active .subj-name {
+  color: #2980b9;
+}
+
+.course-item-btn .subj-badge {
+  font-size: 0.75rem;
+  color: #7f8c8d;
+  background: #f4f6f8;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.course-item-btn.active .subj-badge {
+  background: #d4e6f1;
+  color: #1f618d;
+  font-weight: 600;
+}
+
+/* Step 3: 分組現況核心區塊與醒目科目橫幅 */
+.group-status-section {
+  border-top: 4px solid #3498db;
+}
+
+.current-course-banner {
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(30, 60, 114, 0.25);
+}
+
+.current-course-banner::after {
+  content: "COURSE";
+  position: absolute;
+  right: 10px;
+  bottom: -15px;
+  font-size: 4rem;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.05);
+  pointer-events: none;
+}
+
+.current-course-banner .banner-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #ffd166;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+
+.current-course-banner .banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.current-course-banner .banner-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.current-course-banner .course-year-tag {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.current-course-banner .course-subject-title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.current-course-banner .course-meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.current-course-banner .meta-pill {
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(4px);
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  color: #eef2f7;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.current-course-banner .meta-pill.active {
+  background: rgba(46, 204, 113, 0.25);
+  border-color: rgba(46, 204, 113, 0.5);
+}
+
+.current-course-banner .meta-pill.expired {
+  background: rgba(231, 76, 60, 0.25);
+  border-color: rgba(231, 76, 60, 0.5);
+}
+
+/* 學生登入按鈕（嵌入分組現況標頭） */
+.student-login-btn {
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 0.6rem 1.3rem;
+  border-radius: 25px;
+  box-shadow: 0 4px 10px rgba(52, 152, 219, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.2s ease;
+}
+
+.student-login-btn:hover {
+  background: linear-gradient(135deg, #2980b9, #1f618d);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(52, 152, 219, 0.4);
+}
+
+.student-login-btn.active {
+  background: linear-gradient(135deg, #e67e22, #d35400);
+  box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3);
+}
+
+/* 嵌入式登入列 (Embedded Login Bar) */
+.login-bar.embedded {
+  border-left: none;
+  border: 2px solid #3498db;
+  background: #f9fbfe;
+  margin: 0 0 1.5rem 0;
+  animation: fadeInDown 0.25s ease-out;
+}
+
+.login-bar .login-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e1e8ed;
+}
+
+.login-bar .login-header strong {
+  color: #2c3e50;
+  font-size: 0.95rem;
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.empty-notice {
+  padding: 1.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px dashed #ced4da;
+  text-align: center;
+  color: #6c757d;
+  font-size: 0.95rem;
+}
+
+/* Step 4: 未分組名單區塊 */
+.unassigned-section {
+  border-top: 4px solid #7f8c8d;
+}
+
+.unassigned-section .unassigned-body {
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 680px) {
+  .current-course-banner .course-subject-title {
+    font-size: 1.3rem;
+  }
+  .student-login-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
