@@ -58,6 +58,32 @@ input[type="file"] { padding: 0; border: none; width: auto; }
 .student-info { background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
 .student-section .btn { width: 100%; margin-top: 0.5rem; }
 
+.leader-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.leader-actions-row .btn {
+  margin-top: 0;
+  flex: 1;
+}
+.btn-neutral {
+  background: #ecf0f1;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+.btn-neutral:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+@media (max-width: 600px) {
+  .leader-actions-row {
+    flex-direction: column;
+  }
+}
+
 /* Results */
 .results { margin-top: 2rem; }
 .results h2 { margin-bottom: 1rem; }

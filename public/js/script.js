@@ -550,8 +550,12 @@ function studentScreen() {
   } else if (otherLeader) {
     html += `<p class="file-path">本組組長為 ${esc(otherLeader.name)}，無法重複擔任。Group already has a leader.</p>`;
   } else {
-    html += `<button class="btn btn-primary" data-act="claim-leader">我要當組長 Become leader</button>
-             <p class="file-path">${g ? '成為本組組長後即可挑選組員。' : '將自動為你開一組並擔任組長。'}</p>`;
+    html += `
+      <div class="leader-actions-row">
+        <button class="btn btn-primary" data-act="claim-leader">我要當組長 Become leader</button>
+        <button class="btn btn-neutral" data-act="logout">不願意擔任組長，返回首頁</button>
+      </div>
+      <p class="file-path">${g ? '成為本組組長後即可挑選組員。' : '將自動為你開一組並擔任組長。'}</p>`;
   }
 
   if (s.isLeader && g && !closed) {

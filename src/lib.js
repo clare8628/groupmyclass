@@ -12,18 +12,37 @@ const enc = new TextEncoder();
 const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf)))
   .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+let _cachedSecret = null;
+let _cachedHmacKey = null;
+
 export async function secret(db, env) {
   if (env.SESSION_SECRET) return env.SESSION_SECRET;
+  if (_cachedSecret) return _cachedSecret;
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('session_secret').first();
-  if (row) return row.value;
+  if (row) {
+    _cachedSecret = row.value;
+    return _cachedSecret;
+  }
   const s = b64u(crypto.getRandomValues(new Uint8Array(32)));
   await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('session_secret', s).run();
+  _cachedSecret = s;
   return s;
+}
+
+export async function getHmacKey(db, env) {
+  if (_cachedHmacKey) return _cachedHmacKey;
+  const sec = await secret(db, env);
+  _cachedHmacKey = await crypto.subtle.importKey('raw', enc.encode(sec), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return _cachedHmacKey;
 }
 
 export async function hmac(key, msg) {
   const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return b64u(await crypto.subtle.sign('HMAC', k, enc.encode(msg)));
+}
+
+export async function hmacWithKey(cryptoKey, msg) {
+  return b64u(await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(msg)));
 }
 
 export async function sha256(text) {
@@ -114,20 +133,26 @@ export const nextSeq = async (db, table, courseId) => {
    組長操作改用 ref（以 session secret 推導的不可逆代號）。 */
 const maskId = id => String(id).slice(0, 3) + '*'.repeat(Math.max(0, String(id).length - 3));
 
-export async function studentRef(db, env, courseId, id) {
-  return (await hmac(await secret(db, env), 'ref:' + courseId + ':' + id)).slice(0, 16);
+export async function studentRef(db, env, courseId, id, preloadedKey = null) {
+  const k = preloadedKey || await getHmacKey(db, env);
+  return (await hmacWithKey(k, 'ref:' + courseId + ':' + id)).slice(0, 16);
 }
 
 export async function publicize(db, env, courses, session) {
   if (session && session.role === 'teacher') return courses;
   const selfId = session && session.role === 'student' ? session.id : null;
   const selfCourse = session && session.courseId;
+  const hmacKey = await getHmacKey(db, env);
   const out = [];
   for (const c of courses) {
     const students = [];
     for (const s of c.students) {
       const mine = selfId && s.id === selfId && c.id === selfCourse;
-      students.push({ ...s, id: mine ? s.id : maskId(s.id), ref: await studentRef(db, env, c.id, s.id) });
+      students.push({
+        ...s,
+        id: mine ? s.id : maskId(s.id),
+        ref: await studentRef(db, env, c.id, s.id, hmacKey),
+      });
     }
     out.push({ ...c, students });
   }
@@ -137,8 +162,9 @@ export async function publicize(db, env, courses, session) {
 export async function resolveStudent(db, env, c, key) {
   const direct = c.students.find(s => s.id === key);
   if (direct) return direct;
+  const hmacKey = await getHmacKey(db, env);
   for (const s of c.students) {
-    if (await studentRef(db, env, c.id, s.id) === key) return s;
+    if (await studentRef(db, env, c.id, s.id, hmacKey) === key) return s;
   }
   return null;
 }
