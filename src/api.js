@@ -284,14 +284,68 @@ export async function handleAction(request, env, db, body) {
     }
     if (op === 'auto-assign') {
       const c = course(body.courseId);
-      if (!c || !c.groups.length) return bad('請先建立組別', 400);
+      if (!c) return bad('課程不存在', 404);
+      const unassignedStudents = c.students.filter(x => !x.groupId);
+      if (!unassignedStudents.length) return bad('目前沒有未分組學生 No unassigned students', 400);
+
+      const min = minCap(c);
+      const max = cap(c);
+
+      // 篩選出「尚未完成分組」的組別（成員數小於最低門檻 minCap）
+      // 已達到或超過最低門檻的組別視為「已完成編組的組別」，嚴格避開，不可新增或刪減其成員
+      let candidateGroups = c.groups.filter(g => membersOf(c, g.id).length < min);
+
+      // 若目前沒有任何未滿門檻的組別，但仍有剩餘未分組學生，
+      // 則依每組規定人數建立新的組別供剩餘學生分配，絕不更動已完成分組的組別
+      if (!candidateGroups.length) {
+        const groupSize = Math.max(1, Number(c.groupSize) || 4);
+        const needNewGroups = Math.max(1, Math.ceil(unassignedStudents.length / groupSize));
+        let seq = await nextSeq(db, 'groups', c.id);
+        const newGroupStmts = [];
+        const createdGroups = [];
+        for (let i = 0; i < needNewGroups; i++) {
+          const newGid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5) + i;
+          const newName = '第 ' + (c.groups.length + i + 1) + ' 組';
+          newGroupStmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
+            .bind(newGid, c.id, newName, seq++));
+          createdGroups.push({ id: newGid, name: newName });
+        }
+        await db.batch(newGroupStmts);
+        candidateGroups = createdGroups;
+      }
+
       const stmts = [];
-      for (const s of shuffle(c.students.filter(x => !x.groupId))) {
-        const target = c.groups.slice().sort((a, b) => membersOf(c, a.id).length - membersOf(c, b.id).length)[0];
-        if (!target || membersOf(c, target.id).length >= cap(c)) continue;
-        s.groupId = target.id; s.autoAssigned = true;
+      const shuffled = shuffle(unassignedStudents);
+      const groupCounts = {};
+      candidateGroups.forEach(g => {
+        groupCounts[g.id] = membersOf(c, g.id).length;
+      });
+
+      for (const s of shuffled) {
+        // 依照候選組別目前人數由少到多排序
+        const target = candidateGroups.slice().sort((a, b) => groupCounts[a.id] - groupCounts[b.id])[0];
+        if (!target || groupCounts[target.id] >= max) {
+          // 若所有候選組別皆已達人數上限，動態開新組收納剩餘組員
+          const newGid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+          const newName = '第 ' + (c.groups.length + candidateGroups.length + 1) + ' 組';
+          const seq = await nextSeq(db, 'groups', c.id);
+          stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
+            .bind(newGid, c.id, newName, seq));
+          const newG = { id: newGid, name: newName };
+          candidateGroups.push(newG);
+          groupCounts[newGid] = 1;
+          s.groupId = newGid;
+          s.autoAssigned = true;
+          stmts.push(db.prepare('UPDATE students SET group_id=?, auto_assigned=1 WHERE course_id=? AND id=?').bind(newGid, c.id, s.id));
+          continue;
+        }
+
+        groupCounts[target.id]++;
+        s.groupId = target.id;
+        s.autoAssigned = true;
         stmts.push(db.prepare('UPDATE students SET group_id=?, auto_assigned=1 WHERE course_id=? AND id=?').bind(target.id, c.id, s.id));
       }
+
       if (stmts.length) await db.batch(stmts);
       return ok();
     }

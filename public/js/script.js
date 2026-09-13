@@ -717,7 +717,7 @@ function teacherCourse(c) {
       <button class="btn btn-primary" data-act="make-groups" title="將重設並清空現有所有分組">建立空組別（清空現有）Create groups</button>
       <button class="btn btn-success" data-act="make-remaining-groups" title="只針對未分組成員依規定人數建立新組別，現有組別與成員不變">針對剩餘組員建立組別 Create for unassigned</button>
       <button class="btn btn-secondary" data-act="add-group">新增一組 Add group</button>
-      <button class="btn btn-secondary" data-act="auto-assign">隨機分配剩餘 Auto-assign</button>
+      <button class="btn btn-secondary" data-act="auto-assign" title="隨機分配未分組學生，避開已完成編組的組別，不新增或刪減已完成分組的組別成員">隨機分配剩餘 Auto-assign</button>
       <button class="btn btn-danger" data-act="clear-groups">清除本科目所有分組 Clear all groups</button>
       ${c.hasSnapshot ? `
         <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
@@ -1348,8 +1348,14 @@ app.addEventListener('click', e => {
   }
   if (a === 'auto-assign') {
     if (!c) return;
-    if (!c.groups.length) return alert('請先建立組別 Create groups first');
-    return act('teacher:auto-assign', { courseId: c.id });
+    const unassignedList = c.students.filter(s => !s.groupId);
+    if (!unassignedList.length) return alert('目前所有學生皆已分組，無未分組學生 No unassigned students');
+    const min = minCap(c);
+    const completedCount = c.groups.filter(g => members(c, g.id).length >= min).length;
+    const incompleteCount = c.groups.length - completedCount;
+    if (!confirm(`確定要隨機分配剩餘的 ${unassignedList.length} 位未分組學生？\n\n📌 規則說明：\n• 系統將嚴格避開已達門檻（${min}人）的 ${completedCount} 個已完成組別，絕不更動其成員與名單。\n• 僅分配至未達門檻的 ${incompleteCount} 個組別；若現有組別皆已完成，系統將自動為剩餘組員建立新組別收納。`)) return;
+    return act('teacher:auto-assign', { courseId: c.id },
+      { after: () => alert('已成功完成剩餘學生隨機分配！已完成編組的組別成員完全保持不變。') });
   }
   if (a === 'toggle-group-edit') {
     if (!c) return;
