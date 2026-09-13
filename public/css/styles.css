@@ -1224,5 +1224,29 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   padding: 0.6rem 0.75rem;
 }
 
+/* ===== 建立剩餘組別按鈕與復原按鈕樣式 ===== */
+.btn-success {
+  background: #10b981;
+  color: #ffffff;
+}
+.btn-success:hover {
+  background: #059669;
+}
 
+.btn-undo {
+  background: #ea580c;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(234, 88, 12, 0.35);
+  animation: undoPulse 2.5s infinite;
+}
+.btn-undo:hover {
+  background: #c2410c;
+  box-shadow: 0 4px 10px rgba(194, 65, 12, 0.45);
+}
 
+@keyframes undoPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}

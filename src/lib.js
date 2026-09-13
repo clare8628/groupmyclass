@@ -96,6 +96,9 @@ async function ensureGroupSchema(db) {
   try {
     await db.prepare('ALTER TABLE students ADD COLUMN peer_comment TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
+  try {
+    await db.prepare('CREATE TABLE IF NOT EXISTS group_snapshots (course_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, created_at INTEGER NOT NULL)').run();
+  } catch (_) {}
   _ensuredGroupSchema = true;
 }
 
@@ -169,11 +172,13 @@ export function calcAdjustment(c, g, s) {
 
 export async function loadState(db) {
   await ensureGroupSchema(db);
-  const [courses, groups, students] = await Promise.all([
+  const [courses, groups, students, snapshots] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
+    db.prepare('SELECT course_id FROM group_snapshots').all().catch(() => ({ results: [] })),
   ]);
+  const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   return courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
       id: g.id,
@@ -195,6 +200,7 @@ export async function loadState(db) {
       id: c.id, year: c.year, subject: c.subject,
       groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
       notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
+      hasSnapshot: snapshotSet.has(c.id),
       groups: courseGroups,
       students: courseStudents,
     };

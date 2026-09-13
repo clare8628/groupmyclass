@@ -575,6 +575,9 @@ function teacherCourse(c) {
     ${courseForm(c)}
     <div class="btn-row" style="margin-top:1rem">
       <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
+      ${c.hasSnapshot ? `
+        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
+      ` : ''}
       <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
     </div>
   </div>
@@ -649,10 +652,14 @@ function teacherCourse(c) {
       <div class="stat"><div class="value">${total - assigned}</div><div class="label">未分組 Unassigned</div></div>
     </div>
     <div class="btn-row">
-      <button class="btn btn-primary" data-act="make-groups">建立空組別 Create groups</button>
+      <button class="btn btn-primary" data-act="make-groups" title="將重設並清空現有所有分組">建立空組別（清空現有）Create groups</button>
+      <button class="btn btn-success" data-act="make-remaining-groups" title="只針對未分組成員依規定人數建立新組別，現有組別與成員不變">針對剩餘組員建立組別 Create for unassigned</button>
       <button class="btn btn-secondary" data-act="add-group">新增一組 Add group</button>
       <button class="btn btn-secondary" data-act="auto-assign">隨機分配剩餘 Auto-assign</button>
       <button class="btn btn-danger" data-act="clear-groups">清除本科目所有分組 Clear all groups</button>
+      ${c.hasSnapshot ? `
+        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
+      ` : ''}
       <button class="btn btn-secondary" data-act="export-json">匯出 JSON</button>
       <button class="btn btn-secondary" data-act="export-csv">匯出 CSV</button>
     </div>
@@ -1120,14 +1127,28 @@ app.addEventListener('click', e => {
   if (a === 'make-groups') {
     if (!c) return;
     if (!c.students.length) return alert('請先匯入學生名單 Import roster first');
-    if (!confirm('將重建組別並清空現有分組，確定？')) return;
+    if (!confirm('將重建組別並清空現有分組，確定？\n\n系統將自動備份當前狀態，稍後如有需要可點擊「回到上一步」復原。')) return;
     return act('teacher:make-groups', { courseId: c.id });
+  }
+  if (a === 'make-remaining-groups') {
+    if (!c) return;
+    const unassigned = c.students.filter(s => !s.groupId);
+    if (!unassigned.length) return alert('目前所有學生皆已分組，無未分組學生 No unassigned students');
+    const needCount = Math.max(1, Math.ceil(unassigned.length / Math.max(1, c.groupSize)));
+    if (!confirm(`目前有 ${unassigned.length} 位未分組學生，預計依每組 ${c.groupSize} 人建立 ${needCount} 個新組別。\n\n已建立之現有組別與成員將完全保留，確定建立？`)) return;
+    return act('teacher:make-remaining-groups', { courseId: c.id });
+  }
+  if (a === 'restore-snapshot') {
+    if (!c) return;
+    if (!confirm(`確定要回到上一步？\n\n這將會復原上次清空或建立組別前的所有組別、組長與分組狀態！`)) return;
+    return act('teacher:restore-groups-snapshot', { courseId: c.id },
+      { after: () => alert('已成功回到上一步，分組狀態已復原！') });
   }
   if (a === 'add-group') { if (!c) return; return act('teacher:add-group', { courseId: c.id }); }
   if (a === 'clear-groups') {
     if (!c) return;
     if (!c.groups.length) return alert('本科目尚無分組 No groups to clear');
-    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與課程設定皆會完整保留，僅清空組別與組別分配。`)) return;
+    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與課程設定皆會完整保留，僅清空組別與組別分配。\n系統將自動備份，稍後如有需要可點擊「回到上一步」復原。`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
   }
   if (a === 'select-all-del-groups') {

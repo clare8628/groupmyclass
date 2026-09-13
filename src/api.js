@@ -23,6 +23,19 @@ export async function handleAction(request, env, db, body) {
     return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), ...extra }, 200, headers);
   };
 
+  const saveSnapshot = async (db, courseId) => {
+    const [snapGroups, snapStudents] = await Promise.all([
+      db.prepare('SELECT id, course_id, name, seq, allow_edit, peer_eval_open, peer_eval_deadline, peer_eval_submitted FROM groups WHERE course_id = ?').bind(courseId).all(),
+      db.prepare('SELECT id, group_id, is_leader, is_vice, auto_assigned, peer_penalty, peer_comment FROM students WHERE course_id = ?').bind(courseId).all(),
+    ]);
+    const payload = JSON.stringify({
+      groups: snapGroups.results || [],
+      students: snapStudents.results || [],
+    });
+    await db.prepare('INSERT OR REPLACE INTO group_snapshots (course_id, snapshot, created_at) VALUES (?, ?, ?)')
+      .bind(courseId, payload, Date.now()).run();
+  };
+
   /* ---- 登入／登出 ---- */
   if (action === 'login-teacher') {
     if (await sha256(String(body.password || '')) !== await teacherHash(db)) return bad('密碼錯誤 Wrong password', 401);
@@ -144,6 +157,7 @@ export async function handleAction(request, env, db, body) {
     if (op === 'make-groups') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
+      await saveSnapshot(db, c.id);
       const n = Math.max(1, Math.ceil(c.students.length / Math.max(1, c.groupSize)));
       const stmts = [
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(c.id),
@@ -156,6 +170,63 @@ export async function handleAction(request, env, db, body) {
       await db.batch(stmts);
       return ok();
     }
+    if (op === 'make-remaining-groups') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const unassigned = c.students.filter(s => !s.groupId);
+      if (!unassigned.length) return bad('目前所有學生皆已分組，無未分組學生', 400);
+
+      await saveSnapshot(db, c.id);
+      const needCount = Math.max(1, Math.ceil(unassigned.length / Math.max(1, c.groupSize)));
+      const curCount = c.groups.length;
+      let seq = await nextSeq(db, 'groups', c.id);
+
+      const stmts = [];
+      for (let i = 1; i <= needCount; i++) {
+        const gid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const gname = '第 ' + (curCount + i) + ' 組';
+        stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
+          .bind(gid, c.id, gname, seq++));
+      }
+      await db.batch(stmts);
+      return ok({ addedGroups: needCount });
+    }
+    if (op === 'restore-groups-snapshot') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const row = await db.prepare('SELECT snapshot FROM group_snapshots WHERE course_id = ?').bind(c.id).first();
+      if (!row || !row.snapshot) return bad('目前無可復原的步驟紀錄', 400);
+
+      let data = null;
+      try {
+        data = JSON.parse(row.snapshot);
+      } catch (e) {
+        return bad('快照資料損壞無法復原', 500);
+      }
+
+      const snapGroups = Array.isArray(data.groups) ? data.groups : [];
+      const snapStudents = Array.isArray(data.students) ? data.students : [];
+
+      const stmts = [
+        db.prepare('DELETE FROM groups WHERE course_id = ?').bind(c.id),
+        db.prepare('UPDATE students SET group_id=NULL, is_leader=0, is_vice=0, auto_assigned=0, peer_penalty=0, peer_comment=\'\' WHERE course_id=?').bind(c.id),
+      ];
+
+      for (const g of snapGroups) {
+        stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq, allow_edit, peer_eval_open, peer_eval_deadline, peer_eval_submitted) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(g.id, c.id, g.name, g.seq || 0, g.allow_edit ? 1 : 0, g.peer_eval_open ? 1 : 0, g.peer_eval_deadline || '', g.peer_eval_submitted ? 1 : 0));
+      }
+
+      for (const s of snapStudents) {
+        stmts.push(db.prepare('UPDATE students SET group_id=?, is_leader=?, is_vice=?, auto_assigned=?, peer_penalty=?, peer_comment=? WHERE course_id=? AND id=?')
+          .bind(s.group_id, s.is_leader ? 1 : 0, s.is_vice ? 1 : 0, s.auto_assigned ? 1 : 0, Number(s.peer_penalty) || 0, s.peer_comment || '', c.id, s.id));
+      }
+
+      stmts.push(db.prepare('DELETE FROM group_snapshots WHERE course_id = ?').bind(c.id));
+
+      await db.batch(stmts);
+      return ok();
+    }
     if (op === 'add-group') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
@@ -165,6 +236,10 @@ export async function handleAction(request, env, db, body) {
       return ok();
     }
     if (op === 'clear-groups') {
+      const c = course(body.courseId);
+      if (c) {
+        await saveSnapshot(db, c.id);
+      }
       await db.batch([
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('UPDATE students SET group_id=NULL, is_leader=0, is_vice=0, auto_assigned=0 WHERE course_id=?').bind(body.courseId),

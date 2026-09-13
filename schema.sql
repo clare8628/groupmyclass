@@ -41,3 +41,9 @@ CREATE TABLE IF NOT EXISTS students (
 );
 
 CREATE INDEX IF NOT EXISTS idx_students_group ON students(course_id, group_id);
+
+CREATE TABLE IF NOT EXISTS group_snapshots (
+  course_id  TEXT PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
+  snapshot   TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
