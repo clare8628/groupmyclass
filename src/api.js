@@ -1,6 +1,6 @@
 import {
   json, bad, sha256, makeToken, readSession, sessionCookie, clearCookie,
-  loadState, cap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
+  loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
 } from './lib.js';
 
