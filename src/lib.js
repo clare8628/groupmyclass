@@ -106,6 +106,7 @@ export async function loadState(db) {
 }
 
 export const cap = c => Number(c.groupSize) + Number(c.tolerance);
+export const minCap = c => Math.max(1, Number(c.groupSize) - Number(c.tolerance));
 export const membersOf = (c, gid) => c.students.filter(s => s.groupId === gid);
 export const deadlinePassed = c => !!c.deadline && Date.now() > new Date(c.deadline).getTime();
 
@@ -114,15 +115,41 @@ export function shuffle(a) {
   return a;
 }
 
-/* 逾時：未被挑選者隨機分配並標示自動 */
+/* 逾時：
+   1. 學生組長建立之組別若人數未達最低門檻 minCap，則視為未完成建立並予以解散，成員釋出為未分組；
+   2. 剩餘未被挑選者隨機分配至組別並標示自動。 */
 export async function applyDeadline(db, courses) {
   const stmts = [];
   for (const c of courses) {
     if (!deadlinePassed(c) || !c.groups.length) continue;
+
+    // 步驟 1：檢查並解散未達最低門檻之組別
+    const min = minCap(c);
+    const validGroups = [];
+    for (const g of c.groups) {
+      const gMembers = membersOf(c, g.id);
+      if (gMembers.length < min) {
+        // 未達門檻：清空該組成員並刪除該組別
+        for (const m of gMembers) {
+          m.groupId = null;
+          m.isLeader = false;
+          m.isVice = false;
+        }
+        stmts.push(db.prepare('UPDATE students SET group_id = NULL, is_leader = 0, is_vice = 0 WHERE course_id = ? AND group_id = ?').bind(c.id, g.id));
+        stmts.push(db.prepare('DELETE FROM groups WHERE course_id = ? AND id = ?').bind(c.id, g.id));
+      } else {
+        validGroups.push(g);
+      }
+    }
+    c.groups = validGroups;
+
+    // 步驟 2：將未分組學生隨機分配至現有組別（系統隨機分組不限最低門檻）
+    if (!validGroups.length) continue;
     for (const s of shuffle(c.students.filter(x => !x.groupId))) {
-      const target = c.groups.slice().sort((a, b) => membersOf(c, a.id).length - membersOf(c, b.id).length)[0];
+      const target = validGroups.slice().sort((a, b) => membersOf(c, a.id).length - membersOf(c, b.id).length)[0];
       if (!target || membersOf(c, target.id).length >= cap(c)) continue;
-      s.groupId = target.id; s.autoAssigned = true;
+      s.groupId = target.id;
+      s.autoAssigned = true;
       stmts.push(db.prepare('UPDATE students SET group_id = ?, auto_assigned = 1 WHERE course_id = ? AND id = ?')
         .bind(target.id, c.id, s.id));
     }

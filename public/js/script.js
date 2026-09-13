@@ -86,6 +86,7 @@ const courseLabel = c => [c.year, c.subject].filter(Boolean).join(' · ') || '�
 /* ===== Helpers（皆以某課程為範圍） ===== */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const cap = c => Number(c.groupSize) + Number(c.tolerance);
+const minCap = c => Math.max(1, Number(c.groupSize) - Number(c.tolerance));
 const rank = s => s.isLeader ? 0 : s.isVice ? 1 : 2;
 /* 組長排最前、副組長次之，其餘維持名單順序 */
 const members = (c, gid) => c.students.filter(s => s.groupId === gid)
@@ -147,7 +148,7 @@ function publicBoard({ withUnassigned = true } = {}) {
         </div>
         ${c ? `
           <div class="course-meta-tags">
-            <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（上限 ${cap(c)} 人）</span>
+            <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（門檻 ${minCap(c)} 人，上限 ${cap(c)} 人）</span>
             <span class="meta-pill">📊 總學生數 ${c.students.length} 人 · ${c.groups.length} 組</span>
             ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 時限: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
           </div>` : ''}
@@ -172,7 +173,7 @@ function publicBoard({ withUnassigned = true } = {}) {
         ${g.allowEdit ? `<div class="group-badge-reopened">🔓 老師已開放挑選權限</div>` : ''}
         <div class="students">${list.length ? list.map(s => `
           <div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
-            ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' · 自動' : ''}
+            ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
           </div>`).join('') : '<div class="student">（尚無成員 Empty）</div>'}</div>
         ${isTeacher ? `
           <div class="group-teacher-ctrls">
@@ -274,7 +275,7 @@ function courseSelectionBlock() {
           <h3 class="selected-subject-name">${esc(c.subject || '（未命名科目）')}</h3>
           <div class="selected-specs">
             <div class="spec-item"><span class="spec-label">學生總數</span><span class="spec-val">${c.students.length} 人</span></div>
-            <div class="spec-item"><span class="spec-label">組別設定</span><span class="spec-val">${c.groups.length} 組（每組 ${c.groupSize} ± ${c.tolerance} 人）</span></div>
+            <div class="spec-item"><span class="spec-label">組別設定</span><span class="spec-val">${c.groups.length} 組（每組 ${c.groupSize} ± ${c.tolerance} 人，門檻 ${minCap(c)} ~ 上限 ${cap(c)} 人）</span></div>
             <div class="spec-item"><span class="spec-label">分組進度</span><span class="spec-val">${c.students.filter(s => s.groupId).length} 人已分組 / ${unassigned(c).length} 人待分組</span></div>
           </div>
         </div>
@@ -457,7 +458,10 @@ function teacherCourse(c) {
   <div class="teacher-section">
     <h2>課程設定 Course setup <small>${esc(courseLabel(c))}</small></h2>
     ${courseForm(c)}
-    <button class="btn btn-danger" data-act="del-course" data-id="${c.id}">刪除整個科目（含名單與分組）Delete course</button>
+    <div class="btn-row" style="margin-top:1rem">
+      <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
+      <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
+    </div>
   </div>
 
   <div class="teacher-section">
@@ -590,22 +594,38 @@ function studentScreen() {
 
   /* 組長專用成員管理區塊 */
   if (s.isLeader && g) {
+    const min = minCap(c);
+    const needed = Math.max(0, min - mates.length);
+    const meetsThreshold = mates.length >= min;
+
     /* 1. 已挑選成員（顯示在挑選組員區塊上方） */
     html += `
     <div class="selected-members-panel">
       <div class="panel-header">
-        <h3 style="margin:0">已挑選成員 Selected members <small>（上限 ${cap(c)} 人，目前 ${mates.length} 人${mates.length >= cap(c) ? ' · 已滿' : ''}）</small></h3>
-        ${canEdit ? '<span class="status-badge can-edit">可更換組員</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
+        <h3 style="margin:0">已挑選成員 Selected members <small>（門檻 ${min} 人，上限 ${cap(c)} 人，目前 ${mates.length} 人${mates.length >= cap(c) ? ' · 已滿' : ''}）</small></h3>
+        <div class="header-badges">
+          ${meetsThreshold
+            ? `<span class="status-badge meets-threshold">✅ 已達門檻（${mates.length}/${min}）</span>`
+            : `<span class="status-badge under-threshold">⚠️ 尚缺 ${needed} 位成員達門檻</span>`}
+          ${canEdit ? '<span class="status-badge can-edit">可更換組員</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
+        </div>
       </div>
+      ${!meetsThreshold ? `
+        <div class="threshold-notice">
+          <strong>⚠️ 本組目前人數（${mates.length} 人）尚未達分組最低門檻（${min} 人）</strong>
+          <p>請於分組時限截止前再挑選至少 <b>${needed}</b> 位成員。若時限截止時仍未達門檻，本組將<b>無法完成建立並會自動解散</b>，成員將由系統重新隨機分配。</p>
+        </div>` : ''}
       <div class="pick-list" style="margin-top:0.75rem">${mates.map(m => `
         <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
-          <span class="student-name-tag">${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長' : m.isVice ? ' — 副組長' : ''}</span>
+          <span class="student-name-tag">
+            ${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長' : m.isVice ? ' — 副組長' : ''}${m.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
+          </span>
           ${(canEdit && m.id !== s.id) ? `
             <button class="tab-btn ${m.isVice ? 'on' : ''}" data-act="toggle-vice" data-id="${esc(keyOf(m))}">
               ${m.isVice ? '取消副組長' : '設為副組長'}</button>
             <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}">移出</button>` : ''}
         </div>`).join('')}</div>
-      <p class="file-path">每組僅能有一位副組長，重新指定會自動取代前一位。One vice leader per group.</p>
+      <p class="file-path">每組僅能有一位副組長，重新指定會自動取代前一位。若組長取消身分，副組長將自動晉級為組長。</p>
     </div>`;
 
     /* 2. 挑選組員（顯示在已挑選成員區塊下方） */
@@ -774,7 +794,7 @@ app.addEventListener('click', e => {
   if (a === 'clear-groups') {
     if (!c) return;
     if (!c.groups.length) return alert('本科目尚無分組 No groups to clear');
-    if (!confirm(`確定清除「${courseLabel(c)}」的所有分組？學生名單會保留。`)) return;
+    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與課程設定皆會完整保留，僅清空組別與組別分配。`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
   }
   if (a === 'auto-assign') {

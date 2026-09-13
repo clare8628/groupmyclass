@@ -205,7 +205,16 @@ export async function handleAction(request, env, db, body) {
   }
   if (action === 'unclaim-leader') {
     if (!canEdit) return bad('已超過分組時限，無法取消組長身分 Deadline passed', 403);
-    await db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id).run();
+    const vice = membersOf(c, self.groupId).find(m => m.isVice && m.id !== self.id);
+    if (vice) {
+      // 副組長自動晉級組長，原組長退為一般組員
+      await db.batch([
+        db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id),
+        db.prepare('UPDATE students SET is_leader=1, is_vice=0 WHERE course_id=? AND id=?').bind(c.id, vice.id),
+      ]);
+    } else {
+      await db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id).run();
+    }
     return ok();
   }
   if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);
