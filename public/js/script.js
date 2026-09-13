@@ -182,12 +182,18 @@ function publicBoard({ withUnassigned = true } = {}) {
   const c = cur();
   const pool = c ? unassigned(c) : [];
   const self = me();
+  const closed = c ? deadlinePassed(c) : false;
+  const myGroup = (c && self && self.groupId) ? c.groups.find(x => x.id === self.groupId) : null;
+  const canEdit = !closed || (myGroup && myGroup.allowEdit);
+  // 若為組長且已截止且老師未開放調整權限，則隱藏未分組名單區塊
+  const isLeader = self && self.isLeader;
+  const hideUnassignedForLeader = isLeader && closed && !canEdit;
 
   return `
   <section class="block-section group-status-section" id="group-status-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 3</span>
+        <span class="step-badge">Step 2</span>
         <h2>分組現況 Group status</h2>
       </div>
       ${!state.session ? `
@@ -268,11 +274,10 @@ function publicBoard({ withUnassigned = true } = {}) {
     }).join('')}</div>` : '<p class="file-path empty-notice">老師尚未建立組別，或由學生自行擔任組長開組。No groups yet.</p>') : ''}
   </section>
 
-  ${withUnassigned && c ? `
+  ${withUnassigned && c && !hideUnassignedForLeader ? `
   <section class="block-section unassigned-section" id="unassigned-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 4</span>
         <h2>未分組名單 Unassigned <span class="badge-count">${pool.length}</span></h2>
       </div>
     </div>
@@ -333,13 +338,13 @@ function loginCard() {
   return '';
 }
 
-/* ---- 目前選取的課程展示區塊（與左側 Step 2 樹狀區塊產生連動感） ---- */
+/* ---- 目前選取的課程展示區塊（與左側 Step 1 樹狀區塊產生連動感） ---- */
 function courseSelectionBlock() {
   const c = cur();
   return `<section class="block-section courses-overview-section" id="courses-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 2 選擇結果</span>
+        <span class="step-badge">Step 1 選擇結果</span>
         <h2>課程選擇 Courses</h2>
       </div>
       <div class="courses-link-indicator">
@@ -415,10 +420,13 @@ function authScreen() {
 
 /* ---- 前台：使用說明 ---- */
 function howto() {
+  const c = cur();
+  const deadlineStr = c && c.deadline ? esc(c.deadline.replace('T', ' ')) : '';
+  const isExpired = c && deadlinePassed(c);
+
   return `<section class="block-section howto-section" id="howto-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 1</span>
         <h2>使用方式 How it works</h2>
       </div>
     </div>
@@ -441,14 +449,14 @@ function howto() {
         <div class="step-num">3</div>
         <div class="step-info">
           <strong>挑選組員與指定副組長</strong>
-          <p>組長可從未分組名單挑選組員、設定副組長。被挑選同學不需額外動作。</p>
+          <p>組長可從未分組名單挑選組員、設定副組長。<b>欲加入尚未額滿的各組組員，請一律透過組長加入</b>；被挑選同學不需額外動作。</p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">4</div>
         <div class="step-info">
           <strong>截止後自動分配</strong>
-          <p>超過分組截止時間未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。</p>
+          <p>超過分組截止時間未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。${deadlineStr ? `<br><span style="display:inline-block;margin-top:0.35rem;padding:0.15rem 0.5rem;background:${isExpired ? '#fee2e2' : '#fef3c7'};color:${isExpired ? '#991b1b' : '#92400e'};border-radius:4px;font-weight:600;font-size:0.85rem;">⏳ 本科目分組截止時間：${deadlineStr} ${isExpired ? '(已截止)' : ''}</span>` : '<br><span style="color:#64748b;font-size:0.85rem;">（本科目尚未設定分組截止時間）</span>'}</p>
         </div>
       </div>
     </div>
@@ -466,7 +474,7 @@ function courseTreePublic() {
   return `<aside class="block-section tree-section" id="courses-tree-block">
     <div class="block-header tree-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 2</span>
+        <span class="step-badge">Step 1</span>
         <h2>課程清單</h2>
       </div>
       <p class="block-desc">選擇學年度與科目</p>
