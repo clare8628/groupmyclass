@@ -79,6 +79,9 @@ async function ensureGroupSchema(db) {
     await db.prepare('ALTER TABLE groups ADD COLUMN allow_edit INTEGER NOT NULL DEFAULT 0').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE groups ADD COLUMN edit_deadline TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
+  try {
     await db.prepare('ALTER TABLE courses ADD COLUMN notice TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
   try {
@@ -109,6 +112,17 @@ export const DEFAULT_NOTICE = `【期末考成績加減分與評分規定】：
 
 /* 判斷組長評分是否逾時 */
 export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
+
+/* 判斷組長重新挑選組員截止時間是否已逾時 */
+export const editDeadlinePassed = g => !!g.editDeadline && Date.now() > new Date(g.editDeadline).getTime();
+
+/* 判斷組長當前是否具備挑選／更換組員之權限 */
+export function canGroupLeaderEdit(c, g) {
+  if (!deadlinePassed(c)) return true;
+  if (!g || !g.allowEdit) return false;
+  if (g.editDeadline && editDeadlinePassed(g)) return false;
+  return true;
+}
 
 /* 計算每位學生的期末考調分與原因 */
 export function calcAdjustment(c, g, s) {
@@ -184,6 +198,7 @@ export async function loadState(db) {
       id: g.id,
       name: g.name,
       allowEdit: !!g.allow_edit,
+      editDeadline: g.edit_deadline || '',
       peerEvalOpen: !!g.peer_eval_open,
       peerEvalDeadline: g.peer_eval_deadline || '',
       peerEvalSubmitted: !!g.peer_eval_submitted,

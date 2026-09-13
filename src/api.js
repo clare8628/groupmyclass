@@ -1,7 +1,7 @@
 import {
   json, bad, sha256, makeToken, readSession, sessionCookie, clearCookie,
   loadState, cap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
-  applyDeadline, publicize, resolveStudent,
+  applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
 } from './lib.js';
 
 /* GET /api/state — 公開讀取全部課程／名單／分組 */
@@ -25,7 +25,7 @@ export async function handleAction(request, env, db, body) {
 
   const saveSnapshot = async (db, courseId) => {
     const [snapGroups, snapStudents] = await Promise.all([
-      db.prepare('SELECT id, course_id, name, seq, allow_edit, peer_eval_open, peer_eval_deadline, peer_eval_submitted FROM groups WHERE course_id = ?').bind(courseId).all(),
+      db.prepare('SELECT id, course_id, name, seq, allow_edit, edit_deadline, peer_eval_open, peer_eval_deadline, peer_eval_submitted FROM groups WHERE course_id = ?').bind(courseId).all(),
       db.prepare('SELECT id, group_id, is_leader, is_vice, auto_assigned, peer_penalty, peer_comment FROM students WHERE course_id = ?').bind(courseId).all(),
     ]);
     const payload = JSON.stringify({
@@ -213,8 +213,8 @@ export async function handleAction(request, env, db, body) {
       ];
 
       for (const g of snapGroups) {
-        stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq, allow_edit, peer_eval_open, peer_eval_deadline, peer_eval_submitted) VALUES (?,?,?,?,?,?,?,?)')
-          .bind(g.id, c.id, g.name, g.seq || 0, g.allow_edit ? 1 : 0, g.peer_eval_open ? 1 : 0, g.peer_eval_deadline || '', g.peer_eval_submitted ? 1 : 0));
+        stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq, allow_edit, edit_deadline, peer_eval_open, peer_eval_deadline, peer_eval_submitted) VALUES (?,?,?,?,?,?,?,?,?)')
+          .bind(g.id, c.id, g.name, g.seq || 0, g.allow_edit ? 1 : 0, g.edit_deadline || '', g.peer_eval_open ? 1 : 0, g.peer_eval_deadline || '', g.peer_eval_submitted ? 1 : 0));
       }
 
       for (const s of snapStudents) {
@@ -252,8 +252,9 @@ export async function handleAction(request, env, db, body) {
       const g = c.groups.find(x => x.id === body.groupId);
       if (!g) return bad('組別不存在', 404);
       const allow = body.allowEdit ? 1 : 0;
-      await db.prepare('UPDATE groups SET allow_edit=? WHERE course_id=? AND id=?')
-        .bind(allow, c.id, g.id).run();
+      const editDeadline = allow ? (body.editDeadline !== undefined ? String(body.editDeadline) : '') : '';
+      await db.prepare('UPDATE groups SET allow_edit=?, edit_deadline=? WHERE course_id=? AND id=?')
+        .bind(allow, editDeadline, c.id, g.id).run();
       return ok();
     }
     if (op === 'set-peer-eval') {
@@ -300,7 +301,7 @@ export async function handleAction(request, env, db, body) {
   if (!self) return bad('學生不存在', 404);
 
   const myGroup = self.groupId ? c.groups.find(g => g.id === self.groupId) : null;
-  const canEdit = !deadlinePassed(c) || (myGroup && myGroup.allowEdit);
+  const canEdit = canGroupLeaderEdit(c, myGroup);
 
   if (action === 'claim-leader') {
     if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed', 403);

@@ -12,6 +12,7 @@ let state = {
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
 let teacherView = 'course';   // 後台主區：'course' | 'settings'
+let teacherPreviewMode = 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let busy = false;
 let lastSig = '';
 
@@ -99,7 +100,18 @@ const keyOf = s => s.ref || s.id;   // 送給後端的識別碼
 const leaderOf = (c, gid) => members(c, gid).find(s => s.isLeader);
 function me() {
   const c = cur();
-  return (c && state.session && state.session.role === 'student') ? findStudent(c, state.session.id) : null;
+  if (!c) return null;
+  if (state.session && state.session.role === 'student') return findStudent(c, state.session.id);
+  // 若老師處於組長預覽模式，模擬當前課程的第一位組長或成員
+  if (state.session && state.session.role === 'teacher' && teacherPreviewMode === 'leader') {
+    const lead = c.students.find(s => s.isLeader && s.groupId);
+    if (lead) return lead;
+    // 若尚未有組長，則找任一有組別的學生或第一位學生模擬
+    const anyStudent = c.students.find(s => s.groupId) || c.students[0];
+    if (anyStudent) return { ...anyStudent, isLeader: true };
+    return { id: 'preview-lead', name: '預覽組長(測試)', isLeader: true, groupId: c.groups[0]?.id || null };
+  }
+  return null;
 }
 const teacherPasswordHint = '預設 teacher123，可於後台修改';
 
@@ -110,6 +122,14 @@ function shuffle(a) {
 
 const deadlinePassed = c => !!c.deadline && Date.now() > new Date(c.deadline).getTime();
 const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
+const editDeadlinePassed = g => !!g.editDeadline && Date.now() > new Date(g.editDeadline).getTime();
+function canGroupLeaderEdit(c, g) {
+  if (!c) return false;
+  if (!deadlinePassed(c)) return true;
+  if (!g || !g.allowEdit) return false;
+  if (g.editDeadline && editDeadlinePassed(g)) return false;
+  return true;
+}
 
 /* 計算每位同學的期末考調分 */
 function calcAdjustment(c, g, s) {
@@ -184,7 +204,7 @@ function publicBoard({ withUnassigned = true } = {}) {
   const self = me();
   const closed = c ? deadlinePassed(c) : false;
   const myGroup = (c && self && self.groupId) ? c.groups.find(x => x.id === self.groupId) : null;
-  const canEdit = !closed || (myGroup && myGroup.allowEdit);
+  const canEdit = canGroupLeaderEdit(c, myGroup);
   // 若為組長且已截止且老師未開放調整權限，則隱藏未分組名單區塊
   const isLeader = self && self.isLeader;
   const hideUnassignedForLeader = isLeader && closed && !canEdit;
@@ -216,7 +236,7 @@ function publicBoard({ withUnassigned = true } = {}) {
           <div class="course-meta-tags">
             <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（門檻 ${minCap(c)} 人，上限 ${cap(c)} 人）</span>
             <span class="meta-pill">📊 總學生數 ${c.students.length} 人 · ${c.groups.length} 組</span>
-            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 分組截止時間: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
+            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 全體分組截止時間: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
           </div>` : ''}
       </div>
     </div>
@@ -231,10 +251,11 @@ function publicBoard({ withUnassigned = true } = {}) {
       const lead = leaderOf(c, g.id);
       const autoCount = list.filter(s => s.autoAssigned).length;
       const full = list.length >= cap(c);
-      const isTeacher = state.session && state.session.role === 'teacher';
+      const isTeacher = state.session && state.session.role === 'teacher' && teacherPreviewMode === 'admin';
       const isEvalOpen = !!g.peerEvalOpen;
       const isSubmitted = !!g.peerEvalSubmitted;
       const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
+      const isGroupEditActive = g.allowEdit && !editDeadlinePassed(g);
 
       let evalStatusTag = '';
       if (!lead) {
@@ -247,14 +268,18 @@ function publicBoard({ withUnassigned = true } = {}) {
         evalStatusTag = `<span class="tag-status open">📝 評分開放中${g.peerEvalDeadline ? ` (${esc(g.peerEvalDeadline.replace('T', ' '))}截止)` : ''}</span>`;
       }
 
-      return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''} ${g.allowEdit ? 'reopened' : ''}">
+      return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''} ${isGroupEditActive ? 'reopened' : ''}">
         <div class="group-card-top-tags">
           ${autoCount ? `<span class="tag">自動 ${autoCount}</span>` : ''}
           ${evalStatusTag}
         </div>
         <h3>${esc(g.name)} <small>${list.length}/${cap(c)} 人${full ? ' · 已滿' : ''}</small></h3>
         <p class="file-path">組長 Leader: ${lead ? esc(lead.name) : '尚未產生 — none'}</p>
-        ${g.allowEdit ? `<div class="group-badge-reopened">🔓 老師已開放挑選權限</div>` : ''}
+        ${g.allowEdit ? `
+          <div class="group-badge-reopened">
+            ${isGroupEditActive ? '🔓 老師已重新開放本組挑選' : '⏳ 重新開放挑選已逾時截止'}
+            ${g.editDeadline ? `<span style="font-size:0.75rem;opacity:0.9;">（截止：${esc(g.editDeadline.replace('T', ' '))}）</span>` : ''}
+          </div>` : ''}
         <div class="students">${list.length ? list.map(s => {
           const adj = calcAdjustment(c, g, s);
           return `<div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
@@ -269,6 +294,7 @@ function publicBoard({ withUnassigned = true } = {}) {
             <button class="tab-btn ${g.allowEdit ? 'on' : ''}" data-act="toggle-group-edit" data-id="${g.id}" data-allow="${g.allowEdit ? '0' : '1'}">
               ${g.allowEdit ? '🔒 取消開放挑選' : '🔓 重新開放組長挑選'}
             </button>
+            ${g.allowEdit && g.editDeadline ? `<span style="font-size:0.75rem;color:#d97706;margin-top:0.25rem;display:block;">截止: ${esc(g.editDeadline.replace('T', ' '))}</span>` : ''}
           </div>` : ''}
       </div>`;
     }).join('')}</div>` : '<p class="file-path empty-notice">老師尚未建立組別，或由學生自行擔任組長開組。No groups yet.</p>') : ''}
@@ -292,8 +318,29 @@ function nav() {
   const c = cur();
   let right = '';
   if (state.session) {
-    const who = state.session.role === 'teacher' ? '老師 Teacher' : esc((me() || {}).name || '');
-    right = `<span class="who">${who}</span><button class="tab-btn" data-act="logout">登出 Logout</button>`;
+    if (state.session.role === 'teacher') {
+      right = `
+        <div class="preview-mode-switch">
+          <span class="preview-switch-label">👁️ 檢視模式：</span>
+          <div class="preview-btn-group">
+            <button class="mode-btn ${teacherPreviewMode === 'admin' ? 'active' : ''}" data-act="switch-preview" data-mode="admin" title="進入完整老師後台管理介面">
+              ⚙️ 老師後台
+            </button>
+            <button class="mode-btn ${teacherPreviewMode === 'public' ? 'active' : ''}" data-act="switch-preview" data-mode="public" title="模擬一般訪客或未登入組員看到的前台畫面">
+              👀 一般學生前台
+            </button>
+            <button class="mode-btn ${teacherPreviewMode === 'leader' ? 'active' : ''}" data-act="switch-preview" data-mode="leader" title="模擬擔任組長的學生登入後看到的完整挑選與管理畫面">
+              🎓 組長登入模式
+            </button>
+          </div>
+        </div>
+        <span class="who">老師 Teacher</span>
+        <button class="tab-btn" data-act="logout">登出 Logout</button>
+      `;
+    } else {
+      const who = esc((me() || {}).name || '');
+      right = `<span class="who">${who}</span><button class="tab-btn" data-act="logout">登出 Logout</button>`;
+    }
   } else {
     right = `<a href="#login" class="teacher-link ${loginMode === 'teacher' ? 'on' : ''}" data-act="show-teacher-login">老師登入 Teacher login</a>`;
   }
@@ -696,6 +743,68 @@ function teacherCourse(c) {
           }).join('')}
         </div>
       </div>` : ''}
+
+    <!-- 特定組別重新開放挑選組員控制面板 -->
+    ${c.groups.length ? `
+      <div class="reopen-groups-box" style="margin-top:1.5rem;padding:1.2rem;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <strong style="color:#166534;">🔓 特定組別重新開放組長挑選組員（可設定新截止時間）</strong>
+        </div>
+        <p class="file-path" style="margin:0 0 0.75rem 0;">
+          即便全體分組截止時間已過，老師仍可在此為特定組別重新開放組長挑選組員權限，並指定「該組專屬之新截止時間」。逾時後將自動鎖定。
+        </p>
+        <div class="table-wrap">
+          <table class="roster" style="background:#fff;">
+            <thead>
+              <tr>
+                <th>組別</th>
+                <th>組長</th>
+                <th>目前成員</th>
+                <th>挑選權限狀態</th>
+                <th>專屬新截止時間</th>
+                <th>操作（設定新時限並開放）</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${c.groups.map(g => {
+                const lead = leaderOf(c, g.id);
+                const count = members(c, g.id).length;
+                const isGroupEditActive = g.allowEdit && !editDeadlinePassed(g);
+                return `
+                <tr>
+                  <td><b>${esc(g.name)}</b></td>
+                  <td>${lead ? `<span style="color:#16a34a;font-weight:600;">${esc(lead.name)} (${esc(lead.id)})</span>` : '<span style="color:#94a3b8">（尚未產生組長）</span>'}</td>
+                  <td>${count} / ${cap(c)} 人</td>
+                  <td>
+                    ${!g.allowEdit ? '<span class="status-badge is-locked">未開放（依全體時限）</span>'
+                      : isGroupEditActive ? '<span class="status-badge can-edit">開放挑選中 Open</span>'
+                      : '<span class="status-badge under-threshold">已逾專屬截止時間 Closed</span>'}
+                  </td>
+                  <td>
+                    ${g.editDeadline ? `<span style="font-weight:600;color:${isGroupEditActive ? '#166534' : '#991b1b'};">${esc(g.editDeadline.replace('T', ' '))}</span>` : (g.allowEdit ? '<span style="color:#64748b;">永久開放（無期限）</span>' : '<span style="color:#94a3b8">-</span>')}
+                  </td>
+                  <td>
+                    ${g.allowEdit ? `
+                      <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                        <button class="tab-btn on" data-act="toggle-group-edit" data-id="${g.id}" data-allow="0">
+                          🔒 關閉開放
+                        </button>
+                        <button class="tab-btn" data-act="reopen-group-modal" data-id="${g.id}" title="更改該組新截止時間">
+                          ⏱️ 更改截止時間
+                        </button>
+                      </div>
+                    ` : `
+                      <button class="btn btn-primary" style="padding:0.35rem 0.85rem;font-size:0.85rem;margin:0;" data-act="reopen-group-modal" data-id="${g.id}">
+                        🔓 重新開放並設定新時限
+                      </button>
+                    `}
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
   </div>
 
   <div class="roster-row">
@@ -764,8 +873,9 @@ function studentScreen() {
   const g = c.groups.find(x => x.id === s.groupId);
   const mates = g ? members(c, g.id) : [];
   const closed = deadlinePassed(c);
-  const canEdit = !closed || (g && g.allowEdit);
+  const canEdit = canGroupLeaderEdit(c, g);
   const otherLeader = g ? mates.find(m => m.isLeader && m.id !== s.id) : null;
+  const isPreview = state.session && state.session.role === 'teacher';
 
   let html = `
   <div class="student-section">
@@ -783,7 +893,7 @@ function studentScreen() {
           <span class="alert-icon">⏳</span>
           <div>
             <strong>已超過分組截止時間，組長無法更換組員 Deadline passed</strong>
-            <p>目前分組截止時間已過，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
+            <p>目前分組截止時間已過${(g && g.editDeadline) ? `（本組專屬截止時間 ${esc(g.editDeadline.replace('T', ' '))} 亦已截止）` : ''}，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
           </div>
         </div>`;
     } else if (closed && canEdit) {
@@ -792,12 +902,12 @@ function studentScreen() {
           <span class="alert-icon">🔓</span>
           <div>
             <strong>老師已重新開放本科目本組挑選權限 Permission re-opened</strong>
-            <p>授課老師已特別為本組開放重新挑選權限，您現在可以更換組員或調整副組長。</p>
+            <p>授課老師已特別為本組開放重新挑選權限，您現在可以更換組員或調整副組長。${(g && g.editDeadline) ? `<br><b style="color:#92400e;">⏳ 本組專屬截止時間為：${esc(g.editDeadline.replace('T', ' '))}，逾時將自動鎖定。</b>` : ''}</p>
           </div>
         </div>
-        <button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
+        ${!isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>` : ''}`;
     } else {
-      html += `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
+      html += !isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>` : '';
     }
   } else if (closed) {
     html += '<p class="file-path">已超過分組截止時間，無法再變更。Deadline passed.</p>';
@@ -959,14 +1069,55 @@ function studentScreen() {
   return html + '</div>' + publicBoard();
 }
 
+/* ===== 老師切換預覽模式專用提示橫幅 ===== */
+function teacherPreviewBanner() {
+  if (!state.session || state.session.role !== 'teacher' || teacherPreviewMode === 'admin') return '';
+  const isLeader = teacherPreviewMode === 'leader';
+  const c = cur();
+  return `
+  <div class="teacher-preview-floating-bar">
+    <div class="preview-bar-left">
+      <span class="preview-pulse-icon">${isLeader ? '🎓' : '👀'}</span>
+      <span class="preview-text">
+        目前為<b>【${isLeader ? '擔任組長之學生登入' : '一般學生看到的前台'}】</b>視角預覽模式
+        ${c ? `（課程：${esc(courseLabel(c))}）` : ''}
+      </span>
+    </div>
+    <div class="preview-bar-right">
+      <button class="btn btn-secondary" data-act="switch-preview" data-mode="${isLeader ? 'public' : 'leader'}" style="padding:0.35rem 0.8rem;font-size:0.85rem;margin:0;">
+        切換為${isLeader ? '一般學生視角' : '組長登入視角'}
+      </button>
+      <button class="btn btn-primary" data-act="switch-preview" data-mode="admin" style="padding:0.35rem 0.9rem;font-size:0.85rem;margin:0;">
+        ⚙️ 返回老師後台 Exit Preview
+      </button>
+    </div>
+  </div>`;
+}
+
 /* ===== Render ===== */
 function render() {
+  const isTeacher = state.session && state.session.role === 'teacher';
   const isStudent = state.session && state.session.role === 'student';
-  const body = !state.session ? authScreen()
-    : state.session.role === 'teacher' ? teacherScreen()
-    : studentScreen();
+
+  let body = '';
+  if (!state.session) {
+    body = authScreen();
+  } else if (isTeacher) {
+    if (teacherPreviewMode === 'public') {
+      body = authScreen();
+    } else if (teacherPreviewMode === 'leader') {
+      body = studentScreen();
+    } else {
+      body = teacherScreen();
+    }
+  } else {
+    body = studentScreen();
+  }
+
+  const showHowto = isStudent || (isTeacher && teacherPreviewMode === 'leader');
+
   document.getElementById('app').innerHTML =
-    nav() + '<div class="container">' + (isStudent ? howto() : '') + body + '</div>';
+    nav() + teacherPreviewBanner() + '<div class="container">' + (showHowto ? howto() : '') + body + '</div>';
   if (!state.session && loginMode) {
     const first = document.querySelector('#login input');
     if (first) first.focus();
@@ -996,7 +1147,7 @@ function exportCSV(c) {
     ]);
   });
   const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(csv, 'text/csv', `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
+  download(csv, `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
 }
 
 function download(content, type, filename) {
@@ -1040,7 +1191,7 @@ app.addEventListener('submit', e => {
   const f = e.target;
 
   if (a === 'login-teacher') {
-    return act('login-teacher', { password: f.password.value }, { after: () => { loginMode = null; } });
+    return act('login-teacher', { password: f.password.value }, { after: () => { loginMode = null; teacherPreviewMode = 'admin'; } });
   }
   if (a === 'login-student') {
     const c = cur();
@@ -1110,7 +1261,11 @@ app.addEventListener('click', e => {
   const a = btn.dataset.act, id = btn.dataset.id;
   const c = cur();
 
-  if (a === 'logout') return act('logout', {}, { after: () => { loginMode = null; teacherView = 'course'; } });
+  if (a === 'switch-preview') {
+    teacherPreviewMode = btn.dataset.mode || 'admin';
+    return render();
+  }
+  if (a === 'logout') return act('logout', {}, { after: () => { loginMode = null; teacherView = 'course'; teacherPreviewMode = 'admin'; } });
   if (a === 'show-teacher-login') { e.preventDefault(); loginMode = loginMode === 'teacher' ? null : 'teacher'; return render(); }
   if (a === 'show-student-login') { e.preventDefault(); loginMode = loginMode === 'student' ? null : 'student'; return render(); }
   if (a === 'close-login') { loginMode = null; return render(); }
@@ -1183,6 +1338,22 @@ app.addEventListener('click', e => {
     if (!c) return;
     const allowEdit = btn.dataset.allow === '1';
     return act('teacher:toggle-group-edit', { courseId: c.id, groupId: id, allowEdit });
+  }
+  if (a === 'reopen-group-modal') {
+    if (!c) return;
+    const targetGroup = c.groups.find(x => x.id === id);
+    if (!targetGroup) return;
+    const defaultTime = targetGroup.editDeadline || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 16);
+    const newDeadline = prompt(`請設定【${targetGroup.name}】組長重新挑選組員的新截止時間：\n(格式: YYYY-MM-DDTHH:mm，例如 ${defaultTime}；若不設期限請按確定保留空值或取消)`, defaultTime);
+    if (newDeadline === null) return; // 使用者按取消
+    return act('teacher:toggle-group-edit', {
+      courseId: c.id,
+      groupId: id,
+      allowEdit: true,
+      editDeadline: newDeadline.trim(),
+    }, {
+      after: () => alert(`已成功重新開放【${targetGroup.name}】組長挑選組員！${newDeadline ? `\n新截止時間為：${newDeadline.replace('T', ' ')}` : ''}`),
+    });
   }
   if (a === 'close-all-eval') {
     if (!c) return;

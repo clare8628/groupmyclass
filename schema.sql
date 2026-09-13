@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS groups (
   name                TEXT NOT NULL,
   seq                 INTEGER NOT NULL DEFAULT 0,
   allow_edit          INTEGER NOT NULL DEFAULT 0,
+  edit_deadline       TEXT NOT NULL DEFAULT '',
   peer_eval_open      INTEGER NOT NULL DEFAULT 0,
   peer_eval_deadline  TEXT NOT NULL DEFAULT '',
   peer_eval_submitted INTEGER NOT NULL DEFAULT 0,
