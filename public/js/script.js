@@ -109,6 +109,59 @@ function shuffle(a) {
 }
 
 const deadlinePassed = c => !!c.deadline && Date.now() > new Date(c.deadline).getTime();
+const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
+
+/* 計算每位同學的期末考調分 */
+function calcAdjustment(c, g, s) {
+  if (s.adjustment) return s.adjustment;
+  if (!s.groupId || !g) return { score: 0, tag: '未分組', reason: '尚未加入組別，無期末考調分', status: 'none' };
+  const lead = c.students.find(x => x.groupId === g.id && x.isLeader);
+
+  if (!lead) {
+    return { score: -10, tag: '-10分', reason: '超過分組截止時間無組長，全員期末考扣 10 分', status: 'no-leader' };
+  }
+
+  const isEvalOpen = !!g.peerEvalOpen;
+  const isSubmitted = !!g.peerEvalSubmitted;
+  const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
+
+  if (isOverdue) {
+    if (s.isLeader) {
+      return { score: 0, tag: '±0分', reason: '組長未於評分截止時間前完成評分，組長罰扣 10 分 (原+10 - 10 = 0分)', status: 'leader-overdue' };
+    } else {
+      return { score: 5, tag: '+5分', reason: '組長逾時未完成評分，全組組員罰扣 5 分 (原加10分 - 5分 = +5分)', status: 'member-overdue' };
+    }
+  }
+
+  if (isSubmitted) {
+    if (s.isLeader) {
+      return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（組長本人）', status: 'leader-normal' };
+    } else {
+      const penalty = Math.max(-10, Math.min(0, Number(s.peerPenalty) || 0));
+      const finalScore = 10 + penalty;
+      const commentMsg = s.peerComment ? ` [原因: ${s.peerComment}]` : '';
+      return {
+        score: finalScore,
+        penalty,
+        tag: (finalScore >= 0 ? `+${finalScore}` : `${finalScore}`) + '分',
+        reason: penalty < 0 ? `基準加 10 分，經組長評定扣 ${Math.abs(penalty)} 分${commentMsg} (淨調分 +${finalScore} 分)` : '基準加 10 分，組長評定正常無扣分',
+        status: penalty < 0 ? 'member-penalized' : 'member-normal',
+      };
+    }
+  }
+
+  if (s.isLeader) {
+    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分', status: 'leader-pending' };
+  } else {
+    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（若老師開放評分，組長可依貢獻度扣 0~-10 分）', status: 'member-pending' };
+  }
+}
+
+function scoreBadge(adj) {
+  if (!adj || adj.status === 'none') return '';
+  const cls = adj.score > 0 ? 'positive' : adj.score < 0 ? 'negative' : 'neutral';
+  return `<span class="score-pill ${cls}" title="${esc(adj.reason)}">期末 ${esc(adj.tag)}</span>`;
+}
 
 /* ===== 前台分組現況 ===== */
 function unassignedList(c) {
@@ -166,15 +219,38 @@ function publicBoard({ withUnassigned = true } = {}) {
       const autoCount = list.filter(s => s.autoAssigned).length;
       const full = list.length >= cap(c);
       const isTeacher = state.session && state.session.role === 'teacher';
+      const isEvalOpen = !!g.peerEvalOpen;
+      const isSubmitted = !!g.peerEvalSubmitted;
+      const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
+
+      let evalStatusTag = '';
+      if (!lead) {
+        evalStatusTag = `<span class="tag-status no-leader">無組長 (全員-10)</span>`;
+      } else if (isSubmitted) {
+        evalStatusTag = `<span class="tag-status submitted">✅ 組長已完成評分</span>`;
+      } else if (isOverdue) {
+        evalStatusTag = `<span class="tag-status overdue">⚠️ 評分逾時 (全員-5/組長-10)</span>`;
+      } else if (isEvalOpen) {
+        evalStatusTag = `<span class="tag-status open">📝 評分開放中${g.peerEvalDeadline ? ` (${esc(g.peerEvalDeadline.replace('T', ' '))}截止)` : ''}</span>`;
+      }
+
       return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''} ${g.allowEdit ? 'reopened' : ''}">
-        ${autoCount ? `<span class="tag">自動 ${autoCount}</span>` : ''}
+        <div class="group-card-top-tags">
+          ${autoCount ? `<span class="tag">自動 ${autoCount}</span>` : ''}
+          ${evalStatusTag}
+        </div>
         <h3>${esc(g.name)} <small>${list.length}/${cap(c)} 人${full ? ' · 已滿' : ''}</small></h3>
         <p class="file-path">組長 Leader: ${lead ? esc(lead.name) : '尚未產生 — none'}</p>
         ${g.allowEdit ? `<div class="group-badge-reopened">🔓 老師已開放挑選權限</div>` : ''}
-        <div class="students">${list.length ? list.map(s => `
-          <div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
-            ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
-          </div>`).join('') : '<div class="student">（尚無成員 Empty）</div>'}</div>
+        <div class="students">${list.length ? list.map(s => {
+          const adj = calcAdjustment(c, g, s);
+          return `<div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
+            <span class="student-info-col">
+              ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
+            </span>
+            ${scoreBadge(adj)}
+          </div>`;
+        }).join('') : '<div class="student">（尚無成員 Empty）</div>'}</div>
         ${isTeacher ? `
           <div class="group-teacher-ctrls">
             <button class="tab-btn ${g.allowEdit ? 'on' : ''}" data-act="toggle-group-edit" data-id="${g.id}" data-allow="${g.allowEdit ? '0' : '1'}">
@@ -292,11 +368,11 @@ function courseSelectionBlock() {
   </section>`;
 }
 
-/* ---- 前台：公布欄區塊（置於第一個區塊 Step 1 上方） ---- */
 function bulletinBlock(c) {
-  const notice = (c && c.notice) ? c.notice : `【分組注意事項】：
-1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
-2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+  const notice = (c && c.notice) ? c.notice : `【期末考成績加減分與評分規定】：
+1. 有組長的組別每位成員期末考成績加 10 分。當老師開放組長評分權限時，組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 組長逾時未在老師開放評分權限時進行評分，全組成員扣 5 分，組長扣 10 分。
+3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
   return `
   <section class="block-section bulletin-section" id="bulletin-block">
@@ -462,9 +538,10 @@ function teacherNoCourse() {
 }
 
 function courseForm(c) {
-  const noticeVal = (c && c.notice !== undefined && c.notice !== null) ? c.notice : `【分組注意事項】：
-1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
-2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+  const noticeVal = (c && c.notice !== undefined && c.notice !== null) ? c.notice : `【期末考成績加減分與評分規定】：
+1. 有組長的組別每位成員期末考成績加 10 分。當老師開放組長評分權限時，組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 組長逾時未在老師開放評分權限時進行評分，全組成員扣 5 分，組長扣 10 分。
+3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
   return `<form data-act="save-course">
     <div class="form-row">
@@ -493,6 +570,67 @@ function teacherCourse(c) {
       <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
       <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
     </div>
+  </div>
+
+  <!-- 期末考成績加減分與組長評分控制面板 -->
+  <div class="teacher-section peer-eval-admin-box">
+    <h2>⚖️ 期末考成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
+    <p class="file-path">規則：有組長組全員期末考+10分；開放評分後組長可依貢獻度給予扣分(-0~-10)；若組長逾時未評分則全組扣5分、組長扣10分；系統自動分組無組長者全員扣10分。</p>
+    
+    <div class="peer-eval-global-bar">
+      <form data-act="set-all-eval" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;background:#f8fafc;padding:0.9rem 1.2rem;border:1px solid #e2e8f0;border-radius:8px;">
+        <label style="font-weight:600;font-size:0.9rem;">全體組長評分截止時間：</label>
+        <input type="datetime-local" name="evalDeadline" style="padding:0.35rem 0.6rem;font-size:0.85rem;" required>
+        <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵開放全體組長評分</button>
+        <button class="btn btn-secondary" type="button" data-act="close-all-eval" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵關閉全體評分</button>
+      </form>
+    </div>
+
+    ${c.groups.length ? `
+    <div class="table-wrap" style="margin-top:1rem">
+      <table class="roster eval-status-table">
+        <thead>
+          <tr>
+            <th>組別</th>
+            <th>組長</th>
+            <th>評分權限狀態</th>
+            <th>組長評分截止時間</th>
+            <th>組長評分進度</th>
+            <th>個別操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${c.groups.map(g => {
+            const lead = leaderOf(c, g.id);
+            const isOver = evalDeadlinePassed(g);
+            return `
+            <tr>
+              <td><b>${esc(g.name)}</b></td>
+              <td>${lead ? `<span style="color:#16a34a;font-weight:600;">${esc(lead.name)} (${esc(lead.id)})</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
+              <td>
+                ${g.peerEvalOpen
+                  ? `<span class="status-badge can-edit">開放中 Open</span>`
+                  : `<span class="status-badge is-locked">未開放 Closed</span>`}
+              </td>
+              <td>${g.peerEvalDeadline ? esc(g.peerEvalDeadline.replace('T', ' ')) : '<span style="color:#94a3b8">未設定</span>'}</td>
+              <td>
+                ${!lead ? '<span style="color:#64748b">無組長免評分</span>'
+                  : g.peerEvalSubmitted ? '<span style="color:#16a34a;font-weight:600;">✅ 組長已完成評分</span>'
+                  : (g.peerEvalOpen && isOver) ? '<span style="color:#dc2626;font-weight:600;">⚠️ 逾時未評分 (全組-5/組長-10)</span>'
+                  : g.peerEvalOpen ? '<span style="color:#f59e0b;font-weight:600;">⏳ 評分進行中</span>'
+                  : '<span style="color:#94a3b8">尚未開放</span>'}
+              </td>
+              <td>
+                ${lead ? `
+                  <button class="tab-btn ${g.peerEvalOpen ? 'on' : ''}" data-act="toggle-single-eval" data-id="${g.id}" data-open="${g.peerEvalOpen ? '0' : '1'}">
+                    ${g.peerEvalOpen ? '🔒 關閉該組評分' : '🔓 開放該組評分'}
+                  </button>` : '<span style="color:#94a3b8">-</span>'}
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>` : '<p class="file-path">尚未建立組別。</p>'}
   </div>
 
   <div class="teacher-section">
@@ -581,15 +719,20 @@ function rosterTable(c) {
     .concat(c.groups.map(g => `<option value="${g.id}" ${s.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`))
     .join('');
   return `<div class="table-wrap"><table class="roster">
-    <thead><tr><th>學號 ID</th><th>姓名 Name</th><th>組別 Group</th><th>組長 Leader</th><th></th></tr></thead>
-    <tbody>${c.students.map(s => `
+    <thead><tr><th>學號 ID</th><th>姓名 Name</th><th>組別 Group</th><th>組長 Leader</th><th>期末考調分</th><th></th></tr></thead>
+    <tbody>${c.students.map(s => {
+      const g = c.groups.find(x => x.id === s.groupId);
+      const adj = calcAdjustment(c, g, s);
+      return `
       <tr>
         <td>${esc(s.id)}</td>
         <td>${esc(s.name)}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}${s.isVice ? ' <span class="tag-inline">副組長</span>' : ''}</td>
         <td><select data-act="assign-student" data-id="${esc(keyOf(s))}">${opts(s)}</select></td>
         <td><input type="checkbox" data-act="set-leader" data-id="${esc(keyOf(s))}" ${s.isLeader ? 'checked' : ''} ${s.groupId ? '' : 'disabled'}></td>
+        <td>${scoreBadge(adj)}</td>
         <td><button class="tab-btn" data-act="del-student" data-id="${esc(keyOf(s))}">刪除</button></td>
-      </tr>`).join('')}
+      </tr>`;
+    }).join('')}
     </tbody></table></div>`;
 }
 
@@ -701,6 +844,92 @@ function studentScreen() {
           : '<p class="file-path">目前沒有未分組的學生 No unassigned students.</p>'}</div>
       </div>`;
     }
+
+    /* 3. 組長專屬：期末成員貢獻度評分面板（當老師開放權限時顯示） */
+    const isEvalOpen = !!g.peerEvalOpen;
+    const isSubmitted = !!g.peerEvalSubmitted;
+    const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
+    const otherMembers = mates.filter(m => m.id !== s.id);
+
+    html += `
+    <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;">
+      <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+        <h3 style="margin:0;color:#166534;">📝 期末組員貢獻度評分 Peer Evaluation</h3>
+        ${isSubmitted
+          ? '<span class="status-badge meets-threshold">✅ 您已完成評分提交</span>'
+          : isOverdue
+          ? '<span class="status-badge under-threshold">⚠️ 已超過評分截止時間 (逾時懲罰生效)</span>'
+          : isEvalOpen
+          ? '<span class="status-badge can-edit">開放評分中 Open</span>'
+          : '<span class="status-badge is-locked">老師尚未開放評分</span>'}
+      </div>
+
+      <div style="margin:0.75rem 0;font-size:0.88rem;color:#14532d;line-height:1.6;">
+        <p style="margin:0 0 0.4rem 0;"><b>說明：</b>有組長組別每位成員期末考預設加 10 分。在老師開放評分期間，組長可依據組員之貢獻與配合程度給予扣分 (0 ~ -10 分)。</p>
+        <p style="margin:0;color:#b91c1c;"><b>⚠️ 責任提醒：</b>若在老師設定的評分截止時間前<b>逾時未提交評分</b>，全組成員將被扣 5 分，組長本人扣 10 分！</p>
+        ${g.peerEvalDeadline ? `<p style="margin:0.4rem 0 0 0;font-weight:600;">⏳ 本組評分截止時間：${esc(g.peerEvalDeadline.replace('T', ' '))}</p>` : ''}
+      </div>
+
+      ${!isEvalOpen ? `
+        <div style="padding:0.75rem;background:#fff;border-radius:6px;border:1px dashed #86efac;color:#4b5563;font-size:0.88rem;">
+          授課老師尚未開放本組評分權限。待老師開放並公告評分截止時間後，您可在此進行評分。
+        </div>` : isOverdue ? `
+        <div style="padding:0.75rem;background:#fef2f2;border-radius:6px;border:1px solid #fecaca;color:#991b1b;font-size:0.88rem;">
+          已超過老師規定的評分截止時間，組長評分權限已關閉。因未在時限內完成評分，全組組員期末考扣 5 分、組長本人扣 10 分懲處已生效。
+        </div>` : !otherMembers.length ? `
+        <div style="padding:0.75rem;background:#fff;border-radius:6px;border:1px dashed #86efac;color:#4b5563;font-size:0.88rem;">
+          目前組內尚無其他成員，無需評分。
+        </div>` : `
+        <form data-act="submit-peer-eval" style="margin-top:1rem;">
+          <div class="table-wrap">
+            <table class="roster" style="background:#fff;">
+              <thead>
+                <tr>
+                  <th>組員姓名 (學號)</th>
+                  <th>角色</th>
+                  <th>期末考扣分 (0 ~ -10)</th>
+                  <th>扣分原因 / 配合度說明 (選填)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${otherMembers.map(m => `
+                  <tr>
+                    <td><b>${esc(m.name)}</b> (${esc(m.id)})</td>
+                    <td>${m.isVice ? '<span class="tag-inline">副組長</span>' : '組員'}</td>
+                    <td>
+                      <select name="penalty_${esc(keyOf(m))}" style="padding:0.35rem 0.5rem;font-size:0.9rem;border:1.5px solid #cbd5e1;border-radius:4px;" ${isSubmitted ? 'disabled' : ''}>
+                        <option value="0" ${m.peerPenalty === 0 ? 'selected' : ''}>0 分（配合良好 / 正常）</option>
+                        <option value="-1" ${m.peerPenalty === -1 ? 'selected' : ''}>扣 1 分</option>
+                        <option value="-2" ${m.peerPenalty === -2 ? 'selected' : ''}>扣 2 分</option>
+                        <option value="-3" ${m.peerPenalty === -3 ? 'selected' : ''}>扣 3 分</option>
+                        <option value="-4" ${m.peerPenalty === -4 ? 'selected' : ''}>扣 4 分</option>
+                        <option value="-5" ${m.peerPenalty === -5 ? 'selected' : ''}>扣 5 分</option>
+                        <option value="-6" ${m.peerPenalty === -6 ? 'selected' : ''}>扣 6 分</option>
+                        <option value="-7" ${m.peerPenalty === -7 ? 'selected' : ''}>扣 7 分</option>
+                        <option value="-8" ${m.peerPenalty === -8 ? 'selected' : ''}>扣 8 分</option>
+                        <option value="-9" ${m.peerPenalty === -9 ? 'selected' : ''}>扣 9 分</option>
+                        <option value="-10" ${m.peerPenalty === -10 ? 'selected' : ''}>扣 10 分（完全未參與）</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input type="text" name="comment_${esc(keyOf(m))}" value="${esc(m.peerComment || '')}" placeholder="若有扣分請簡述原因" style="width:100%;max-width:260px;padding:0.35rem 0.5rem;font-size:0.85rem;" ${isSubmitted ? 'disabled' : ''}>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:0.85rem;display:flex;align-items:center;gap:0.75rem;">
+            ${isSubmitted ? `
+              <span style="color:#166534;font-weight:600;font-size:0.9rem;">✅ 評分已於先前送出完成。如需修改請直接調整並重新送出：</span>
+              <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.1rem;font-size:0.9rem;">重新更新評分 Update</button>
+            ` : `
+              <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.95rem;">送出評分 Submit Evaluation</button>
+              <span style="font-size:0.82rem;color:#64748b;">提交後即時生效，截止前仍可重複調整並更新。</span>
+            `}
+          </div>
+        </form>`}
+    </div>`;
   }
   return html + '</div>' + publicBoard();
 }
@@ -726,13 +955,23 @@ function exportJSON(c) {
 }
 
 function exportCSV(c) {
-  const rows = [['學號', '姓名', '組別', '角色', '自動分組']];
+  const rows = [['學號', '姓名', '組別', '角色', '自動分組', '期末考調分', '調分原因說明', '組長扣分評定']];
   c.students.forEach(s => {
     const g = c.groups.find(x => x.id === s.groupId);
-    rows.push([s.id, s.name, g ? g.name : '', s.isLeader ? '組長' : s.isVice ? '副組長' : '組員', s.autoAssigned ? 'Y' : 'N']);
+    const adj = calcAdjustment(c, g, s);
+    rows.push([
+      s.id,
+      s.name,
+      g ? g.name : '',
+      s.isLeader ? '組長' : s.isVice ? '副組長' : '組員',
+      s.autoAssigned ? 'Y' : 'N',
+      adj.score,
+      adj.reason,
+      s.peerPenalty ? `${s.peerPenalty}分` : '0分',
+    ]);
   });
   const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(csv, 'text/csv', `${c.year || 'grouping'}_${c.subject || 'data'}.csv`);
+  download(csv, 'text/csv', `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
 }
 
 function download(content, type, filename) {
@@ -806,6 +1045,34 @@ app.addEventListener('submit', e => {
       }
     });
   }
+  if (a === 'set-all-eval') {
+    const c = cur();
+    if (!c) return;
+    const deadline = f.evalDeadline.value;
+    if (!deadline) return alert('請選擇評分截止時間');
+    return act('teacher:set-all-peer-eval', { courseId: c.id, open: true, deadline },
+      { after: () => alert('已成功為全體組長開放評分權限！') });
+  }
+  if (a === 'submit-peer-eval') {
+    const c = cur(), s = me();
+    if (!c || !s || !s.groupId) return;
+    const g = c.groups.find(x => x.id === s.groupId);
+    if (!g) return;
+    const mates = members(c, g.id).filter(m => m.id !== s.id);
+    const evaluations = mates.map(m => {
+      const key = keyOf(m);
+      const sel = f[`penalty_${key}`];
+      const inp = f[`comment_${key}`];
+      return {
+        studentId: key,
+        penalty: sel ? parseInt(sel.value) || 0 : 0,
+        comment: inp ? inp.value.trim() : '',
+      };
+    });
+    if (!confirm('確定送出組員貢獻度評分？提交後成績加減分將即時更新。')) return;
+    return act('submit-peer-eval', { evaluations },
+      { after: () => alert('期末組員評分已成功送出！') });
+  }
   if (a === 'add-student') {
     const c = needCourse(); if (!c) return;
     return act('teacher:add-students', { courseId: c.id, students: [{ id: f.id.value.trim(), name: f.name.value.trim() }] });
@@ -877,6 +1144,23 @@ app.addEventListener('click', e => {
     if (!c) return;
     const allowEdit = btn.dataset.allow === '1';
     return act('teacher:toggle-group-edit', { courseId: c.id, groupId: id, allowEdit });
+  }
+  if (a === 'close-all-eval') {
+    if (!c) return;
+    if (!confirm('確定關閉全體組長的評分權限？')) return;
+    return act('teacher:set-all-peer-eval', { courseId: c.id, open: false },
+      { after: () => alert('已關閉全體組長評分權限。') });
+  }
+  if (a === 'toggle-single-eval') {
+    if (!c) return;
+    const open = btn.dataset.open === '1';
+    const targetGroup = c.groups.find(x => x.id === id);
+    let deadline = targetGroup ? targetGroup.peerEvalDeadline : '';
+    if (open && !deadline) {
+      deadline = prompt('請輸入該組評分截止時間 (格式: YYYY-MM-DDTHH:mm，例如 2026-06-30T23:59)：', new Date(Date.now() + 7*86400000).toISOString().slice(0, 16));
+      if (!deadline) return;
+    }
+    return act('teacher:set-peer-eval', { courseId: c.id, groupId: id, open, deadline });
   }
   if (a === 'export-json') return c && exportJSON(c);
   if (a === 'export-csv') return c && exportCSV(c);

@@ -181,6 +181,26 @@ export async function handleAction(request, env, db, body) {
         .bind(allow, c.id, g.id).run();
       return ok();
     }
+    if (op === 'set-peer-eval') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const g = c.groups.find(x => x.id === body.groupId);
+      if (!g) return bad('組別不存在', 404);
+      const open = body.open ? 1 : 0;
+      const deadline = body.deadline !== undefined ? String(body.deadline) : g.peerEvalDeadline;
+      await db.prepare('UPDATE groups SET peer_eval_open=?, peer_eval_deadline=? WHERE course_id=? AND id=?')
+        .bind(open, deadline, c.id, g.id).run();
+      return ok();
+    }
+    if (op === 'set-all-peer-eval') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const open = body.open ? 1 : 0;
+      const deadline = body.deadline !== undefined ? String(body.deadline) : '';
+      await db.prepare('UPDATE groups SET peer_eval_open=?, peer_eval_deadline=? WHERE course_id=?')
+        .bind(open, deadline, c.id).run();
+      return ok();
+    }
     if (op === 'auto-assign') {
       const c = course(body.courseId);
       if (!c || !c.groups.length) return bad('請先建立組別', 400);
@@ -237,6 +257,28 @@ export async function handleAction(request, env, db, body) {
     } else {
       await db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id).run();
     }
+    return ok();
+  }
+  if (action === 'submit-peer-eval') {
+    if (!self.isLeader) return bad('僅組長可進行評分 Leader only', 403);
+    if (!myGroup) return bad('尚未加入組別', 400);
+    if (!myGroup.peerEvalOpen) return bad('老師尚未開放本組組長評分權限 Peer evaluation is not open', 403);
+    if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分 Deadline passed', 403);
+
+    const evaluations = Array.isArray(body.evaluations) ? body.evaluations : [];
+    const stmts = [];
+    for (const ev of evaluations) {
+      const target = await resolveStudent(db, env, c, ev.studentId);
+      if (!target || target.groupId !== self.groupId || target.id === self.id) continue;
+      const penalty = Math.max(-10, Math.min(0, parseInt(ev.penalty) || 0));
+      const comment = String(ev.comment || '').trim().slice(0, 100);
+      stmts.push(db.prepare('UPDATE students SET peer_penalty=?, peer_comment=? WHERE course_id=? AND id=?')
+        .bind(penalty, comment, c.id, target.id));
+    }
+    // 標記該組組長已完成送出評分
+    stmts.push(db.prepare('UPDATE groups SET peer_eval_submitted=1 WHERE course_id=? AND id=?')
+      .bind(c.id, self.groupId));
+    if (stmts.length) await db.batch(stmts);
     return ok();
   }
   if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);

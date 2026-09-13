@@ -1133,5 +1133,96 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border: 1px dashed #fdba74;
 }
 
+/* ===== 期末考調分標籤 (Score Pill) ===== */
+.score-pill {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: help;
+  vertical-align: middle;
+  transition: transform 0.15s ease;
+}
+
+.score-pill:hover {
+  transform: scale(1.06);
+}
+
+.score-pill.positive {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.score-pill.negative {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.score-pill.neutral {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+/* 卡片頂部狀態列 */
+.group-card-top-tags {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.tag-status {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+
+.tag-status.submitted {
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.tag-status.overdue {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.tag-status.open {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.tag-status.no-leader {
+  background: #f1f5f9;
+  color: #dc2626;
+  border: 1px solid #cbd5e1;
+  font-weight: 700;
+}
+
+.student-info-col {
+  flex: 1;
+}
+
+.peer-eval-admin-box {
+  background: #fff;
+  border-left: 4px solid #10b981;
+}
+
+.eval-status-table th, .eval-status-table td {
+  font-size: 0.88rem;
+  padding: 0.6rem 0.75rem;
+}
+
 
 

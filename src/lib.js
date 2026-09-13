@@ -81,12 +81,83 @@ async function ensureGroupSchema(db) {
   try {
     await db.prepare('ALTER TABLE courses ADD COLUMN notice TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_open INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_deadline TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_submitted INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE students ADD COLUMN peer_penalty INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE students ADD COLUMN peer_comment TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
   _ensuredGroupSchema = true;
 }
 
-export const DEFAULT_NOTICE = `【分組注意事項】：
-1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
-2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+export const DEFAULT_NOTICE = `【期末考成績加減分與評分規定】：
+1. 有組長的組別每位成員期末考成績加 10 分。當老師開放組長評分權限時，組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 組長逾時未在老師開放評分權限時進行評分，全組成員扣 5 分，組長扣 10 分。
+3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+
+/* 判斷組長評分是否逾時 */
+export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
+
+/* 計算每位學生的期末考調分與原因 */
+export function calcAdjustment(c, g, s) {
+  if (!s.groupId || !g) {
+    return { score: 0, tag: '未分組', reason: '尚未加入組別，無期末考調分', status: 'none' };
+  }
+  const lead = c.students.find(x => x.groupId === g.id && x.isLeader);
+
+  // 情況 1：無組長組別（超過分組截止時間系統自動分組，且無組長）
+  if (!lead) {
+    return { score: -10, tag: '-10分', reason: '超過分組截止時間無組長，全員期末考扣 10 分', status: 'no-leader' };
+  }
+
+  // 情況 2：有組長組別
+  const isEvalOpen = !!g.peerEvalOpen;
+  const isSubmitted = !!g.peerEvalSubmitted;
+  const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
+
+  if (isOverdue) {
+    // 組長逾時未評分：組員扣 5 分（淨 +5），組長扣 10 分（淨 0）
+    if (s.isLeader) {
+      return { score: 0, tag: '±0分', reason: '組長未於評分截止時間前完成評分，組長罰扣 10 分 (淨調分 0 分)', status: 'leader-overdue' };
+    } else {
+      return { score: 5, tag: '+5分', reason: '組長逾時未完成評分，全組組員罰扣 5 分 (原加10分 - 5分 = +5分)', status: 'member-overdue' };
+    }
+  }
+
+  if (isSubmitted) {
+    // 組長已完成評分
+    if (s.isLeader) {
+      return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（組長本人）', status: 'leader-normal' };
+    } else {
+      const penalty = Math.max(-10, Math.min(0, Number(s.peerPenalty) || 0));
+      const finalScore = 10 + penalty;
+      const commentMsg = s.peerComment ? ` [原因: ${s.peerComment}]` : '';
+      return {
+        score: finalScore,
+        penalty,
+        tag: (finalScore >= 0 ? `+${finalScore}` : `${finalScore}`) + '分',
+        reason: penalty < 0 ? `基準加 10 分，經組長評定扣 ${Math.abs(penalty)} 分${commentMsg} (淨調分 +${finalScore} 分)` : '基準加 10 分，組長評定正常無扣分',
+        status: penalty < 0 ? 'member-penalized' : 'member-normal',
+      };
+    }
+  }
+
+  // 評分開放中但尚未截止且尚未提交，或尚未開放評分：暫時為基準加 10 分
+  if (s.isLeader) {
+    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分', status: 'leader-pending' };
+  } else {
+    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（若老師開放評分，組長可依貢獻度扣 0~-10 分）', status: 'member-pending' };
+  }
+}
 
 export async function loadState(db) {
   await ensureGroupSchema(db);
@@ -95,20 +166,38 @@ export async function loadState(db) {
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
   ]);
-  return courses.results.map(c => ({
-    id: c.id, year: c.year, subject: c.subject,
-    groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
-    notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
-    groups: groups.results.filter(g => g.course_id === c.id).map(g => ({
+  return courses.results.map(c => {
+    const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
       id: g.id,
       name: g.name,
       allowEdit: !!g.allow_edit,
-    })),
-    students: students.results.filter(s => s.course_id === c.id).map(s => ({
+      peerEvalOpen: !!g.peer_eval_open,
+      peerEvalDeadline: g.peer_eval_deadline || '',
+      peerEvalSubmitted: !!g.peer_eval_submitted,
+    }));
+    const courseStudents = students.results.filter(s => s.course_id === c.id).map(s => ({
       id: s.id, name: s.name, groupId: s.group_id,
       isLeader: !!s.is_leader, isVice: !!s.is_vice, autoAssigned: !!s.auto_assigned,
-    })),
-  }));
+      peerPenalty: Number(s.peer_penalty) || 0,
+      peerComment: s.peer_comment || '',
+    }));
+
+    // 計算每位同學的調分結果
+    const courseObj = {
+      id: c.id, year: c.year, subject: c.subject,
+      groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
+      notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
+      groups: courseGroups,
+      students: courseStudents,
+    };
+
+    courseStudents.forEach(s => {
+      const g = courseGroups.find(x => x.id === s.groupId);
+      s.adjustment = calcAdjustment(courseObj, g, s);
+    });
+
+    return courseObj;
+  });
 }
 
 export const cap = c => Number(c.groupSize) + Number(c.tolerance);

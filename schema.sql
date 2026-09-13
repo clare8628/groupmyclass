@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS courses (
 );
 
 CREATE TABLE IF NOT EXISTS groups (
-  id        TEXT NOT NULL,
-  course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  name      TEXT NOT NULL,
-  seq       INTEGER NOT NULL DEFAULT 0,
+  id                  TEXT NOT NULL,
+  course_id           TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  name                TEXT NOT NULL,
+  seq                 INTEGER NOT NULL DEFAULT 0,
+  allow_edit          INTEGER NOT NULL DEFAULT 0,
+  peer_eval_open      INTEGER NOT NULL DEFAULT 0,
+  peer_eval_deadline  TEXT NOT NULL DEFAULT '',
+  peer_eval_submitted INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (course_id, id)
 );
 
@@ -30,6 +34,8 @@ CREATE TABLE IF NOT EXISTS students (
   is_leader     INTEGER NOT NULL DEFAULT 0,
   is_vice       INTEGER NOT NULL DEFAULT 0,
   auto_assigned INTEGER NOT NULL DEFAULT 0,
+  peer_penalty  INTEGER NOT NULL DEFAULT 0,  -- 扣分 (0 到 -10)
+  peer_comment  TEXT NOT NULL DEFAULT '',    -- 扣分原因
   seq           INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (course_id, id)
 );
