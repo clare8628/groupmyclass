@@ -270,10 +270,10 @@ export async function handleAction(request, env, db, body) {
     for (const ev of evaluations) {
       const target = await resolveStudent(db, env, c, ev.studentId);
       if (!target || target.groupId !== self.groupId || target.id === self.id) continue;
-      const penalty = Math.max(-10, Math.min(0, parseInt(ev.penalty) || 0));
+      const bonus = Math.max(0, Math.min(10, parseInt(ev.penalty) || 0));
       const comment = String(ev.comment || '').trim().slice(0, 100);
       stmts.push(db.prepare('UPDATE students SET peer_penalty=?, peer_comment=? WHERE course_id=? AND id=?')
-        .bind(penalty, comment, c.id, target.id));
+        .bind(bonus, comment, c.id, target.id));
     }
     // 標記該組組長已完成送出評分
     stmts.push(db.prepare('UPDATE groups SET peer_eval_submitted=1 WHERE course_id=? AND id=?')

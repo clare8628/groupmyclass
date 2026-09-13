@@ -100,8 +100,8 @@ async function ensureGroupSchema(db) {
 }
 
 export const DEFAULT_NOTICE = `【期末考成績加減分與評分規定】：
-1. 有組長的組別每位成員期末考成績加 10 分。當老師開放組長評分權限時，組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
-2. 組長逾時未在老師開放評分權限時進行評分，全組成員扣 5 分，組長扣 10 分。
+1. 當老師開放組長評分權限時，組長可依據組員之貢獻或配合程度於期末時給予加分 (0 ~ 10 分)。
+2. 組長在老師開放評分權限時進行評分，組長自己可獲得 10 分的加分。
 3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
 /* 判斷組長評分是否逾時 */
@@ -124,38 +124,46 @@ export function calcAdjustment(c, g, s) {
   const isSubmitted = !!g.peerEvalSubmitted;
   const isOverdue = isEvalOpen && evalDeadlinePassed(g) && !isSubmitted;
 
-  if (isOverdue) {
-    // 組長逾時未評分：組員扣 5 分（淨 +5），組長扣 10 分（淨 0）
-    if (s.isLeader) {
-      return { score: 0, tag: '±0分', reason: '組長未於評分截止時間前完成評分，組長罰扣 10 分 (淨調分 0 分)', status: 'leader-overdue' };
-    } else {
-      return { score: 5, tag: '+5分', reason: '組長逾時未完成評分，全組組員罰扣 5 分 (原加10分 - 5分 = +5分)', status: 'member-overdue' };
-    }
-  }
-
   if (isSubmitted) {
     // 組長已完成評分
     if (s.isLeader) {
-      return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（組長本人）', status: 'leader-normal' };
+      return { score: 10, tag: '+10分', reason: '組長於老師開放評分權限時完成評分，組長自己獲得加 10 分', status: 'leader-normal' };
     } else {
-      const penalty = Math.max(-10, Math.min(0, Number(s.peerPenalty) || 0));
-      const finalScore = 10 + penalty;
+      const bonus = Math.max(0, Math.min(10, Number(s.peerPenalty) || 0));
       const commentMsg = s.peerComment ? ` [原因: ${s.peerComment}]` : '';
       return {
-        score: finalScore,
-        penalty,
-        tag: (finalScore >= 0 ? `+${finalScore}` : `${finalScore}`) + '分',
-        reason: penalty < 0 ? `基準加 10 分，經組長評定扣 ${Math.abs(penalty)} 分${commentMsg} (淨調分 +${finalScore} 分)` : '基準加 10 分，組長評定正常無扣分',
-        status: penalty < 0 ? 'member-penalized' : 'member-normal',
+        score: bonus,
+        penalty: bonus,
+        tag: (bonus > 0 ? `+${bonus}` : `${bonus}`) + '分',
+        reason: bonus > 0 ? `經組長依貢獻度評定加 ${bonus} 分${commentMsg}` : '組長評定加 0 分（無額外加分）',
+        status: bonus > 0 ? 'member-bonus' : 'member-zero',
       };
     }
   }
 
-  // 評分開放中但尚未截止且尚未提交，或尚未開放評分：暫時為基準加 10 分
+  if (isOverdue) {
+    // 開放後已逾時但組長未進行評分
+    if (s.isLeader) {
+      return { score: 0, tag: '±0分', reason: '組長未於評分截止時間前進行評分，無法獲得 10 分加分', status: 'leader-overdue' };
+    } else {
+      return { score: 0, tag: '±0分', reason: '組長逾時未進行評分，組員無法獲得加分', status: 'member-overdue' };
+    }
+  }
+
+  // 評分開放中但尚未截止且尚未提交，或老師尚未開放評分
+  if (isEvalOpen) {
+    if (s.isLeader) {
+      return { score: 0, tag: '評分中', reason: '組長評分進行中（完成評分後組長自己可獲得 10 分加分）', status: 'leader-pending' };
+    } else {
+      return { score: 0, tag: '評分中', reason: '組長評分進行中（組長可依貢獻度給予 0~10 分加分）', status: 'member-pending' };
+    }
+  }
+
+  // 老師尚未開放評分
   if (s.isLeader) {
-    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分', status: 'leader-pending' };
+    return { score: 0, tag: '待開放', reason: '待老師開放評分權限並完成評分後，組長可獲得 10 分加分', status: 'leader-pending' };
   } else {
-    return { score: 10, tag: '+10分', reason: '有組長組別基準加 10 分（若老師開放評分，組長可依貢獻度扣 0~-10 分）', status: 'member-pending' };
+    return { score: 0, tag: '待開放', reason: '待老師開放評分權限後，組長可依貢獻度給予 0~10 分加分', status: 'member-pending' };
   }
 }
 
