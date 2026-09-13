@@ -55,11 +55,18 @@ export async function handleAction(request, env, db, body) {
     if (op === 'save-course') {
       const exists = course(body.id);
       const id = exists ? body.id : ('c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
-      const args = [body.year || '', body.subject || '', Number(body.groupSize) || 4, Number(body.tolerance) || 0, body.deadline || ''];
+      const args = [
+        body.year || '',
+        body.subject || '',
+        Number(body.groupSize) || 4,
+        Number(body.tolerance) || 0,
+        body.deadline || '',
+        body.notice !== undefined ? String(body.notice) : '',
+      ];
       if (exists) {
-        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, deadline=? WHERE id=?').bind(...args, id).run();
+        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, deadline=?, notice=? WHERE id=?').bind(...args, id).run();
       } else {
-        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, deadline, created_at) VALUES (?,?,?,?,?,?,?)')
+        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, deadline, notice, created_at) VALUES (?,?,?,?,?,?,?,?)')
           .bind(id, ...args, Date.now()).run();
       }
       return ok({ courseId: id });
@@ -70,6 +77,21 @@ export async function handleAction(request, env, db, body) {
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM courses WHERE id = ?').bind(body.courseId),
       ]);
+      return ok();
+    }
+    if (op === 'del-groups') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const groupIds = Array.isArray(body.groupIds) ? body.groupIds : [];
+      if (!groupIds.length) return bad('請選擇欲刪除的組別', 400);
+
+      const stmts = [];
+      for (const gid of groupIds) {
+        // 將該組成員重置為未分組
+        stmts.push(db.prepare('UPDATE students SET group_id=NULL, is_leader=0, is_vice=0, auto_assigned=0 WHERE course_id=? AND group_id=?').bind(c.id, gid));
+        stmts.push(db.prepare('DELETE FROM groups WHERE course_id=? AND id=?').bind(c.id, gid));
+      }
+      await db.batch(stmts);
       return ok();
     }
     if (op === 'add-students') {
@@ -186,7 +208,7 @@ export async function handleAction(request, env, db, body) {
   const canEdit = !deadlinePassed(c) || (myGroup && myGroup.allowEdit);
 
   if (action === 'claim-leader') {
-    if (deadlinePassed(c)) return bad('已超過分組時限，無法再登記為組長 Deadline passed', 403);
+    if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed', 403);
     let gid = self.groupId;
     if (!gid) {
       const empty = c.groups.find(g => !membersOf(c, g.id).length);
@@ -204,7 +226,7 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'unclaim-leader') {
-    if (!canEdit) return bad('已超過分組時限，無法取消組長身分 Deadline passed', 403);
+    if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分 Deadline passed', 403);
     const vice = membersOf(c, self.groupId).find(m => m.isVice && m.id !== self.id);
     if (vice) {
       // 副組長自動晉級組長，原組長退為一般組員
@@ -218,7 +240,7 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);
-  if (!canEdit) return bad('已超過分組時限，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
+  if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
 
   if (action === 'pick') {
     const t = await resolveStudent(db, env, c, body.studentId);

@@ -77,11 +77,16 @@ async function ensureGroupSchema(db) {
   if (_ensuredGroupSchema) return;
   try {
     await db.prepare('ALTER TABLE groups ADD COLUMN allow_edit INTEGER NOT NULL DEFAULT 0').run();
-  } catch (_) {
-    // 欄位已存在時略過
-  }
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN notice TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
   _ensuredGroupSchema = true;
 }
+
+export const DEFAULT_NOTICE = `【分組注意事項】：
+1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
 export async function loadState(db) {
   await ensureGroupSchema(db);
@@ -93,6 +98,7 @@ export async function loadState(db) {
   return courses.results.map(c => ({
     id: c.id, year: c.year, subject: c.subject,
     groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
+    notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
     groups: groups.results.filter(g => g.course_id === c.id).map(g => ({
       id: g.id,
       name: g.name,

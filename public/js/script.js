@@ -150,7 +150,7 @@ function publicBoard({ withUnassigned = true } = {}) {
           <div class="course-meta-tags">
             <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（門檻 ${minCap(c)} 人，上限 ${cap(c)} 人）</span>
             <span class="meta-pill">📊 總學生數 ${c.students.length} 人 · ${c.groups.length} 組</span>
-            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 時限: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
+            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 分組截止時間: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
           </div>` : ''}
       </div>
     </div>
@@ -292,10 +292,33 @@ function courseSelectionBlock() {
   </section>`;
 }
 
+/* ---- 前台：公布欄區塊（置於第一個區塊 Step 1 上方） ---- */
+function bulletinBlock(c) {
+  const notice = (c && c.notice) ? c.notice : `【分組注意事項】：
+1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+
+  return `
+  <section class="block-section bulletin-section" id="bulletin-block">
+    <div class="bulletin-badge-tag">📢 重要公告 BULLETIN</div>
+    <div class="bulletin-header">
+      <div class="bulletin-title-wrap">
+        <h2>分組注意事項與評分規定</h2>
+        ${c ? `<span class="bulletin-course-pill">${esc(courseLabel(c))}</span>` : ''}
+      </div>
+    </div>
+    <div class="bulletin-body">
+      ${esc(notice).replace(/\n/g, '<br>')}
+    </div>
+  </section>`;
+}
+
 function authScreen() {
+  const c = cur();
   return `
   ${loginMode === 'teacher' ? loginCard() : ''}
   <div class="home-flow">
+    ${bulletinBlock(c)}
     ${howto()}
     <div class="home-main-layout">
       ${courseTreePublic()}
@@ -342,7 +365,7 @@ function howto() {
         <div class="step-num">4</div>
         <div class="step-info">
           <strong>截止後自動分配</strong>
-          <p>超過時限未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。</p>
+          <p>超過分組截止時間未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。</p>
         </div>
       </div>
     </div>
@@ -434,18 +457,26 @@ function teacherNoCourse() {
   <div class="teacher-section">
     <h2>課程設定 Course setup</h2>
     <p class="file-path">建立新課程：填寫學年度與科目名稱後儲存，會出現在左側樹狀清單。</p>
-    ${courseForm({ year: '', subject: '', groupSize: 4, tolerance: 1, deadline: '' })}
+    ${courseForm({ year: '', subject: '', groupSize: 4, tolerance: 1, deadline: '', notice: '' })}
   </div>`;
 }
 
 function courseForm(c) {
+  const noticeVal = (c && c.notice !== undefined && c.notice !== null) ? c.notice : `【分組注意事項】：
+1. 有組長的組別每位成員期末考成績加 10 分，但組長可依據貢獻或配合程度於期末時給予扣分 (-0 ~ -10 分)。
+2. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+
   return `<form data-act="save-course">
     <div class="form-row">
       <div class="form-group"><label>學年度 Academic year</label><input name="year" value="${esc(c.year)}" placeholder="114-1" required></div>
       <div class="form-group"><label>科目名稱 Subject</label><input name="subject" value="${esc(c.subject)}" placeholder="資料結構" required></div>
       <div class="form-group"><label>每組人數 Group size</label><input type="number" min="1" name="groupSize" value="${c.groupSize}"></div>
       <div class="form-group"><label>誤差人數 ± Tolerance</label><input type="number" min="0" name="tolerance" value="${c.tolerance}"></div>
-      <div class="form-group full"><label>分組時限 Deadline</label><input type="datetime-local" name="deadline" value="${esc(c.deadline)}"></div>
+      <div class="form-group full"><label>分組截止時間 Deadline</label><input type="datetime-local" name="deadline" value="${esc(c.deadline)}"></div>
+      <div class="form-group full">
+        <label>公布欄注意事項 Notice (顯示於前台最上方)</label>
+        <textarea name="notice" rows="4" style="width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px;font:inherit;">${esc(noticeVal)}</textarea>
+      </div>
     </div>
     <button class="btn btn-primary" type="submit">儲存 Save</button>
   </form>`;
@@ -480,7 +511,31 @@ function teacherCourse(c) {
       <button class="btn btn-secondary" data-act="export-json">匯出 JSON</button>
       <button class="btn btn-secondary" data-act="export-csv">匯出 CSV</button>
     </div>
-    ${c.deadline ? `<p class="file-path">時限 Deadline: ${esc(c.deadline.replace('T', ' '))} — ${deadlinePassed(c) ? '已截止（未選學生已自動分配）Closed' : '進行中 Open'}</p>` : ''}
+    ${c.deadline ? `<p class="file-path">分組截止時間 Deadline: ${esc(c.deadline.replace('T', ' '))} — ${deadlinePassed(c) ? '已截止（未選學生已自動分配）Closed' : '進行中 Open'}</p>` : ''}
+
+    <!-- 勾選要刪除的分組組別 -->
+    ${c.groups.length ? `
+      <div class="select-del-groups-box" style="margin-top:1.5rem;padding:1.2rem;background:#fffaf0;border:1.5px solid #fdebd0;border-radius:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <strong style="color:#d35400;">🗑️ 勾選刪除特定分組組別 Select groups to delete</strong>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="tab-btn" type="button" data-act="select-all-del-groups">全選 All</button>
+            <button class="tab-btn" type="button" data-act="unselect-all-del-groups">取消全選 None</button>
+            <button class="btn btn-danger" type="button" data-act="del-selected-groups" style="padding:0.4rem 0.9rem;font-size:0.85rem;margin:0;">刪除勾選組別</button>
+          </div>
+        </div>
+        <p class="file-path" style="margin:0 0 0.75rem 0;">勾選欲刪除的組別並點擊「刪除勾選組別」，被刪組別之組員將退回未分組名單，其餘組別與名單不受影響。</p>
+        <div class="del-groups-grid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:0.5rem;">
+          ${c.groups.map(g => {
+            const count = members(c, g.id).length;
+            return `
+            <label style="display:flex;align-items:center;gap:0.4rem;background:#fff;padding:0.5rem 0.75rem;border:1px solid #ebd4b9;border-radius:6px;cursor:pointer;font-size:0.9rem;">
+              <input type="checkbox" name="del_group_cb" value="${esc(g.id)}">
+              <span><b>${esc(g.name)}</b> (${count}人)</span>
+            </label>`;
+          }).join('')}
+        </div>
+      </div>` : ''}
   </div>
 
   <div class="roster-row">
@@ -562,8 +617,8 @@ function studentScreen() {
         <div class="deadline-alert locked">
           <span class="alert-icon">⏳</span>
           <div>
-            <strong>已超過分組時限，組長無法更換組員 Deadline passed</strong>
-            <p>目前時限已截止，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
+            <strong>已超過分組截止時間，組長無法更換組員 Deadline passed</strong>
+            <p>目前分組截止時間已過，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
           </div>
         </div>`;
     } else if (closed && canEdit) {
@@ -580,7 +635,7 @@ function studentScreen() {
       html += `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
     }
   } else if (closed) {
-    html += '<p class="file-path">已超過分組時限，無法再變更。Deadline passed.</p>';
+    html += '<p class="file-path">已超過分組截止時間，無法再變更。Deadline passed.</p>';
   } else if (otherLeader) {
     html += `<p class="file-path">本組組長為 ${esc(otherLeader.name)}，無法重複擔任。Group already has a leader.</p>`;
   } else {
@@ -613,7 +668,7 @@ function studentScreen() {
       ${!meetsThreshold ? `
         <div class="threshold-notice">
           <strong>⚠️ 本組目前人數（${mates.length} 人）尚未達分組最低門檻（${min} 人）</strong>
-          <p>請於分組時限截止前再挑選至少 <b>${needed}</b> 位成員。若時限截止時仍未達門檻，本組將<b>無法完成建立並會自動解散</b>，成員將由系統重新隨機分配。</p>
+          <p>請於分組截止時間前再挑選至少 <b>${needed}</b> 位成員。若超過分組截止時間仍未達門檻，本組將<b>無法完成建立並會自動解散</b>，成員將由系統重新隨機分配。</p>
         </div>` : ''}
       <div class="pick-list" style="margin-top:0.75rem">${mates.map(m => `
         <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
@@ -742,6 +797,7 @@ app.addEventListener('submit', e => {
       groupSize: Math.max(1, parseInt(f.groupSize.value) || 4),
       tolerance: Math.max(0, parseInt(f.tolerance.value) || 0),
       deadline: f.deadline.value,
+      notice: f.notice ? f.notice.value : '',
     }).then(data => {
       if (data && data.courseId && data.courseId !== state.currentId) {
         state.currentId = data.courseId;
@@ -796,6 +852,21 @@ app.addEventListener('click', e => {
     if (!c.groups.length) return alert('本科目尚無分組 No groups to clear');
     if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與課程設定皆會完整保留，僅清空組別與組別分配。`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
+  }
+  if (a === 'select-all-del-groups') {
+    document.querySelectorAll('input[name="del_group_cb"]').forEach(cb => { cb.checked = true; });
+    return;
+  }
+  if (a === 'unselect-all-del-groups') {
+    document.querySelectorAll('input[name="del_group_cb"]').forEach(cb => { cb.checked = false; });
+    return;
+  }
+  if (a === 'del-selected-groups') {
+    if (!c) return;
+    const checked = Array.from(document.querySelectorAll('input[name="del_group_cb"]:checked')).map(cb => cb.value);
+    if (!checked.length) return alert('請先勾選欲刪除的組別 Please select at least one group');
+    if (!confirm(`確定要刪除勾選的 ${checked.length} 個組別？\n\n被刪組別的組員將退回未分組名單，其餘組別與修課名單不受影響。`)) return;
+    return act('teacher:del-groups', { courseId: c.id, groupIds: checked });
   }
   if (a === 'auto-assign') {
     if (!c) return;
