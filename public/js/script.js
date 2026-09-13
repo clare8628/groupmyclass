@@ -164,14 +164,22 @@ function publicBoard({ withUnassigned = true } = {}) {
       const lead = leaderOf(c, g.id);
       const autoCount = list.filter(s => s.autoAssigned).length;
       const full = list.length >= cap(c);
-      return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''}">
+      const isTeacher = state.session && state.session.role === 'teacher';
+      return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''} ${g.allowEdit ? 'reopened' : ''}">
         ${autoCount ? `<span class="tag">自動 ${autoCount}</span>` : ''}
         <h3>${esc(g.name)} <small>${list.length}/${cap(c)} 人${full ? ' · 已滿' : ''}</small></h3>
         <p class="file-path">組長 Leader: ${lead ? esc(lead.name) : '尚未產生 — none'}</p>
+        ${g.allowEdit ? `<div class="group-badge-reopened">🔓 老師已開放挑選權限</div>` : ''}
         <div class="students">${list.length ? list.map(s => `
           <div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
             ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' · 自動' : ''}
           </div>`).join('') : '<div class="student">（尚無成員 Empty）</div>'}</div>
+        ${isTeacher ? `
+          <div class="group-teacher-ctrls">
+            <button class="tab-btn ${g.allowEdit ? 'on' : ''}" data-act="toggle-group-edit" data-id="${g.id}" data-allow="${g.allowEdit ? '0' : '1'}">
+              ${g.allowEdit ? '🔒 取消開放挑選' : '🔓 重新開放組長挑選'}
+            </button>
+          </div>` : ''}
       </div>`;
     }).join('')}</div>` : '<p class="file-path empty-notice">老師尚未建立組別，或由學生自行擔任組長開組。No groups yet.</p>') : ''}
   </section>
@@ -532,6 +540,7 @@ function studentScreen() {
   const g = c.groups.find(x => x.id === s.groupId);
   const mates = g ? members(c, g.id) : [];
   const closed = deadlinePassed(c);
+  const canEdit = !closed || (g && g.allowEdit);
   const otherLeader = g ? mates.find(m => m.isLeader && m.id !== s.id) : null;
 
   let html = `
@@ -543,10 +552,31 @@ function studentScreen() {
       <strong>組別 Group:</strong> ${g ? esc(g.name) : '未分組 Unassigned'}${s.autoAssigned ? '（自動分配 Auto-assigned）' : ''}
     </div>`;
 
-  if (closed) {
+  if (s.isLeader) {
+    if (closed && !canEdit) {
+      html += `
+        <div class="deadline-alert locked">
+          <span class="alert-icon">⏳</span>
+          <div>
+            <strong>已超過分組時限，組長無法更換組員 Deadline passed</strong>
+            <p>目前時限已截止，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
+          </div>
+        </div>`;
+    } else if (closed && canEdit) {
+      html += `
+        <div class="deadline-alert unlocked">
+          <span class="alert-icon">🔓</span>
+          <div>
+            <strong>老師已重新開放本科目本組挑選權限 Permission re-opened</strong>
+            <p>授課老師已特別為本組開放重新挑選權限，您現在可以更換組員或調整副組長。</p>
+          </div>
+        </div>
+        <button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
+    } else {
+      html += `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
+    }
+  } else if (closed) {
     html += '<p class="file-path">已超過分組時限，無法再變更。Deadline passed.</p>';
-  } else if (s.isLeader) {
-    html += `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>`;
   } else if (otherLeader) {
     html += `<p class="file-path">本組組長為 ${esc(otherLeader.name)}，無法重複擔任。Group already has a leader.</p>`;
   } else {
@@ -558,24 +588,44 @@ function studentScreen() {
       <p class="file-path">${g ? '成為本組組長後即可挑選組員。' : '將自動為你開一組並擔任組長。'}</p>`;
   }
 
-  if (s.isLeader && g && !closed) {
-    const pool = unassigned(c);
+  /* 組長專用成員管理區塊 */
+  if (s.isLeader && g) {
+    /* 1. 已挑選成員（顯示在挑選組員區塊上方） */
     html += `
-    <h3 style="margin-top:1.5rem">挑選組員 Pick members（上限 ${cap(c)} 人，目前 ${mates.length}）</h3>
-    <div class="pick-list">${pool.length ? pool.map(p => `
-      <label class="student"><input type="checkbox" data-act="pick" data-id="${esc(keyOf(p))}"> ${esc(p.name)} (${esc(p.id)})</label>`).join('')
-        : '<p class="file-path">目前沒有未分組的學生 No unassigned students.</p>'}</div>
+    <div class="selected-members-panel">
+      <div class="panel-header">
+        <h3 style="margin:0">已挑選成員 Selected members <small>（上限 ${cap(c)} 人，目前 ${mates.length} 人${mates.length >= cap(c) ? ' · 已滿' : ''}）</small></h3>
+        ${canEdit ? '<span class="status-badge can-edit">可更換組員</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
+      </div>
+      <div class="pick-list" style="margin-top:0.75rem">${mates.map(m => `
+        <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
+          <span class="student-name-tag">${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長' : m.isVice ? ' — 副組長' : ''}</span>
+          ${(canEdit && m.id !== s.id) ? `
+            <button class="tab-btn ${m.isVice ? 'on' : ''}" data-act="toggle-vice" data-id="${esc(keyOf(m))}">
+              ${m.isVice ? '取消副組長' : '設為副組長'}</button>
+            <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}">移出</button>` : ''}
+        </div>`).join('')}</div>
+      <p class="file-path">每組僅能有一位副組長，重新指定會自動取代前一位。One vice leader per group.</p>
+    </div>`;
 
-    <h3 style="margin-top:1.5rem">本組成員 My members <small>（可標記副組長 Mark a vice leader）</small></h3>
-    <div class="pick-list">${mates.map(m => `
-      <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
-        ${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長' : m.isVice ? ' — 副組長' : ''}
-        ${m.id !== s.id ? `
-          <button class="tab-btn ${m.isVice ? 'on' : ''}" data-act="toggle-vice" data-id="${esc(keyOf(m))}">
-            ${m.isVice ? '取消副組長' : '設為副組長'}</button>
-          <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}">移出</button>` : ''}
-      </div>`).join('')}</div>
-    <p class="file-path">每組僅能有一位副組長，重新指定會自動取代前一位。One vice leader per group.</p>`;
+    /* 2. 挑選組員（顯示在已挑選成員區塊下方） */
+    if (canEdit) {
+      const pool = unassigned(c);
+      const isFull = mates.length >= cap(c);
+      html += `
+      <div class="pick-members-panel" style="margin-top:1.5rem">
+        <div class="panel-header">
+          <h3 style="margin:0">挑選組員 Pick members</h3>
+          ${isFull ? '<span class="badge-full">本組人數已達上限，無法再挑選</span>' : ''}
+        </div>
+        <div class="pick-list" style="margin-top:0.75rem">${pool.length ? pool.map(p => `
+          <label class="student ${isFull ? 'disabled' : ''}">
+            <input type="checkbox" data-act="pick" data-id="${esc(keyOf(p))}" ${isFull ? 'disabled' : ''}>
+            ${esc(p.name)} (${esc(p.id)})
+          </label>`).join('')
+          : '<p class="file-path">目前沒有未分組的學生 No unassigned students.</p>'}</div>
+      </div>`;
+    }
   }
   return html + '</div>' + publicBoard();
 }
@@ -731,6 +781,11 @@ app.addEventListener('click', e => {
     if (!c) return;
     if (!c.groups.length) return alert('請先建立組別 Create groups first');
     return act('teacher:auto-assign', { courseId: c.id });
+  }
+  if (a === 'toggle-group-edit') {
+    if (!c) return;
+    const allowEdit = btn.dataset.allow === '1';
+    return act('teacher:toggle-group-edit', { courseId: c.id, groupId: id, allowEdit });
   }
   if (a === 'export-json') return c && exportJSON(c);
   if (a === 'export-csv') return c && exportCSV(c);

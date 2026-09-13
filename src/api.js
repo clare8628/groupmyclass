@@ -149,6 +149,16 @@ export async function handleAction(request, env, db, body) {
       ]);
       return ok();
     }
+    if (op === 'toggle-group-edit') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const g = c.groups.find(x => x.id === body.groupId);
+      if (!g) return bad('組別不存在', 404);
+      const allow = body.allowEdit ? 1 : 0;
+      await db.prepare('UPDATE groups SET allow_edit=? WHERE course_id=? AND id=?')
+        .bind(allow, c.id, g.id).run();
+      return ok();
+    }
     if (op === 'auto-assign') {
       const c = course(body.courseId);
       if (!c || !c.groups.length) return bad('請先建立組別', 400);
@@ -171,9 +181,12 @@ export async function handleAction(request, env, db, body) {
   if (!c) return bad('課程不存在', 404);
   const self = c.students.find(s => s.id === session.id);
   if (!self) return bad('學生不存在', 404);
-  if (deadlinePassed(c)) return bad('已超過分組時限 Deadline passed', 403);
+
+  const myGroup = self.groupId ? c.groups.find(g => g.id === self.groupId) : null;
+  const canEdit = !deadlinePassed(c) || (myGroup && myGroup.allowEdit);
 
   if (action === 'claim-leader') {
+    if (deadlinePassed(c)) return bad('已超過分組時限，無法再登記為組長 Deadline passed', 403);
     let gid = self.groupId;
     if (!gid) {
       const empty = c.groups.find(g => !membersOf(c, g.id).length);
@@ -191,10 +204,12 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'unclaim-leader') {
+    if (!canEdit) return bad('已超過分組時限，無法取消組長身分 Deadline passed', 403);
     await db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id).run();
     return ok();
   }
   if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);
+  if (!canEdit) return bad('已超過分組時限，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
 
   if (action === 'pick') {
     const t = await resolveStudent(db, env, c, body.studentId);

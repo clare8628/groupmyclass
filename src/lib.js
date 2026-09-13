@@ -72,7 +72,19 @@ export const sessionCookie = (token, maxAge = 12 * 3600) =>
 export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0';
 
 /* ===== 狀態讀取 ===== */
+let _ensuredGroupSchema = false;
+async function ensureGroupSchema(db) {
+  if (_ensuredGroupSchema) return;
+  try {
+    await db.prepare('ALTER TABLE groups ADD COLUMN allow_edit INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {
+    // 欄位已存在時略過
+  }
+  _ensuredGroupSchema = true;
+}
+
 export async function loadState(db) {
+  await ensureGroupSchema(db);
   const [courses, groups, students] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
@@ -81,7 +93,11 @@ export async function loadState(db) {
   return courses.results.map(c => ({
     id: c.id, year: c.year, subject: c.subject,
     groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
-    groups: groups.results.filter(g => g.course_id === c.id).map(g => ({ id: g.id, name: g.name })),
+    groups: groups.results.filter(g => g.course_id === c.id).map(g => ({
+      id: g.id,
+      name: g.name,
+      allowEdit: !!g.allow_edit,
+    })),
     students: students.results.filter(s => s.course_id === c.id).map(s => ({
       id: s.id, name: s.name, groupId: s.group_id,
       isLeader: !!s.is_leader, isVice: !!s.is_vice, autoAssigned: !!s.auto_assigned,

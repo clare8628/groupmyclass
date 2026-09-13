@@ -880,3 +880,140 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   }
 }
 
+/* ===== 組長挑選與已挑選成員區塊樣式 ===== */
+.selected-members-panel {
+  background: #f8fbfa;
+  border: 1.5px solid #cbeae2;
+  border-radius: 8px;
+  padding: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.pick-members-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+}
+
+.status-badge.can-edit {
+  background: #e6f9f5;
+  color: #0b7a63;
+  border: 1px solid #a3ebd8;
+}
+
+.status-badge.is-locked {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.badge-full {
+  font-size: 0.75rem;
+  background: #fff3cd;
+  color: #856404;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  border: 1px solid #ffeeba;
+}
+
+.student-name-tag {
+  flex: 1;
+}
+
+.pick-list .student.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 截止時限鎖定與開放通知橫幅 */
+.deadline-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 1rem 1.2rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.deadline-alert.locked {
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+  border-left: 4px solid #e53e3e;
+  color: #9b2c2c;
+}
+
+.deadline-alert.unlocked {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-left: 4px solid #16a34a;
+  color: #166534;
+}
+
+.deadline-alert .alert-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.deadline-alert strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.25rem;
+}
+
+.deadline-alert p {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+/* 卡片與老師後台控制 */
+.group-card.reopened {
+  border-color: #10b981;
+}
+
+.group-badge-reopened {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #047857;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  margin-bottom: 0.6rem;
+  display: inline-block;
+}
+
+.group-teacher-ctrls {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.group-teacher-ctrls .tab-btn {
+  width: 100%;
+  font-size: 0.8rem;
+  padding: 0.4rem;
+  text-align: center;
+}
+
+
