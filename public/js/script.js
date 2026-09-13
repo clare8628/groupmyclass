@@ -210,11 +210,14 @@ function publicBoard({ withUnassigned = true } = {}) {
   const isLeader = self && self.isLeader;
   const hideUnassignedForLeader = isLeader && closed && !canEdit;
 
+  // 若為組長登入狀態（或老師切換至組長預覽模式），因為組長已登入挑選，故移除「Step 2」步驟標籤
+  const isLeaderView = isLeader || (state.session && state.session.role === 'teacher' && teacherPreviewMode === 'leader');
+
   return `
   <section class="block-section group-status-section" id="group-status-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <span class="step-badge">Step 2</span>
+        ${!isLeaderView ? '<span class="step-badge">Step 2</span>' : ''}
         <h2>分組現況 Group status</h2>
       </div>
       ${!state.session ? `
