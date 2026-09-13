@@ -1123,6 +1123,19 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border: 1px solid #fdba74;
 }
 
+.bulletin-time-tag {
+  background: #fff;
+  color: #78350f;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #fde68a;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .bulletin-body {
   font-size: 0.96rem;
   color: #431407;

@@ -3,6 +3,7 @@ const APP_NAME = '學生分組系統';
 const APP_VERSION = 'v2.0.0';   // 顯示於前台標題列（v2 = Cloudflare D1 共用資料）
 
 const CURRENT_KEY = 'groupstu_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
+const PREVIEW_KEY = 'groupstu_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
 const POLL_MS = 5000;
 
 let state = {
@@ -12,7 +13,7 @@ let state = {
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
 let teacherView = 'course';   // 後台主區：'course' | 'settings'
-let teacherPreviewMode = 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
+let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let busy = false;
 let lastSig = '';
 
@@ -433,6 +434,8 @@ function bulletinBlock(c) {
 2. 組長在老師開放評分權限時進行評分，組長自己可獲得 10 分的加分。
 3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
+  const timeStr = (c && c.noticeTime) ? esc(c.noticeTime) : '';
+
   return `
   <section class="block-section bulletin-section" id="bulletin-block">
     <div class="bulletin-badge-tag">📢 重要公告 BULLETIN</div>
@@ -440,6 +443,7 @@ function bulletinBlock(c) {
       <div class="bulletin-title-wrap">
         <h2>分組注意事項與評分規定</h2>
         ${c ? `<span class="bulletin-course-pill">${esc(courseLabel(c))}</span>` : ''}
+        ${timeStr ? `<span class="bulletin-time-tag">🕒 發布時間：${timeStr}</span>` : ''}
       </div>
     </div>
     <div class="bulletin-body">
@@ -1263,9 +1267,19 @@ app.addEventListener('click', e => {
 
   if (a === 'switch-preview') {
     teacherPreviewMode = btn.dataset.mode || 'admin';
+    localStorage.setItem(PREVIEW_KEY, teacherPreviewMode);
     return render();
   }
-  if (a === 'logout') return act('logout', {}, { after: () => { loginMode = null; teacherView = 'course'; teacherPreviewMode = 'admin'; } });
+  if (a === 'logout') {
+    return act('logout', {}, {
+      after: () => {
+        loginMode = null;
+        teacherView = 'course';
+        teacherPreviewMode = 'admin';
+        localStorage.removeItem(PREVIEW_KEY);
+      }
+    });
+  }
   if (a === 'show-teacher-login') { e.preventDefault(); loginMode = loginMode === 'teacher' ? null : 'teacher'; return render(); }
   if (a === 'show-student-login') { e.preventDefault(); loginMode = loginMode === 'student' ? null : 'student'; return render(); }
   if (a === 'close-login') { loginMode = null; return render(); }

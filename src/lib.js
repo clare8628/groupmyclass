@@ -85,6 +85,9 @@ async function ensureGroupSchema(db) {
     await db.prepare('ALTER TABLE courses ADD COLUMN notice TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN notice_time TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
+  try {
     await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_open INTEGER NOT NULL DEFAULT 0').run();
   } catch (_) {}
   try {
@@ -118,6 +121,7 @@ export const editDeadlinePassed = g => !!g.editDeadline && Date.now() > new Date
 
 /* 判斷組長當前是否具備挑選／更換組員之權限 */
 export function canGroupLeaderEdit(c, g) {
+  if (!c) return false;
   if (!deadlinePassed(c)) return true;
   if (!g || !g.allowEdit) return false;
   if (g.editDeadline && editDeadlinePassed(g)) return false;
@@ -215,6 +219,7 @@ export async function loadState(db) {
       id: c.id, year: c.year, subject: c.subject,
       groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
       notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
+      noticeTime: c.notice_time || (c.created_at ? new Date(c.created_at + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''),
       hasSnapshot: snapshotSet.has(c.id),
       groups: courseGroups,
       students: courseStudents,

@@ -68,18 +68,23 @@ export async function handleAction(request, env, db, body) {
     if (op === 'save-course') {
       const exists = course(body.id);
       const id = exists ? body.id : ('c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+      const nowStr = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+      const noticeVal = body.notice !== undefined ? String(body.notice) : '';
+      const noticeTime = (exists && exists.notice === noticeVal && exists.noticeTime) ? exists.noticeTime : nowStr;
+
       const args = [
         body.year || '',
         body.subject || '',
         Number(body.groupSize) || 4,
         Number(body.tolerance) || 0,
         body.deadline || '',
-        body.notice !== undefined ? String(body.notice) : '',
+        noticeVal,
+        noticeTime,
       ];
       if (exists) {
-        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, deadline=?, notice=? WHERE id=?').bind(...args, id).run();
+        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, deadline=?, notice=?, notice_time=? WHERE id=?').bind(...args, id).run();
       } else {
-        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, deadline, notice, created_at) VALUES (?,?,?,?,?,?,?,?)')
+        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, deadline, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
           .bind(id, ...args, Date.now()).run();
       }
       return ok({ courseId: id });

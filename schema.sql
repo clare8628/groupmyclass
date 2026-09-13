@@ -5,13 +5,15 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS courses (
-  id         TEXT PRIMARY KEY,
-  year       TEXT NOT NULL DEFAULT '',
-  subject    TEXT NOT NULL DEFAULT '',
-  group_size INTEGER NOT NULL DEFAULT 4,
-  tolerance  INTEGER NOT NULL DEFAULT 1,
-  deadline   TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL
+  id          TEXT PRIMARY KEY,
+  year        TEXT NOT NULL DEFAULT '',
+  subject     TEXT NOT NULL DEFAULT '',
+  group_size  INTEGER NOT NULL DEFAULT 4,
+  tolerance   INTEGER NOT NULL DEFAULT 1,
+  deadline    TEXT NOT NULL DEFAULT '',
+  notice      TEXT NOT NULL DEFAULT '',
+  notice_time TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS groups (
