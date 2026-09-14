@@ -1,6 +1,6 @@
-# 學生分組系統 Student Grouping
+# 導師班分組系統 Student Grouping
 
-課堂分組系統：老師管理課程與名單，學生自行擔任組長並挑選組員，前台即時顯示分組現況。
+導師班／課堂分組系統：老師管理班級課程與名單，學生自行擔任組長並挑選組員，前台即時顯示分組現況。
 
 - 前端：原生 HTML / CSS / JavaScript（無框架）
 - 後端：Cloudflare Workers（static assets）+ D1（SQLite）
