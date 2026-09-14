@@ -585,7 +585,7 @@ function courseTree() {
           <button data-act="sys-password">更改管理者密碼<span class="count">Change admin password</span></button>
         </li>
         <li class="${teacherView === 'eval' ? 'active' : ''}">
-          <button data-act="sys-peer-eval">期末考成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
+          <button data-act="sys-peer-eval">學期成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
         </li>
       </ul>
     </div>
@@ -635,18 +635,18 @@ function courseForm(c) {
   </form>`;
 }
 
-/* ---- 後台：期末考成績加減分與組長評分控制面板 ---- */
+/* ---- 後台：學期成績加減分與組長評分控制面板 ---- */
 function teacherPeerEvalBlock(c) {
   if (!c) {
     return `
     <div class="teacher-section peer-eval-admin-box">
-      <h2>⚖️ 期末考成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
-      <p class="file-path">請先從左側點選或建立課程，即可進行該課程的期末考成績加減分與組長評分控制。</p>
+      <h2>⚖️ 學期成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
+      <p class="file-path">請先從左側點選或建立課程，即可進行該課程的學期成績加減分與組長評分控制。</p>
     </div>`;
   }
   return `
   <div class="teacher-section peer-eval-admin-box">
-    <h2>⚖️ 期末考成績加減分與組長評分控制 <small>${esc(courseLabel(c))}</small></h2>
+    <h2>⚖️ 學期成績加減分與組長評分控制 <small>${esc(courseLabel(c))}</small></h2>
     <p class="file-path">規則：開放評分後組長可依組員貢獻度給予加分(0~10分)；組長進行評分自身可獲得10分加分；超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣10分。</p>
     
     <div class="peer-eval-global-bar">
