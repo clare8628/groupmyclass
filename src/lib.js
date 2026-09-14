@@ -88,6 +88,9 @@ async function ensureGroupSchema(db) {
     await db.prepare('ALTER TABLE courses ADD COLUMN notice_time TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN max_bonus INTEGER NOT NULL DEFAULT 10').run();
+  } catch (_) {}
+  try {
     await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_open INTEGER NOT NULL DEFAULT 0').run();
   } catch (_) {}
   try {
@@ -108,10 +111,12 @@ async function ensureGroupSchema(db) {
   _ensuredGroupSchema = true;
 }
 
-export const DEFAULT_NOTICE = `【期末考成績加減分與評分規定】：
-1. 當老師開放組長評分權限時，組長可依據組員之貢獻或配合程度於期末時給予加分 (0 ~ 10 分)。
-2. 組長在老師開放評分權限時進行評分，組長自己可獲得 10 分的加分。
+export const defaultNotice = (maxBonus = 10) => `【期末考成績加減分與評分規定】：
+1. 當老師開放組長評分權限時，組長可依據組員之貢獻或配合程度於期末時給予加分 (0 ~ ${maxBonus} 分)。
+2. 組長在老師開放評分權限時進行評分，組長自己可獲得 ${maxBonus} 分的加分。
 3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+
+export const DEFAULT_NOTICE = defaultNotice(10);
 
 /* 判斷組長評分是否逾時 */
 export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
@@ -133,6 +138,7 @@ export function calcAdjustment(c, g, s) {
   if (!s.groupId || !g) {
     return { score: 0, tag: '未分組', reason: '尚未加入組別，無期末考調分', status: 'none' };
   }
+  const maxB = Number(c && c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
   const lead = c.students.find(x => x.groupId === g.id && x.isLeader);
 
   // 情況 1：無組長組別（超過分組截止時間系統自動分組，且無組長）
@@ -148,9 +154,9 @@ export function calcAdjustment(c, g, s) {
   if (isSubmitted) {
     // 組長已完成評分
     if (s.isLeader) {
-      return { score: 10, tag: '+10分', reason: '組長於老師開放評分權限時完成評分，組長自己獲得加 10 分', status: 'leader-normal' };
+      return { score: maxB, tag: `+${maxB}分`, reason: `組長於老師開放評分權限時完成評分，組長自己獲得加 ${maxB} 分`, status: 'leader-normal' };
     } else {
-      const bonus = Math.max(0, Math.min(10, Number(s.peerPenalty) || 0));
+      const bonus = Math.max(0, Math.min(maxB, Number(s.peerPenalty) || 0));
       const commentMsg = s.peerComment ? ` [原因: ${s.peerComment}]` : '';
       return {
         score: bonus,
@@ -165,7 +171,7 @@ export function calcAdjustment(c, g, s) {
   if (isOverdue) {
     // 開放後已逾時但組長未進行評分
     if (s.isLeader) {
-      return { score: 0, tag: '±0分', reason: '組長未於評分截止時間前進行評分，無法獲得 10 分加分', status: 'leader-overdue' };
+      return { score: 0, tag: '±0分', reason: `組長未於評分截止時間前進行評分，無法獲得 ${maxB} 分加分`, status: 'leader-overdue' };
     } else {
       return { score: 0, tag: '±0分', reason: '組長逾時未進行評分，組員無法獲得加分', status: 'member-overdue' };
     }
@@ -174,17 +180,17 @@ export function calcAdjustment(c, g, s) {
   // 評分開放中但尚未截止且尚未提交，或老師尚未開放評分
   if (isEvalOpen) {
     if (s.isLeader) {
-      return { score: 0, tag: '評分中', reason: '組長評分進行中（完成評分後組長自己可獲得 10 分加分）', status: 'leader-pending' };
+      return { score: 0, tag: '評分中', reason: `組長評分進行中（完成評分後組長自己可獲得 ${maxB} 分加分）`, status: 'leader-pending' };
     } else {
-      return { score: 0, tag: '評分中', reason: '組長評分進行中（組長可依貢獻度給予 0~10 分加分）', status: 'member-pending' };
+      return { score: 0, tag: '評分中', reason: `組長評分進行中（組長可依貢獻度給予 0~${maxB} 分加分）`, status: 'member-pending' };
     }
   }
 
   // 老師尚未開放評分
   if (s.isLeader) {
-    return { score: 0, tag: '待開放', reason: '待老師開放評分權限並完成評分後，組長可獲得 10 分加分', status: 'leader-pending' };
+    return { score: 0, tag: '待開放', reason: `待老師開放評分權限並完成評分後，組長可獲得 ${maxB} 分加分`, status: 'leader-pending' };
   } else {
-    return { score: 0, tag: '待開放', reason: '待老師開放評分權限後，組長可依貢獻度給予 0~10 分加分', status: 'member-pending' };
+    return { score: 0, tag: '待開放', reason: `待老師開放評分權限後，組長可依貢獻度給予 0~${maxB} 分加分`, status: 'member-pending' };
   }
 }
 
@@ -215,10 +221,13 @@ export async function loadState(db) {
     }));
 
     // 計算每位同學的調分結果
+    const maxBonusVal = Number(c.max_bonus) > 0 ? Number(c.max_bonus) : 10;
     const courseObj = {
       id: c.id, year: c.year, subject: c.subject,
-      groupSize: c.group_size, tolerance: c.tolerance, deadline: c.deadline,
-      notice: c.notice !== undefined && c.notice !== null ? c.notice : DEFAULT_NOTICE,
+      groupSize: c.group_size, tolerance: c.tolerance,
+      maxBonus: maxBonusVal,
+      deadline: c.deadline,
+      notice: c.notice !== undefined && c.notice !== null ? c.notice : defaultNotice(maxBonusVal),
       noticeTime: c.notice_time || (c.created_at ? new Date(c.created_at + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''),
       hasSnapshot: snapshotSet.has(c.id),
       groups: courseGroups,

@@ -77,14 +77,15 @@ export async function handleAction(request, env, db, body) {
         body.subject || '',
         Number(body.groupSize) || 4,
         Number(body.tolerance) || 0,
+        Number(body.maxBonus) > 0 ? Number(body.maxBonus) : 10,
         body.deadline || '',
         noticeVal,
         noticeTime,
       ];
       if (exists) {
-        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, deadline=?, notice=?, notice_time=? WHERE id=?').bind(...args, id).run();
+        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, max_bonus=?, deadline=?, notice=?, notice_time=? WHERE id=?').bind(...args, id).run();
       } else {
-        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, deadline, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, max_bonus, deadline, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
           .bind(id, ...args, Date.now()).run();
       }
       return ok({ courseId: id });
@@ -401,11 +402,12 @@ export async function handleAction(request, env, db, body) {
     if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分 Deadline passed', 403);
 
     const evaluations = Array.isArray(body.evaluations) ? body.evaluations : [];
+    const maxB = Number(c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
     const stmts = [];
     for (const ev of evaluations) {
       const target = await resolveStudent(db, env, c, ev.studentId);
       if (!target || target.groupId !== self.groupId || target.id === self.id) continue;
-      const bonus = Math.max(0, Math.min(10, parseInt(ev.penalty) || 0));
+      const bonus = Math.max(0, Math.min(maxB, parseInt(ev.penalty) || 0));
       const comment = String(ev.comment || '').trim().slice(0, 100);
       stmts.push(db.prepare('UPDATE students SET peer_penalty=?, peer_comment=? WHERE course_id=? AND id=?')
         .bind(bonus, comment, c.id, target.id));
