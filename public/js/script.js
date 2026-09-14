@@ -649,11 +649,12 @@ function teacherPeerEvalBlock(c) {
       <h2>⚖️ 學期成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
       <p class="file-path">請先從左側點選或建立課程，即可進行該課程的學期成績加減分與組長評分控制。</p>
     </div>`;
+  }
   const maxB = (c && Number(c.maxBonus) > 0) ? Number(c.maxBonus) : 10;
   return `
   <div class="teacher-section peer-eval-admin-box">
     <h2>⚖️ 學期成績加減分與組長評分控制 <small>${esc(courseLabel(c))}</small></h2>
-    <p class="file-path">規則：開放評分後組長可依組員貢獻度給予加分 (0~${maxB}分)；組長進行評分自身可獲得 ${maxB} 分加分；超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。</p>
+    <p class="file-path">規則：開放評分後組長可依組員貢獻度給予加分(0~${maxB}分)；組長進行評分自身可獲得 ${maxB} 分加分；超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。</p>
     
     <div class="peer-eval-global-bar">
       <form data-act="set-all-eval" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;background:#f8fafc;padding:0.9rem 1.2rem;border:1px solid #e2e8f0;border-radius:8px;">
@@ -1250,7 +1251,7 @@ app.addEventListener('submit', e => {
       year: f.year.value.trim(), subject: f.subject.value.trim(),
       groupSize: Math.max(1, parseInt(f.groupSize.value) || 4),
       tolerance: Math.max(0, parseInt(f.tolerance.value) || 0),
-      maxBonus: Math.max(1, parseInt(f.maxBonus.value) || 10),
+      maxBonus: Math.max(1, parseInt(f.maxBonus ? f.maxBonus.value : 10) || 10),
       deadline: f.deadline ? f.deadline.value : (c ? (c.deadline || '') : ''),
       notice: f.notice ? f.notice.value : '',
     }).then(data => {
@@ -1271,7 +1272,7 @@ app.addEventListener('submit', e => {
       subject: c.subject,
       groupSize: c.groupSize,
       tolerance: c.tolerance,
-      maxBonus: c.maxBonus,
+      maxBonus: c.maxBonus !== undefined ? c.maxBonus : 10,
       deadline: deadlineVal,
       notice: c.notice !== undefined ? c.notice : '',
     }, {
@@ -1291,7 +1292,7 @@ app.addEventListener('submit', e => {
     if (!c || !s || !s.groupId) return;
     const g = c.groups.find(x => x.id === s.groupId);
     if (!g) return;
-    const maxB = Number(c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
+    const maxB = Number(c && c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
     const mates = members(c, g.id).filter(m => m.id !== s.id);
     const evaluations = mates.map(m => {
       const key = keyOf(m);
