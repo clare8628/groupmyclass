@@ -12,7 +12,7 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
-let teacherView = 'course';   // 後台主區：'course' | 'settings'
+let teacherView = 'course';   // 後台主區：'course' | 'settings' | 'eval'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let busy = false;
 let lastSig = '';
@@ -570,7 +570,7 @@ function courseTree() {
       <div class="tree-year">
         <div class="tree-year-label">${esc(y)}</div>
         <ul>${byYear[y].map(c => `
-          <li class="${state.currentId === c.id ? 'active' : ''}">
+          <li class="${state.currentId === c.id && teacherView === 'course' ? 'active' : ''}">
             <button data-act="pick-course-node" data-id="${c.id}">
               ${esc(c.subject || '（未命名科目）')}
               <span class="count">${c.students.length} 人 / ${c.groups.length} 組</span>
@@ -584,6 +584,9 @@ function courseTree() {
         <li class="${teacherView === 'settings' ? 'active' : ''}">
           <button data-act="sys-password">更改管理者密碼<span class="count">Change admin password</span></button>
         </li>
+        <li class="${teacherView === 'eval' ? 'active' : ''}">
+          <button data-act="sys-peer-eval">期末考成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
+        </li>
       </ul>
     </div>
   </aside>`;
@@ -591,9 +594,14 @@ function courseTree() {
 
 function teacherScreen() {
   const c = cur();
-  const main = teacherView === 'settings'
-    ? teacherPasswordBlock()
-    : (c ? teacherCourse(c) : teacherNoCourse());
+  let main;
+  if (teacherView === 'settings') {
+    main = teacherPasswordBlock();
+  } else if (teacherView === 'eval') {
+    main = teacherPeerEvalBlock(c);
+  } else {
+    main = c ? teacherCourse(c) : teacherNoCourse();
+  }
   return `<div class="layout">${courseTree()}<main>${main}</main></div>`;
 }
 
@@ -618,7 +626,6 @@ function courseForm(c) {
       <div class="form-group"><label>科目名稱 Subject</label><input name="subject" value="${esc(c.subject)}" placeholder="資料結構" required></div>
       <div class="form-group"><label>每組人數 Group size</label><input type="number" min="1" name="groupSize" value="${c.groupSize}"></div>
       <div class="form-group"><label>誤差人數 ± Tolerance</label><input type="number" min="0" name="tolerance" value="${c.tolerance}"></div>
-      <div class="form-group full"><label>分組截止時間 Deadline</label><input type="datetime-local" name="deadline" value="${esc(c.deadline)}"></div>
       <div class="form-group full">
         <label>公布欄注意事項 Notice (顯示於前台最上方)</label>
         <textarea name="notice" rows="4" style="width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px;font:inherit;">${esc(noticeVal)}</textarea>
@@ -628,25 +635,18 @@ function courseForm(c) {
   </form>`;
 }
 
-function teacherCourse(c) {
-  const total = c.students.length;
-  const assigned = c.students.filter(s => s.groupId).length;
+/* ---- 後台：期末考成績加減分與組長評分控制面板 ---- */
+function teacherPeerEvalBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section peer-eval-admin-box">
+      <h2>⚖️ 期末考成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
+      <p class="file-path">請先從左側點選或建立課程，即可進行該課程的期末考成績加減分與組長評分控制。</p>
+    </div>`;
+  }
   return `
-  <div class="teacher-section">
-    <h2>課程設定 Course setup <small>${esc(courseLabel(c))}</small></h2>
-    ${courseForm(c)}
-    <div class="btn-row" style="margin-top:1rem">
-      <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
-      ${c.hasSnapshot ? `
-        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
-      ` : ''}
-      <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
-    </div>
-  </div>
-
-  <!-- 期末考成績加減分與組長評分控制面板 -->
   <div class="teacher-section peer-eval-admin-box">
-    <h2>⚖️ 期末考成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
+    <h2>⚖️ 期末考成績加減分與組長評分控制 <small>${esc(courseLabel(c))}</small></h2>
     <p class="file-path">規則：開放評分後組長可依組員貢獻度給予加分(0~10分)；組長進行評分自身可獲得10分加分；超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣10分。</p>
     
     <div class="peer-eval-global-bar">
@@ -703,10 +703,40 @@ function teacherCourse(c) {
         </tbody>
       </table>
     </div>` : '<p class="file-path">尚未建立組別。</p>'}
+  </div>`;
+}
+
+function teacherCourse(c) {
+  const total = c.students.length;
+  const assigned = c.students.filter(s => s.groupId).length;
+  return `
+  <div class="teacher-section">
+    <h2>課程設定 Course setup <small>${esc(courseLabel(c))}</small></h2>
+    ${courseForm(c)}
+    <div class="btn-row" style="margin-top:1rem">
+      <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
+      ${c.hasSnapshot ? `
+        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
+      ` : ''}
+      <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
+    </div>
   </div>
 
   <div class="teacher-section">
     <h2>分組管理 Grouping</h2>
+
+    <!-- 分組截止時間設定 (置於分組管理區塊開頭) -->
+    <form data-act="set-course-deadline" class="grouping-deadline-bar">
+      <label>⏳ 分組截止時間 Deadline：</label>
+      <input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}">
+      <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">儲存截止時間</button>
+      ${c.deadline ? `
+        <span class="deadline-status-tag ${deadlinePassed(c) ? 'closed' : 'open'}">
+          ${deadlinePassed(c) ? '🚫 已截止（未選學生已自動分配）Closed' : '🟢 分組進行中 Open'}
+        </span>
+      ` : '<span style="font-size:0.82rem;color:#64748b;">(尚未設定截止時間)</span>'}
+    </form>
+
     <div class="stats">
       <div class="stat"><div class="value">${total}</div><div class="label">總學生數 Students</div></div>
       <div class="stat"><div class="value">${c.groups.length}</div><div class="label">組別數 Groups</div></div>
@@ -725,7 +755,6 @@ function teacherCourse(c) {
       <button class="btn btn-secondary" data-act="export-json">匯出 JSON</button>
       <button class="btn btn-secondary" data-act="export-csv">匯出 CSV</button>
     </div>
-    ${c.deadline ? `<p class="file-path">分組截止時間 Deadline: ${esc(c.deadline.replace('T', ' '))} — ${deadlinePassed(c) ? '已截止（未選學生已自動分配）Closed' : '進行中 Open'}</p>` : ''}
 
     <!-- 勾選要刪除的分組組別 -->
     ${c.groups.length ? `
@@ -1218,7 +1247,7 @@ app.addEventListener('submit', e => {
       year: f.year.value.trim(), subject: f.subject.value.trim(),
       groupSize: Math.max(1, parseInt(f.groupSize.value) || 4),
       tolerance: Math.max(0, parseInt(f.tolerance.value) || 0),
-      deadline: f.deadline.value,
+      deadline: f.deadline ? f.deadline.value : (c ? (c.deadline || '') : ''),
       notice: f.notice ? f.notice.value : '',
     }).then(data => {
       if (data && data.courseId && data.courseId !== state.currentId) {
@@ -1226,6 +1255,22 @@ app.addEventListener('submit', e => {
         localStorage.setItem(CURRENT_KEY, data.courseId);
         render();
       }
+    });
+  }
+  if (a === 'set-course-deadline') {
+    const c = cur();
+    if (!c) return;
+    const deadlineVal = f.deadline ? f.deadline.value : '';
+    return act('teacher:save-course', {
+      id: c.id,
+      year: c.year,
+      subject: c.subject,
+      groupSize: c.groupSize,
+      tolerance: c.tolerance,
+      deadline: deadlineVal,
+      notice: c.notice !== undefined ? c.notice : '',
+    }, {
+      after: () => alert('分組截止時間已更新 Grouping deadline updated'),
     });
   }
   if (a === 'set-all-eval') {
@@ -1287,9 +1332,12 @@ app.addEventListener('click', e => {
   if (a === 'show-student-login') { e.preventDefault(); loginMode = loginMode === 'student' ? null : 'student'; return render(); }
   if (a === 'close-login') { loginMode = null; return render(); }
   if (a === 'sys-password') { teacherView = 'settings'; return render(); }
+  if (a === 'sys-peer-eval') { teacherView = 'eval'; return render(); }
   if (a === 'pick-course-node' || a === 'pick-course') {
     state.currentId = id || btn.value;
-    teacherView = 'course';
+    if (teacherView !== 'eval') {
+      teacherView = 'course';
+    }
     localStorage.setItem(CURRENT_KEY, state.currentId);
     return render();
   }
