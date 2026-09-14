@@ -1,4 +1,4 @@
-name = "groupstu"
+name = "groupmyclass"
 main = "src/index.js"
 compatibility_date = "2026-09-02"
 
@@ -8,5 +8,5 @@ binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "groupstu"
-database_id = "8040c306-482b-4791-a991-48ea6ad4b43e"
+database_name = "groupmyclass"
+database_id = "ffb52212-2ce5-4335-a9d3-6cf70e43a732"
