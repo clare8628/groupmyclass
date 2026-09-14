@@ -492,15 +492,15 @@ function howto() {
       <div class="howto-step-card">
         <div class="step-num">1</div>
         <div class="step-info">
-          <strong>選擇學年度與科目</strong>
-          <p>在左側樹狀區塊中點選欲分組的<b>學年度 → 科目</b>，右側將即時載入該科目資料。</p>
+          <strong>選擇學年度分組</strong>
+          <p>在左側樹狀區塊中點選欲查看的<b>學年度分組</b>，右側將即時載入該項目資料。</p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">2</div>
         <div class="step-info">
           <strong>學生登入開組</strong>
-          <p>想當<b>組長</b>請至「分組現況」點選<b>擔任組長之學生登入</b>（姓名+學號），並按下「我要當組長」。</p>
+          <p>組長請至「分組現況」點選<b>擔任組長之學生登入</b>（姓名+學號），並按下「我要當組長」。</p>
         </div>
       </div>
       <div class="howto-step-card">
