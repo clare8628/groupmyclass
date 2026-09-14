@@ -422,15 +422,24 @@ export async function handleAction(request, env, db, body) {
   if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
 
   if (action === 'pick') {
+    const curMembers = membersOf(c, self.groupId);
+    const max = cap(c);
+    if (curMembers.length >= max) {
+      return bad(`本組現有成員數（${curMembers.length} 人）已達或高於上限（${max} 人），組長只能刪減組員釋出至未分配名單，無法再新增組員。`, 409);
+    }
     const t = await resolveStudent(db, env, c, body.studentId);
     if (!t) return bad('學生不存在', 404);
     if (t.groupId) return bad('該生已被分組 Already assigned', 409);
-    if (membersOf(c, self.groupId).length >= cap(c)) return bad(`本組已達上限 ${cap(c)} 人`, 409);
     await db.prepare('UPDATE students SET group_id=?, auto_assigned=0 WHERE course_id=? AND id=?')
       .bind(self.groupId, c.id, t.id).run();
     return ok();
   }
   if (action === 'drop') {
+    const curMembers = membersOf(c, self.groupId);
+    const min = minCap(c);
+    if (curMembers.length <= min) {
+      return bad(`本組現有成員數（${curMembers.length} 人）已低於或等於下限（${min} 人），組長只能新增組員，無法再刪減成員。`, 400);
+    }
     const t = await resolveStudent(db, env, c, body.studentId);
     if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生', 400);
     await db.prepare('UPDATE students SET group_id=NULL, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')

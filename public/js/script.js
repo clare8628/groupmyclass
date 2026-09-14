@@ -968,25 +968,37 @@ function studentScreen() {
   /* 組長專用成員管理區塊 */
   if (s.isLeader && g) {
     const min = minCap(c);
+    const max = cap(c);
     const needed = Math.max(0, min - mates.length);
-    const meetsThreshold = mates.length >= min;
+    const excess = Math.max(0, mates.length - max);
+    const isBelowMin = mates.length < min;
+    const isAboveMax = mates.length > max;
+    const canDrop = canEdit && (mates.length > min); // 只有高於門檻時才允許刪減組員
+    const canPick = canEdit && (mates.length < max); // 只有低於上限時才允許新增組員
 
     /* 1. 已挑選成員（顯示在挑選組員區塊上方） */
     html += `
     <div class="selected-members-panel">
       <div class="panel-header">
-        <h3 style="margin:0">已挑選成員 Selected members <small>（門檻 ${min} 人，上限 ${cap(c)} 人，目前 ${mates.length} 人${mates.length >= cap(c) ? ' · 已滿' : ''}）</small></h3>
+        <h3 style="margin:0">已挑選成員 Selected members <small>（下限 ${min} 人，上限 ${max} 人，目前 ${mates.length} 人）</small></h3>
         <div class="header-badges">
-          ${meetsThreshold
-            ? `<span class="status-badge meets-threshold">✅ 已達門檻（${mates.length}/${min}）</span>`
-            : `<span class="status-badge under-threshold">⚠️ 尚缺 ${needed} 位成員達門檻</span>`}
-          ${canEdit ? '<span class="status-badge can-edit">可更換組員</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
+          ${isBelowMin
+            ? `<span class="status-badge under-threshold">⚠️ 低於下限（缺 ${needed} 人）· 僅能新增組員</span>`
+            : isAboveMax
+            ? `<span class="status-badge under-threshold" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;">⚠️ 高於上限（多 ${excess} 人）· 僅能刪減組員</span>`
+            : `<span class="status-badge meets-threshold">✅ 人數合規（${mates.length}人，符合 ${min}~${max} 人）</span>`}
+          ${canEdit ? '<span class="status-badge can-edit">組長調整中</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
         </div>
       </div>
-      ${!meetsThreshold ? `
+      ${isBelowMin ? `
         <div class="threshold-notice">
-          <strong>⚠️ 本組目前人數（${mates.length} 人）尚未達分組最低門檻（${min} 人）</strong>
-          <p>請於分組截止時間前再挑選至少 <b>${needed}</b> 位成員。若超過分組截止時間仍未達門檻，本組將<b>無法完成建立並會自動解散</b>，成員將由系統重新隨機分配。</p>
+          <strong>⚠️ 本組現有成員數（${mates.length} 人）低於分組下限（${min} 人）</strong>
+          <p>依規則：<b>此時組長只能新增組員</b>，且需從未分配的成員名單中挑選至少 <b>${needed}</b> 位組員加入，無法刪減現有成員。請於截止前完成挑選以符合門檻。</p>
+        </div>` : ''}
+      ${isAboveMax ? `
+        <div class="threshold-notice" style="background:#fff1f2;border-color:#fecdd3;color:#9f1239;">
+          <strong>⚠️ 本組現有成員數（${mates.length} 人）高於分組上限（${max} 人）</strong>
+          <p>依規則：<b>此時組長只能刪減組員</b>，需將至少 <b>${excess}</b> 位成員移出釋出至未分配名單中，無法再新增組員。</p>
         </div>` : ''}
       <div class="pick-list" style="margin-top:0.75rem">${mates.map(m => `
         <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
@@ -996,27 +1008,30 @@ function studentScreen() {
           ${(canEdit && m.id !== s.id) ? `
             <button class="tab-btn ${m.isVice ? 'on' : ''}" data-act="toggle-vice" data-id="${esc(keyOf(m))}">
               ${m.isVice ? '取消副組長' : '設為副組長'}</button>
-            <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}">移出</button>` : ''}
+            ${canDrop ? `
+              <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}" title="移出組員釋出至未分配名單">移出釋出</button>
+            ` : `
+              <button class="tab-btn disabled" disabled title="現有人數已低於或等於下限（${min}人），依規則無法移出組員，只能新增組員" style="opacity:0.5;cursor:not-allowed;">不可移出</button>
+            `}` : ''}
         </div>`).join('')}</div>
-      <p class="file-path">每組僅能有一位副組長，重新指定會自動取代前一位。若組長取消身分，副組長將自動晉級為組長。</p>
+      <p class="file-path">提示：每組僅能有一位副組長。若現有人數低於下限只能新增組員；高於上限只能刪減組員釋出至未分配名單。</p>
     </div>`;
 
     /* 2. 挑選組員（顯示在已挑選成員區塊下方） */
     if (canEdit) {
       const pool = unassigned(c);
-      const isFull = mates.length >= cap(c);
       html += `
       <div class="pick-members-panel" style="margin-top:1.5rem">
         <div class="panel-header">
-          <h3 style="margin:0">挑選組員 Pick members</h3>
-          ${isFull ? '<span class="badge-full">本組人數已達上限，無法再挑選</span>' : ''}
+          <h3 style="margin:0">挑選組員 Pick members <small>（從未分配名單新增）</small></h3>
+          ${!canPick ? `<span class="badge-full" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">本組人數（${mates.length}人）已達或高於上限（${max}人），依規定只能刪減組員，無法再新增</span>` : ''}
         </div>
         <div class="pick-list" style="margin-top:0.75rem">${pool.length ? pool.map(p => `
-          <label class="student ${isFull ? 'disabled' : ''}">
-            <input type="checkbox" data-act="pick" data-id="${esc(keyOf(p))}" ${isFull ? 'disabled' : ''}>
+          <label class="student ${!canPick ? 'disabled' : ''}">
+            <input type="checkbox" data-act="pick" data-id="${esc(keyOf(p))}" ${!canPick ? 'disabled' : ''}>
             ${esc(p.name)} (${esc(p.id)})
           </label>`).join('')
-          : '<p class="file-path">目前沒有未分組的學生 No unassigned students.</p>'}</div>
+          : '<p class="file-path">目前沒有未分配的成員名單 No unassigned students.</p>'}</div>
       </div>`;
     }
 
@@ -1456,7 +1471,10 @@ app.addEventListener('click', e => {
   if (a === 'claim-leader') return act('claim-leader');
   if (a === 'unclaim-leader') return act('unclaim-leader');
   if (a === 'toggle-vice') return act('toggle-vice', { studentId: id });
-  if (a === 'drop') return act('drop', { studentId: id });
+  if (a === 'drop') {
+    if (!confirm('確定要將該組員移出？\n\n移出後該成員將釋出回到「未分配的成員名單」中。')) return;
+    return act('drop', { studentId: id });
+  }
 });
 
 app.addEventListener('change', e => {
