@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-const APP_VERSION = 'v2.0.0';   // 顯示於前台標題列（v2 = Cloudflare D1 共用資料）
+let APP_VERSION = 'v2.34';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -38,6 +38,7 @@ async function apiPost(action, payload = {}) {
 
 /* 套用伺服器回傳的資料 */
 function apply(data) {
+  if (data.version) APP_VERSION = data.version;
   if (data.courses) state.courses = data.courses;
   if (data.session !== undefined) state.session = data.session;
   if (state.session && state.session.role === 'student') state.currentId = state.session.courseId;
@@ -73,7 +74,8 @@ async function poll() {
     const data = await apiGet();
     const sig = JSON.stringify(data.courses || []);
     const sessionChanged = JSON.stringify(data.session || null) !== JSON.stringify(state.session || null);
-    if (sig !== lastSig || sessionChanged) { apply(data); render(); }
+    const versionChanged = data.version && data.version !== APP_VERSION;
+    if (sig !== lastSig || sessionChanged || versionChanged) { apply(data); render(); }
   } catch (e) { /* 網路暫時失敗就略過這輪 */ }
 }
 

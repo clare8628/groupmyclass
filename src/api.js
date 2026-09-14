@@ -3,12 +3,13 @@ import {
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
 } from './lib.js';
+import { APP_VERSION } from './version.js';
 
 /* GET /api/state — 公開讀取全部課程／名單／分組 */
 export async function handleState(request, env, db) {
   const session = await readSession(db, env, request);
   const courses = await applyDeadline(db, await loadState(db));
-  return json({ courses: await publicize(db, env, courses, session), session });
+  return json({ courses: await publicize(db, env, courses, session), session, version: APP_VERSION });
 }
 
 /* POST /api/action — 所有異動，依角色驗證 */
@@ -20,7 +21,7 @@ export async function handleAction(request, env, db, body) {
   const course = id => courses.find(c => c.id === id);
   const ok = async (extra = {}, headers = {}) => {
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), ...extra }, 200, headers);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
