@@ -249,7 +249,7 @@ function publicBoard({ withUnassigned = true } = {}) {
     <!-- 學生登入區塊嵌入於此 -->
     ${loginMode === 'student' ? loginCard() : ''}
 
-    ${!c ? `<p class="file-path empty-notice">請先於左側「課程選擇」樹狀清單中點選欲查看分組的學年度與科目。</p>` : ''}
+    ${!c ? `<p class="file-path empty-notice">請先於左側「學年度分組清單」中點選欲查看分組的學年度與項目。</p>` : ''}
 
     ${c ? (c.groups.length ? `<div class="group-grid">${c.groups.map(g => {
       const list = members(c, g.id);
@@ -398,11 +398,11 @@ function courseSelectionBlock() {
     <div class="block-header">
       <div class="block-title-wrap">
         <span class="step-badge">Step 1 選擇結果</span>
-        <h2>課程選擇 Courses</h2>
+        <h2>學年度分組選擇</h2>
       </div>
       <div class="courses-link-indicator">
         <span class="link-pulse-dot"></span>
-        <span class="link-label">連動自左側課程樹</span>
+        <span class="link-label">連動自左側學年度分組清單</span>
       </div>
     </div>
     <div class="course-selection-card">
@@ -413,7 +413,7 @@ function courseSelectionBlock() {
             <span class="selected-year-badge">${esc(c.year || '未分類')} 學年度</span>
             <span class="selected-status-tag">目前已選中 Selected</span>
           </div>
-          <h3 class="selected-subject-name">${esc(c.subject || '（未命名科目）')}</h3>
+          <h3 class="selected-subject-name">${esc(c.subject || '（未命名）')}</h3>
           <div class="selected-specs">
             <div class="spec-item"><span class="spec-label">學生總數</span><span class="spec-val">${c.students.length} 人</span></div>
             <div class="spec-item"><span class="spec-label">組別設定</span><span class="spec-val">${c.groups.length} 組（每組 ${c.groupSize} ± ${c.tolerance} 人，門檻 ${minCap(c)} ~ 上限 ${cap(c)} 人）</span></div>
@@ -425,8 +425,8 @@ function courseSelectionBlock() {
         <div class="empty-selection-guide">
           <div class="guide-arrow">👈</div>
           <div class="guide-text">
-            <strong>請點選左側樹狀列表選擇課程</strong>
-            <p>點選任一學年度下的科目，即可在此立即載入該科目的分組設定與現況。</p>
+            <strong>請點選左側清單選擇學年度分組</strong>
+            <p>點選任一學年度下的項目，即可在此立即載入該項目的分組設定與現況。</p>
           </div>
         </div>
       `}
@@ -533,9 +533,9 @@ function courseTreePublic() {
     <div class="block-header tree-header">
       <div class="block-title-wrap">
         <span class="step-badge">Step 1</span>
-        <h2>課程清單</h2>
+        <h2>學年度分組清單</h2>
       </div>
-      <p class="block-desc">選擇學年度與科目</p>
+      <p class="block-desc">選擇學年度與名稱</p>
     </div>
     <div class="tree-content">
       ${years.length ? years.map(y => `
@@ -548,14 +548,14 @@ function courseTreePublic() {
               <button class="tree-node-btn" data-act="pick-course-node" data-id="${c.id}">
                 <div class="node-main">
                   <span class="node-icon">${active ? '👉' : '📘'}</span>
-                  <span class="node-name">${esc(c.subject || '（未命名科目）')}</span>
+                  <span class="node-name">${esc(c.subject || '（未命名）')}</span>
                 </div>
                 <span class="node-badge">${c.students.length}人·${c.groups.length}組</span>
               </button>
-              ${active ? `<div class="tree-active-pointer" title="連接至右方課程選擇區塊"></div>` : ''}
+              ${active ? `<div class="tree-active-pointer" title="連接至右方學年度分組選擇區塊"></div>` : ''}
             </li>`;
           }).join('')}</ul>
-        </div>`).join('') : '<p class="file-path empty-notice">老師尚未建立任何課程。No courses yet.</p>'}
+        </div>`).join('') : '<p class="file-path empty-notice">老師尚未建立任何分組。No grouping yet.</p>'}
     </div>
   </aside>`;
 }
@@ -569,19 +569,19 @@ function courseTree() {
   });
   const years = Object.keys(byYear).sort().reverse();
   return `<aside class="tree">
-    <h3>課程 Courses</h3>
+    <h3>學年度分組清單</h3>
     ${years.length ? years.map(y => `
       <div class="tree-year">
         <div class="tree-year-label">${esc(y)}</div>
         <ul>${byYear[y].map(c => `
           <li class="${state.currentId === c.id && teacherView === 'course' ? 'active' : ''}">
             <button data-act="pick-course-node" data-id="${c.id}">
-              ${esc(c.subject || '（未命名科目）')}
+              ${esc(c.subject || '（未命名）')}
               <span class="count">${c.students.length} 人 / ${c.groups.length} 組</span>
             </button>
           </li>`).join('')}</ul>
-      </div>`).join('') : '<p class="file-path">尚無課程，請於右側「課程設定」建立。</p>'}
-    <button class="btn btn-secondary" data-act="new-course">＋ 新增課程 New course</button>
+      </div>`).join('') : '<p class="file-path">尚無分組，請於右側「分組設定」建立。</p>'}
+    <button class="btn btn-secondary" data-act="new-course">＋ 新增分組項目 New</button>
     <div class="tree-year tree-sys">
       <div class="tree-year-label">系統設定 System</div>
       <ul>
@@ -612,8 +612,8 @@ function teacherScreen() {
 function teacherNoCourse() {
   return `
   <div class="teacher-section">
-    <h2>課程設定 Course setup</h2>
-    <p class="file-path">建立新課程：填寫學年度與科目名稱後儲存，會出現在左側樹狀清單。</p>
+    <h2>分組設定 Grouping setup</h2>
+    <p class="file-path">建立新分組：填寫學年度與名稱後儲存，會出現在左側樹狀清單。</p>
     ${courseForm({ year: '', subject: '', groupSize: 4, tolerance: 1, maxBonus: 10, deadline: '', notice: '' })}
   </div>`;
 }
@@ -627,8 +627,8 @@ function courseForm(c) {
 
   return `<form data-act="save-course">
     <div class="form-row">
-      <div class="form-group"><label>學年度 Academic year</label><input name="year" value="${esc(c.year)}" placeholder="114-1" required></div>
-      <div class="form-group"><label>科目名稱 Subject</label><input name="subject" value="${esc(c.subject)}" placeholder="資料結構" required></div>
+      <div class="form-group"><label>學年度 Academic year</label><input name="year" value="${esc(c.year)}" placeholder="113-1" required></div>
+      <div class="form-group"><label>名稱</label><input name="subject" value="${esc(c.subject)}" placeholder="例如：113入學行銷真班" required></div>
       <div class="form-group"><label>每組人數 Group size</label><input type="number" min="1" name="groupSize" value="${c.groupSize || 4}"></div>
       <div class="form-group"><label>誤差人數 ± Tolerance</label><input type="number" min="0" name="tolerance" value="${c.tolerance ?? 1}"></div>
       <div class="form-group"><label>組長加分上限 Max bonus (分)</label><input type="number" min="1" max="100" name="maxBonus" value="${maxB}" placeholder="例如 5 或 10" required></div>
@@ -718,7 +718,7 @@ function teacherCourse(c) {
   const assigned = c.students.filter(s => s.groupId).length;
   return `
   <div class="teacher-section">
-    <h2>課程設定 Course setup <small>${esc(courseLabel(c))}</small></h2>
+    <h2>分組設定 Grouping setup <small>${esc(courseLabel(c))}</small></h2>
     ${courseForm(c)}
     <div class="btn-row" style="margin-top:1rem">
       <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
@@ -1383,7 +1383,7 @@ app.addEventListener('click', e => {
   if (a === 'clear-groups') {
     if (!c) return;
     if (!c.groups.length) return alert('本科目尚無分組 No groups to clear');
-    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與課程設定皆會完整保留，僅清空組別與組別分配。\n系統將自動備份，稍後如有需要可點擊「回到上一步」復原。`)) return;
+    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與分組設定皆會完整保留，僅清空組別與組別分配。\n系統將自動備份，稍後如有需要可點擊「回到上一步」復原。`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
   }
   if (a === 'select-all-del-groups') {
