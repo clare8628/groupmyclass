@@ -299,7 +299,7 @@ export async function applyDeadline(db, courses) {
 export async function teacherHash(db) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('teacher_password').first();
   if (row) return row.value;
-  const h = await sha256('teacher123');                       // 預設密碼
+  const h = await sha256('clear6');                       // 預設密碼
   await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('teacher_password', h).run();
   return h;
 }

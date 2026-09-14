@@ -1,5 +1,5 @@
-/* 導師班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
-const APP_NAME = '導師班分組系統';
+/* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
+const APP_NAME = '113入學行銷真班分組系統';
 const APP_VERSION = 'v2.0.0';   // 顯示於前台標題列（v2 = Cloudflare D1 共用資料）
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
@@ -114,7 +114,7 @@ function me() {
   }
   return null;
 }
-const teacherPasswordHint = '預設 teacher123，可於後台修改';
+const teacherPasswordHint = '預設 clear6，可於後台修改';
 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
