@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.35';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.36';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -211,8 +211,21 @@ function scoreBadge(adj) {
 /* ===== 前台分組現況 ===== */
 function unassignedList(c) {
   const pool = unassigned(c);
-  return `<div class="pick-list">${pool.length
-    ? pool.map(s => `<div class="student">${esc(s.name)} (${esc(s.id)})</div>`).join('')
+  const showLoginPrompt = !state.session || (state.session && state.session.role !== 'student');
+  return `
+  ${showLoginPrompt && pool.length ? `
+    <div class="unassigned-login-tip" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:0.85rem;color:#1e40af;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+      <span>💡 未分組學生若欲擔任組長開組，請直接點選下方姓名或點擊登入：</span>
+      <button class="btn btn-primary" data-act="show-student-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組（輸入姓名、學號）</button>
+    </div>
+  ` : ''}
+  <div class="pick-list">${pool.length
+    ? pool.map(s => {
+        if (showLoginPrompt) {
+          return `<div class="student student-clickable-login" data-act="quick-student-fill" data-name="${esc(s.name)}" data-id="${esc(s.id)}" title="點擊以此身分登入擔任組長" style="cursor:pointer;">${esc(s.name)} (${esc(s.id)}) <span class="login-chip" style="margin-left:auto;font-size:0.72rem;background:#dbeafe;color:#1d4ed8;padding:0.1rem 0.4rem;border-radius:4px;">登入開組 ➔</span></div>`;
+        }
+        return `<div class="student">${esc(s.name)} (${esc(s.id)})</div>`;
+      }).join('')
     : '<p class="file-path">全部學生皆已分組 Everyone is assigned.</p>'}</div>`;
 }
 
@@ -237,10 +250,10 @@ function publicBoard({ withUnassigned = true } = {}) {
         ${!isLeaderView ? '<span class="step-badge">Step 2</span>' : ''}
         <h2>分組現況 Group status</h2>
       </div>
-      ${!state.session ? `
+      ${(!state.session || (state.session && state.session.role !== 'student')) ? `
         <div class="board-actions">
           <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="show-student-login">
-            <span class="btn-icon">🎓</span> 擔任組長之學生登入 Student login
+            <span class="btn-icon">🎓</span> 擔任組長之學生登入（輸入姓名、學號）
           </button>
         </div>` : ''}
     </div>
@@ -257,7 +270,7 @@ function publicBoard({ withUnassigned = true } = {}) {
           <div class="course-meta-tags">
             <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（門檻 ${minCap(c)} 人，上限 ${cap(c)} 人）</span>
             <span class="meta-pill">📊 總學生數 ${c.students.length} 人 · ${c.groups.length} 組</span>
-            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 全體分組截止時間: ${esc(c.deadline.replace('T', ' '))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : ''}
+            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 全體分組截止時間: ${esc(formatDeadline(c.deadline))} ${deadlinePassed(c) ? '(已截止)' : ''}</span>` : '<span class="meta-pill" style="opacity:0.85;">⏳ 全體分組截止時間: 尚未設定</span>'}
           </div>` : ''}
       </div>
     </div>
@@ -502,7 +515,7 @@ function authScreen() {
 /* ---- 前台：使用說明 ---- */
 function howto() {
   const c = cur();
-  const deadlineStr = c && c.deadline ? esc(c.deadline.replace('T', ' ')) : '';
+  const deadlineStr = c && c.deadline ? esc(formatDeadline(c.deadline)) : '';
   const isExpired = c && deadlinePassed(c);
 
   return `<section class="block-section howto-section" id="howto-block">
@@ -1375,6 +1388,20 @@ app.addEventListener('click', e => {
     });
   }
   if (a === 'show-teacher-login') { e.preventDefault(); loginMode = loginMode === 'teacher' ? null : 'teacher'; return render(); }
+  if (a === 'quick-student-fill') {
+    e.preventDefault();
+    loginMode = 'student';
+    render();
+    const nameIn = document.querySelector('#login input[name="name"]');
+    const sidIn = document.querySelector('#login input[name="sid"]');
+    if (nameIn && btn.dataset.name) nameIn.value = btn.dataset.name;
+    if (sidIn) {
+      if (btn.dataset.id && !btn.dataset.id.includes('*')) sidIn.value = btn.dataset.id;
+      sidIn.focus();
+    }
+    document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
   if (a === 'show-student-login') { e.preventDefault(); loginMode = loginMode === 'student' ? null : 'student'; return render(); }
   if (a === 'close-login') { loginMode = null; return render(); }
   if (a === 'sys-password') { teacherView = 'settings'; return render(); }
