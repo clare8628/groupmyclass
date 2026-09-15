@@ -342,6 +342,9 @@ export async function publicize(db, env, courses, session) {
         ...s,
         id: mine ? s.id : maskId(s.id),
         ref: await studentRef(db, env, c.id, s.id, hmacKey),
+        peerPenalty: 0,
+        peerComment: '',
+        adjustment: null,
       });
     }
     out.push({ ...c, students });

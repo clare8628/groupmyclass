@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.37';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.38';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -321,7 +321,7 @@ function publicBoard({ withUnassigned = true } = {}) {
             <span class="student-info-col">
               ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — 組長' : s.isVice ? ' — 副組長' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
             </span>
-            ${scoreBadge(adj)}
+            ${isTeacher ? scoreBadge(adj) : ''}
           </div>`;
         }).join('') : '<div class="student">（尚無成員 Empty）</div>'}</div>
         ${isTeacher ? `
@@ -707,6 +707,7 @@ function teacherPeerEvalBlock(c) {
         <input type="datetime-local" name="evalDeadline" style="padding:0.35rem 0.6rem;font-size:0.85rem;" required>
         <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵開放全體組長評分</button>
         <button class="btn btn-secondary" type="button" data-act="close-all-eval" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵關閉全體評分</button>
+        <button class="btn btn-success" type="button" data-act="export-eval-csv" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;margin-left:auto;">📥 下載匯出評分結果 (依學號排序) Export CSV</button>
       </form>
     </div>
 
@@ -1231,8 +1232,12 @@ function exportJSON(c) {
 }
 
 function exportCSV(c) {
-  const rows = [['學號', '姓名', '組別', '角色', '自動分組', '期末考調分', '調分原因說明', '組長加分評定']];
-  c.students.forEach(s => {
+  const rows = [['學號', '姓名', '組別', '角色', '自動分組', '期末考調分', '調分原因說明', '組長加分評定', '組長評語']];
+  // 依學號排序（支援純數字與文字學號自然排序）
+  const sortedStudents = c.students.slice().sort((a, b) =>
+    String(a.id).localeCompare(String(b.id), undefined, { numeric: true, sensitivity: 'base' })
+  );
+  sortedStudents.forEach(s => {
     const g = c.groups.find(x => x.id === s.groupId);
     const adj = calcAdjustment(c, g, s);
     rows.push([
@@ -1244,6 +1249,7 @@ function exportCSV(c) {
       adj.score,
       adj.reason,
       s.peerPenalty ? `+${s.peerPenalty}分` : '0分',
+      s.peerComment || '',
     ]);
   });
   const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -1527,7 +1533,7 @@ app.addEventListener('click', e => {
     return act('teacher:set-peer-eval', { courseId: c.id, groupId: id, open, deadline });
   }
   if (a === 'export-json') return c && exportJSON(c);
-  if (a === 'export-csv') return c && exportCSV(c);
+  if (a === 'export-csv' || a === 'export-eval-csv') return c && exportCSV(c);
 
   if (a === 'claim-leader') return act('claim-leader');
   if (a === 'unclaim-leader') return act('unclaim-leader');
