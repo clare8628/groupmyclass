@@ -118,11 +118,20 @@ export const defaultNotice = (maxBonus = 10) => `【期末考成績加減分與�
 
 export const DEFAULT_NOTICE = defaultNotice(10);
 
+export const parseDate = str => {
+  if (!str) return 0;
+  const s = String(str).trim();
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    return new Date(s).getTime();
+  }
+  return new Date(s.replace(' ', 'T') + '+08:00').getTime();
+};
+
 /* 判斷組長評分是否逾時 */
-export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
+export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > parseDate(g.peerEvalDeadline);
 
 /* 判斷組長重新挑選組員截止時間是否已逾時 */
-export const editDeadlinePassed = g => !!g.editDeadline && Date.now() > new Date(g.editDeadline).getTime();
+export const editDeadlinePassed = g => !!g.editDeadline && Date.now() > parseDate(g.editDeadline);
 
 /* 判斷組長當前是否具備挑選／更換組員之權限 */
 export function canGroupLeaderEdit(c, g) {
@@ -246,7 +255,7 @@ export async function loadState(db) {
 export const cap = c => Number(c.groupSize) + Number(c.tolerance);
 export const minCap = c => Math.max(1, Number(c.groupSize) - Number(c.tolerance));
 export const membersOf = (c, gid) => c.students.filter(s => s.groupId === gid);
-export const deadlinePassed = c => !!c.deadline && Date.now() > new Date(c.deadline).getTime();
+export const deadlinePassed = c => !!c.deadline && Date.now() > parseDate(c.deadline);
 
 export function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }

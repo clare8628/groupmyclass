@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.34';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.35';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -123,9 +123,23 @@ function shuffle(a) {
   return a;
 }
 
-const deadlinePassed = c => !!c.deadline && Date.now() > new Date(c.deadline).getTime();
-const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > new Date(g.peerEvalDeadline).getTime();
-const editDeadlinePassed = g => !!g.editDeadline && Date.now() > new Date(g.editDeadline).getTime();
+const parseDate = str => {
+  if (!str) return 0;
+  const s = String(str).trim();
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    return new Date(s).getTime();
+  }
+  return new Date(s.replace(' ', 'T') + '+08:00').getTime();
+};
+
+const formatDeadline = str => {
+  if (!str) return '';
+  return str.replace('T', ' ');
+};
+
+const deadlinePassed = c => !!c.deadline && Date.now() > parseDate(c.deadline);
+const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > parseDate(g.peerEvalDeadline);
+const editDeadlinePassed = g => !!g.editDeadline && Date.now() > parseDate(g.editDeadline);
 function canGroupLeaderEdit(c, g) {
   if (!c) return false;
   if (!deadlinePassed(c)) return true;
@@ -396,6 +410,9 @@ function loginCard() {
 /* ---- 目前選取的課程展示區塊（與左側 Step 1 樹狀區塊產生連動感） ---- */
 function courseSelectionBlock() {
   const c = cur();
+  const dStr = (c && c.deadline) ? esc(formatDeadline(c.deadline)) : '';
+  const isExp = c && deadlinePassed(c);
+
   return `<section class="block-section courses-overview-section" id="courses-block">
     <div class="block-header">
       <div class="block-title-wrap">
@@ -419,6 +436,7 @@ function courseSelectionBlock() {
           <div class="selected-specs">
             <div class="spec-item"><span class="spec-label">學生總數</span><span class="spec-val">${c.students.length} 人</span></div>
             <div class="spec-item"><span class="spec-label">組別設定</span><span class="spec-val">${c.groups.length} 組（每組 ${c.groupSize} ± ${c.tolerance} 人，門檻 ${minCap(c)} ~ 上限 ${cap(c)} 人）</span></div>
+            <div class="spec-item"><span class="spec-label">分組截止</span><span class="spec-val" style="font-weight:600;color:${isExp ? '#dc2626' : (dStr ? '#166534' : '#64748b')};">${dStr ? `${dStr} ${isExp ? '(已截止)' : '(進行中)'}` : '尚未設定'}</span></div>
             <div class="spec-item"><span class="spec-label">加分上限</span><span class="spec-val">組長評定 0 ~ ${c.maxBonus || 10} 分（組長獎勵 +${c.maxBonus || 10} 分）</span></div>
             <div class="spec-item"><span class="spec-label">分組進度</span><span class="spec-val">${c.students.filter(s => s.groupId).length} 人已分組 / ${unassigned(c).length} 人待分組</span></div>
           </div>
@@ -444,6 +462,8 @@ function bulletinBlock(c) {
 3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
 
   const timeStr = (c && c.noticeTime) ? esc(c.noticeTime) : '';
+  const dStr = (c && c.deadline) ? esc(formatDeadline(c.deadline)) : '';
+  const isExp = c && deadlinePassed(c);
 
   return `
   <section class="block-section bulletin-section" id="bulletin-block">
@@ -452,7 +472,8 @@ function bulletinBlock(c) {
       <div class="bulletin-title-wrap">
         <h2>分組注意事項與評分規定</h2>
         ${c ? `<span class="bulletin-course-pill">${esc(courseLabel(c))}</span>` : ''}
-        ${timeStr ? `<span class="bulletin-time-tag">🕒 發布時間：${timeStr}</span>` : ''}
+        ${dStr ? `<span class="bulletin-time-tag" style="background:${isExp ? '#fee2e2' : '#fef3c7'};color:${isExp ? '#991b1b' : '#92400e'};border:1px solid ${isExp ? '#fca5a5' : '#fde68a'};font-weight:600;">⏳ 分組截止：${dStr} ${isExp ? '(已截止)' : '(進行中)'}</span>` : '<span class="bulletin-time-tag" style="color:#64748b;">⏳ 分組截止：尚未設定</span>'}
+        ${timeStr ? `<span class="bulletin-time-tag" style="opacity:0.85;">🕒 公告發布：${timeStr}</span>` : ''}
       </div>
     </div>
     <div class="bulletin-body">
@@ -634,6 +655,7 @@ function courseForm(c) {
       <div class="form-group"><label>每組人數 Group size</label><input type="number" min="1" name="groupSize" value="${c.groupSize || 4}"></div>
       <div class="form-group"><label>誤差人數 ± Tolerance</label><input type="number" min="0" name="tolerance" value="${c.tolerance ?? 1}"></div>
       <div class="form-group"><label>組長加分上限 Max bonus (分)</label><input type="number" min="1" max="100" name="maxBonus" value="${maxB}" placeholder="例如 5 或 10" required></div>
+      <div class="form-group"><label>分組截止時間 Deadline</label><input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}"></div>
       <div class="form-group full">
         <label>公布欄注意事項 Notice (顯示於前台最上方)</label>
         <textarea name="notice" rows="4" style="width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px;font:inherit;">${esc(noticeVal)}</textarea>
