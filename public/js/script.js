@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.36';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.37';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -478,6 +478,15 @@ function bulletinBlock(c) {
   const dStr = (c && c.deadline) ? esc(formatDeadline(c.deadline)) : '';
   const isExp = c && deadlinePassed(c);
 
+  // 將公告依行或段落解析為個別訊息項目，並在最右側加註公告時間
+  const lines = notice.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const itemsHtml = lines.length ? lines.map(line => `
+    <div class="bulletin-item">
+      <div class="bulletin-item-text">${esc(line)}</div>
+      ${timeStr ? `<span class="bulletin-item-time" title="公告時間">🕒 ${timeStr}</span>` : ''}
+    </div>
+  `).join('') : `<div class="bulletin-item"><div class="bulletin-item-text">（暫無公告事項）</div></div>`;
+
   return `
   <section class="block-section bulletin-section" id="bulletin-block">
     <div class="bulletin-badge-tag">📢 重要公告 BULLETIN</div>
@@ -486,11 +495,10 @@ function bulletinBlock(c) {
         <h2>分組注意事項與評分規定</h2>
         ${c ? `<span class="bulletin-course-pill">${esc(courseLabel(c))}</span>` : ''}
         ${dStr ? `<span class="bulletin-time-tag" style="background:${isExp ? '#fee2e2' : '#fef3c7'};color:${isExp ? '#991b1b' : '#92400e'};border:1px solid ${isExp ? '#fca5a5' : '#fde68a'};font-weight:600;">⏳ 分組截止：${dStr} ${isExp ? '(已截止)' : '(進行中)'}</span>` : '<span class="bulletin-time-tag" style="color:#64748b;">⏳ 分組截止：尚未設定</span>'}
-        ${timeStr ? `<span class="bulletin-time-tag" style="opacity:0.85;">🕒 公告發布：${timeStr}</span>` : ''}
       </div>
     </div>
     <div class="bulletin-body">
-      ${esc(notice).replace(/\n/g, '<br>')}
+      ${itemsHtml}
     </div>
   </section>`;
 }
@@ -1306,6 +1314,8 @@ app.addEventListener('submit', e => {
       maxBonus: Math.max(1, parseInt(f.maxBonus ? f.maxBonus.value : 10) || 10),
       deadline: f.deadline ? f.deadline.value : (c ? (c.deadline || '') : ''),
       notice: f.notice ? f.notice.value : '',
+    }, {
+      after: () => alert('分組設定與注意事項已儲存完成！\nGrouping setup and notice saved successfully.'),
     }).then(data => {
       if (data && data.courseId && data.courseId !== state.currentId) {
         state.currentId = data.courseId;
