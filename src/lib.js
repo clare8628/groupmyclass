@@ -108,7 +108,67 @@ async function ensureGroupSchema(db) {
   try {
     await db.prepare('CREATE TABLE IF NOT EXISTS group_snapshots (course_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, created_at INTEGER NOT NULL)').run();
   } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS activity_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id TEXT NOT NULL,
+        group_id TEXT,
+        group_name TEXT NOT NULL DEFAULT '',
+        operator_role TEXT NOT NULL DEFAULT '',
+        operator_id TEXT NOT NULL DEFAULT '',
+        operator_name TEXT NOT NULL DEFAULT '',
+        action_type TEXT NOT NULL DEFAULT '',
+        target_id TEXT NOT NULL DEFAULT '',
+        target_name TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_logs_course ON activity_logs(course_id, created_at DESC)').run();
+  } catch (_) {}
   _ensuredGroupSchema = true;
+}
+
+export function makeLogStmt(db, {
+  courseId,
+  groupId = '',
+  groupName = '',
+  operatorRole = '',
+  operatorId = '',
+  operatorName = '',
+  actionType = '',
+  targetId = '',
+  targetName = '',
+  detail = '',
+  createdAt = Date.now(),
+}) {
+  return db.prepare(`
+    INSERT INTO activity_logs (course_id, group_id, group_name, operator_role, operator_id, operator_name, action_type, target_id, target_name, detail, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    courseId,
+    groupId || '',
+    groupName || '',
+    operatorRole || '',
+    operatorId || '',
+    operatorName || '',
+    actionType || '',
+    targetId || '',
+    targetName || '',
+    detail || '',
+    createdAt
+  );
+}
+
+export async function logActivity(db, params) {
+  try {
+    await makeLogStmt(db, params).run();
+  } catch (err) {
+    console.error('Failed to log activity:', err);
+  }
 }
 
 export const defaultNotice = (maxBonus = 10) => `【期末考成績加減分與評分規定】：
@@ -284,6 +344,16 @@ export async function applyDeadline(db, courses) {
         }
         stmts.push(db.prepare('UPDATE students SET group_id = NULL, is_leader = 0, is_vice = 0 WHERE course_id = ? AND group_id = ?').bind(c.id, g.id));
         stmts.push(db.prepare('DELETE FROM groups WHERE course_id = ? AND id = ?').bind(c.id, g.id));
+        stmts.push(makeLogStmt(db, {
+          courseId: c.id,
+          groupId: g.id,
+          groupName: g.name,
+          operatorRole: 'system',
+          operatorId: 'system',
+          operatorName: '系統',
+          actionType: 'deadline-dissolve',
+          detail: `系統於分組截止後，自動解散人數未達門檻之「${g.name}」（共 ${gMembers.length} 人釋出為未分組）`,
+        }));
       } else {
         validGroups.push(g);
       }
@@ -299,6 +369,18 @@ export async function applyDeadline(db, courses) {
       s.autoAssigned = true;
       stmts.push(db.prepare('UPDATE students SET group_id = ?, auto_assigned = 1 WHERE course_id = ? AND id = ?')
         .bind(target.id, c.id, s.id));
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        groupId: target.id,
+        groupName: target.name,
+        operatorRole: 'system',
+        operatorId: 'system',
+        operatorName: '系統',
+        actionType: 'auto-assign',
+        targetId: s.id,
+        targetName: s.name,
+        detail: `系統於分組截止後，自動將未分組學生 ${s.name} (${s.id}) 分配至「${target.name}」`,
+      }));
     }
   }
   if (stmts.length) await db.batch(stmts);
@@ -329,7 +411,33 @@ export async function studentRef(db, env, courseId, id, preloadedKey = null) {
 }
 
 export async function publicize(db, env, courses, session) {
-  if (session && session.role === 'teacher') return courses;
+  if (session && session.role === 'teacher') {
+    const logsByCourse = {};
+    try {
+      const logRows = await db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 500').all();
+      for (const log of (logRows.results || [])) {
+        if (!logsByCourse[log.course_id]) logsByCourse[log.course_id] = [];
+        logsByCourse[log.course_id].push({
+          id: log.id,
+          courseId: log.course_id,
+          groupId: log.group_id,
+          groupName: log.group_name,
+          operatorRole: log.operator_role,
+          operatorId: log.operator_id,
+          operatorName: log.operator_name,
+          actionType: log.action_type,
+          targetId: log.target_id,
+          targetName: log.target_name,
+          detail: log.detail,
+          createdAt: log.created_at,
+        });
+      }
+    } catch (_) {}
+    return courses.map(c => ({
+      ...c,
+      logs: logsByCourse[c.id] || [],
+    }));
+  }
   const selfId = session && session.role === 'student' ? session.id : null;
   const selfCourse = session && session.courseId;
   const hmacKey = await getHmacKey(db, env);

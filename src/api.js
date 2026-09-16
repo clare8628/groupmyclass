@@ -2,6 +2,7 @@ import {
   json, bad, sha256, makeToken, readSession, sessionCookie, clearCookie,
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
+  makeLogStmt, logActivity, evalDeadlinePassed,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 
@@ -93,6 +94,7 @@ export async function handleAction(request, env, db, body) {
     }
     if (op === 'del-course') {
       await db.batch([
+        db.prepare('DELETE FROM activity_logs WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM students WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM courses WHERE id = ?').bind(body.courseId),
@@ -105,12 +107,23 @@ export async function handleAction(request, env, db, body) {
       const groupIds = Array.isArray(body.groupIds) ? body.groupIds : [];
       if (!groupIds.length) return bad('請選擇欲刪除的組別', 400);
 
+      const delNames = [];
       const stmts = [];
       for (const gid of groupIds) {
+        const g = c.groups.find(x => x.id === gid);
+        if (g) delNames.push(g.name);
         // 將該組成員重置為未分組
         stmts.push(db.prepare('UPDATE students SET group_id=NULL, is_leader=0, is_vice=0, auto_assigned=0 WHERE course_id=? AND group_id=?').bind(c.id, gid));
         stmts.push(db.prepare('DELETE FROM groups WHERE course_id=? AND id=?').bind(c.id, gid));
       }
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'del-groups',
+        detail: `老師刪除組別「${delNames.join('、')}」，組員已釋出為未分組`,
+      }));
       await db.batch(stmts);
       return ok();
     }
@@ -145,19 +158,51 @@ export async function handleAction(request, env, db, body) {
       if (!s) return bad('學生不存在', 404);
       const gid = body.groupId || null;
       if (gid && s.groupId !== gid && membersOf(c, gid).length >= cap(c)) return bad(`該組已達上限 ${cap(c)} 人`);
-      await db.prepare('UPDATE students SET group_id=?, auto_assigned=0, is_leader=CASE WHEN ? IS NULL THEN 0 ELSE is_leader END, is_vice=CASE WHEN ? IS NULL THEN 0 ELSE is_vice END WHERE course_id=? AND id=?')
-        .bind(gid, gid, gid, c.id, s.id).run();
+      const targetG = gid ? c.groups.find(x => x.id === gid) : null;
+      const targetGName = targetG ? targetG.name : '未分組';
+      const detail = `老師將學生 ${s.name} (${s.id}) ${gid ? `指派至「${targetGName}」` : '移至未分組名單'}`;
+      await db.batch([
+        db.prepare('UPDATE students SET group_id=?, auto_assigned=0, is_leader=CASE WHEN ? IS NULL THEN 0 ELSE is_leader END, is_vice=CASE WHEN ? IS NULL THEN 0 ELSE is_vice END WHERE course_id=? AND id=?')
+          .bind(gid, gid, gid, c.id, s.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: gid || '',
+          groupName: targetGName,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'teacher-assign',
+          targetId: s.id,
+          targetName: s.name,
+          detail,
+        }),
+      ]);
       return ok();
     }
     if (op === 'set-leader') {
       const c = course(body.courseId);
       const s = c && await resolveStudent(db, env, c, body.studentId);
       if (!s || !s.groupId) return bad('學生未分組', 400);
+      const g = c.groups.find(x => x.id === s.groupId);
+      const gName = g ? g.name : '';
       const on = body.on ? 1 : 0;
+      const detail = `老師${on ? '指定' : '取消'}學生 ${s.name} (${s.id}) 為「${gName}」組長`;
       await db.batch([
         db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND group_id=?').bind(c.id, s.groupId),
         db.prepare('UPDATE students SET is_leader=?, is_vice=CASE WHEN ?=1 THEN 0 ELSE is_vice END WHERE course_id=? AND id=?')
           .bind(on, on, c.id, s.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: s.groupId,
+          groupName: gName,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'teacher-set-leader',
+          targetId: s.id,
+          targetName: s.name,
+          detail,
+        }),
       ]);
       return ok();
     }
@@ -174,6 +219,14 @@ export async function handleAction(request, env, db, body) {
         stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
           .bind('g' + i, c.id, '第 ' + i + ' 組', i));
       }
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'make-groups',
+        detail: `老師重新建立 ${n} 個空組別（清空現有分組）`,
+      }));
       await db.batch(stmts);
       return ok();
     }
@@ -195,6 +248,14 @@ export async function handleAction(request, env, db, body) {
         stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
           .bind(gid, c.id, gname, seq++));
       }
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'make-remaining-groups',
+        detail: `老師為剩餘 ${unassigned.length} 位未分組學生建立 ${needCount} 個新組別`,
+      }));
       await db.batch(stmts);
       return ok({ addedGroups: needCount });
     }
@@ -230,6 +291,14 @@ export async function handleAction(request, env, db, body) {
       }
 
       stmts.push(db.prepare('DELETE FROM group_snapshots WHERE course_id = ?').bind(c.id));
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'restore-snapshot',
+        detail: '老師執行復原分組（回到上一步快照狀態）',
+      }));
 
       await db.batch(stmts);
       return ok();
@@ -238,8 +307,21 @@ export async function handleAction(request, env, db, body) {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const seq = await nextSeq(db, 'groups', c.id);
-      await db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
-        .bind('g' + Date.now().toString(36), c.id, '第 ' + (c.groups.length + 1) + ' 組', seq).run();
+      const gname = '第 ' + (c.groups.length + 1) + ' 組';
+      const gid = 'g' + Date.now().toString(36);
+      await db.batch([
+        db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)').bind(gid, c.id, gname, seq),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: gid,
+          groupName: gname,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'add-group',
+          detail: `老師新增一組「${gname}」`,
+        }),
+      ]);
       return ok();
     }
     if (op === 'clear-groups') {
@@ -250,6 +332,14 @@ export async function handleAction(request, env, db, body) {
       await db.batch([
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('UPDATE students SET group_id=NULL, is_leader=0, is_vice=0, auto_assigned=0 WHERE course_id=?').bind(body.courseId),
+        makeLogStmt(db, {
+          courseId: body.courseId,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'clear-groups',
+          detail: '老師清除所有分組與學生組別分配',
+        }),
       ]);
       return ok();
     }
@@ -260,8 +350,22 @@ export async function handleAction(request, env, db, body) {
       if (!g) return bad('組別不存在', 404);
       const allow = body.allowEdit ? 1 : 0;
       const editDeadline = allow ? (body.editDeadline !== undefined ? String(body.editDeadline) : '') : '';
-      await db.prepare('UPDATE groups SET allow_edit=?, edit_deadline=? WHERE course_id=? AND id=?')
-        .bind(allow, editDeadline, c.id, g.id).run();
+      const deadlineInfo = (allow && editDeadline) ? `（專屬截止時間：${editDeadline.replace('T', ' ')}）` : '';
+      const detail = `老師${allow ? '開放' : '關閉'}「${g.name}」組長挑選權限${deadlineInfo}`;
+      await db.batch([
+        db.prepare('UPDATE groups SET allow_edit=?, edit_deadline=? WHERE course_id=? AND id=?')
+          .bind(allow, editDeadline, c.id, g.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: g.id,
+          groupName: g.name,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'toggle-group-edit',
+          detail,
+        }),
+      ]);
       return ok();
     }
     if (op === 'set-peer-eval') {
@@ -348,7 +452,22 @@ export async function handleAction(request, env, db, body) {
         stmts.push(db.prepare('UPDATE students SET group_id=?, auto_assigned=1 WHERE course_id=? AND id=?').bind(target.id, c.id, s.id));
       }
 
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'teacher-auto-assign',
+        detail: `老師執行系統隨機分配剩餘未分組學生（共分配 ${shuffled.length} 位學生至各組）`,
+      }));
+
       if (stmts.length) await db.batch(stmts);
+      return ok();
+    }
+    if (op === 'clear-logs') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      await db.prepare('DELETE FROM activity_logs WHERE course_id = ?').bind(c.id).run();
       return ok();
     }
     return bad('未知操作 Unknown action: ' + op, 400);
@@ -367,32 +486,81 @@ export async function handleAction(request, env, db, body) {
   if (action === 'claim-leader') {
     if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed', 403);
     let gid = self.groupId;
+    let gName = '';
+    const stmts = [];
     if (!gid) {
       const empty = c.groups.find(g => !membersOf(c, g.id).length);
-      if (empty) gid = empty.id;
-      else {
+      if (empty) {
+        gid = empty.id;
+        gName = empty.name;
+      } else {
         gid = 'g' + Date.now().toString(36);
+        gName = '第 ' + (c.groups.length + 1) + ' 組';
         const seq = await nextSeq(db, 'groups', c.id);
-        await db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
-          .bind(gid, c.id, '第 ' + (c.groups.length + 1) + ' 組', seq).run();
+        stmts.push(db.prepare('INSERT INTO groups (id, course_id, name, seq) VALUES (?,?,?,?)')
+          .bind(gid, c.id, gName, seq));
       }
+    } else {
+      const g = c.groups.find(x => x.id === gid);
+      gName = g ? g.name : '';
     }
     if (membersOf(c, gid).some(m => m.isLeader && m.id !== self.id)) return bad('本組已有組長 This group already has a leader', 409);
-    await db.prepare('UPDATE students SET group_id=?, is_leader=1, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
-      .bind(gid, c.id, self.id).run();
+    stmts.push(db.prepare('UPDATE students SET group_id=?, is_leader=1, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
+      .bind(gid, c.id, self.id));
+    stmts.push(makeLogStmt(db, {
+      courseId: c.id,
+      groupId: gid,
+      groupName: gName,
+      operatorRole: 'leader',
+      operatorId: self.id,
+      operatorName: self.name,
+      actionType: 'claim-leader',
+      targetId: self.id,
+      targetName: self.name,
+      detail: `學生 ${self.name} (${self.id}) 登記為「${gName}」組長`,
+    }));
+    await db.batch(stmts);
     return ok();
   }
   if (action === 'unclaim-leader') {
     if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分 Deadline passed', 403);
+    const g = c.groups.find(x => x.id === self.groupId);
+    const gName = g ? g.name : '';
     const vice = membersOf(c, self.groupId).find(m => m.isVice && m.id !== self.id);
     if (vice) {
       // 副組長自動晉級組長，原組長退為一般組員
       await db.batch([
         db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id),
         db.prepare('UPDATE students SET is_leader=1, is_vice=0 WHERE course_id=? AND id=?').bind(c.id, vice.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: self.groupId,
+          groupName: gName,
+          operatorRole: 'leader',
+          operatorId: self.id,
+          operatorName: self.name,
+          actionType: 'unclaim-leader',
+          targetId: vice.id,
+          targetName: vice.name,
+          detail: `組長 ${self.name} (${self.id}) 放棄組長身分，副組長 ${vice.name} (${vice.id}) 自動晉級為「${gName}」組長`,
+        }),
       ]);
     } else {
-      await db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id).run();
+      await db.batch([
+        db.prepare('UPDATE students SET is_leader=0 WHERE course_id=? AND id=?').bind(c.id, self.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: self.groupId,
+          groupName: gName,
+          operatorRole: 'leader',
+          operatorId: self.id,
+          operatorName: self.name,
+          actionType: 'unclaim-leader',
+          targetId: self.id,
+          targetName: self.name,
+          detail: `組長 ${self.name} (${self.id}) 放棄「${gName}」組長身分`,
+        }),
+      ]);
     }
     return ok();
   }
@@ -416,6 +584,16 @@ export async function handleAction(request, env, db, body) {
     // 標記該組組長已完成送出評分
     stmts.push(db.prepare('UPDATE groups SET peer_eval_submitted=1 WHERE course_id=? AND id=?')
       .bind(c.id, self.groupId));
+    stmts.push(makeLogStmt(db, {
+      courseId: c.id,
+      groupId: self.groupId,
+      groupName: myGroup.name,
+      operatorRole: 'leader',
+      operatorId: self.id,
+      operatorName: self.name,
+      actionType: 'peer-eval',
+      detail: `組長 ${self.name} (${self.id}) 完成送出「${myGroup.name}」期末組長評分`,
+    }));
     if (stmts.length) await db.batch(stmts);
     return ok();
   }
@@ -431,8 +609,25 @@ export async function handleAction(request, env, db, body) {
     const t = await resolveStudent(db, env, c, body.studentId);
     if (!t) return bad('學生不存在', 404);
     if (t.groupId) return bad('該生已被分組 Already assigned', 409);
-    await db.prepare('UPDATE students SET group_id=?, auto_assigned=0 WHERE course_id=? AND id=?')
-      .bind(self.groupId, c.id, t.id).run();
+    const g = myGroup || c.groups.find(x => x.id === self.groupId);
+    const gName = g ? g.name : '';
+    const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 加入「${gName}」`;
+    await db.batch([
+      db.prepare('UPDATE students SET group_id=?, auto_assigned=0 WHERE course_id=? AND id=?')
+        .bind(self.groupId, c.id, t.id),
+      makeLogStmt(db, {
+        courseId: c.id,
+        groupId: self.groupId,
+        groupName: gName,
+        operatorRole: 'leader',
+        operatorId: self.id,
+        operatorName: self.name,
+        actionType: 'pick',
+        targetId: t.id,
+        targetName: t.name,
+        detail,
+      }),
+    ]);
     return ok();
   }
   if (action === 'drop') {
@@ -443,17 +638,49 @@ export async function handleAction(request, env, db, body) {
     }
     const t = await resolveStudent(db, env, c, body.studentId);
     if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生', 400);
-    await db.prepare('UPDATE students SET group_id=NULL, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
-      .bind(c.id, t.id).run();
+    const g = myGroup || c.groups.find(x => x.id === self.groupId);
+    const gName = g ? g.name : '';
+    const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 釋出至未分組名單（原組別：「${gName}」）`;
+    await db.batch([
+      db.prepare('UPDATE students SET group_id=NULL, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
+        .bind(c.id, t.id),
+      makeLogStmt(db, {
+        courseId: c.id,
+        groupId: self.groupId,
+        groupName: gName,
+        operatorRole: 'leader',
+        operatorId: self.id,
+        operatorName: self.name,
+        actionType: 'drop',
+        targetId: t.id,
+        targetName: t.name,
+        detail,
+      }),
+    ]);
     return ok();
   }
   if (action === 'toggle-vice') {
     const t = await resolveStudent(db, env, c, body.studentId);
     if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法指定該學生', 400);
     const on = t.isVice ? 0 : 1;
+    const g = myGroup || c.groups.find(x => x.id === self.groupId);
+    const gName = g ? g.name : '';
+    const detail = `組長 ${self.name} (${self.id}) ${on ? '指定' : '取消'} ${t.name} (${t.id}) 為「${gName}」副組長`;
     await db.batch([
       db.prepare('UPDATE students SET is_vice=0 WHERE course_id=? AND group_id=?').bind(c.id, self.groupId),
       db.prepare('UPDATE students SET is_vice=? WHERE course_id=? AND id=?').bind(on, c.id, t.id),
+      makeLogStmt(db, {
+        courseId: c.id,
+        groupId: self.groupId,
+        groupName: gName,
+        operatorRole: 'leader',
+        operatorId: self.id,
+        operatorName: self.name,
+        actionType: 'toggle-vice',
+        targetId: t.id,
+        targetName: t.name,
+        detail,
+      }),
     ]);
     return ok();
   }

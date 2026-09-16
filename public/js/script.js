@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.38';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.39';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -12,8 +12,10 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
-let teacherView = 'course';   // 後台主區：'course' | 'settings' | 'eval'
+let teacherView = 'course';   // 後台主區：'course' | 'settings' | 'eval' | 'logs'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
+let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system'
+let logSearchText = '';       // 異動日誌搜尋關鍵字
 let busy = false;
 let lastSig = '';
 
@@ -635,6 +637,9 @@ function courseTree() {
         <li class="${teacherView === 'eval' ? 'active' : ''}">
           <button data-act="sys-peer-eval">學期成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
         </li>
+        <li class="${teacherView === 'logs' ? 'active' : ''}">
+          <button data-act="sys-logs">📜 分組異動日誌<span class="count">Activity logs</span></button>
+        </li>
       </ul>
     </div>
   </aside>`;
@@ -647,6 +652,8 @@ function teacherScreen() {
     main = teacherPasswordBlock();
   } else if (teacherView === 'eval') {
     main = teacherPeerEvalBlock(c);
+  } else if (teacherView === 'logs') {
+    main = teacherLogsBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -807,6 +814,7 @@ function teacherCourse(c) {
       ` : ''}
       <button class="btn btn-secondary" data-act="export-json">匯出 JSON</button>
       <button class="btn btn-secondary" data-act="export-csv">匯出 CSV</button>
+      <button class="btn btn-secondary" data-act="view-course-logs" title="查看本課程組員異動日誌與操作歷史">📜 分組異動日誌 (${(c.logs || []).length})</button>
     </div>
 
     <!-- 勾選要刪除的分組組別 -->
@@ -917,7 +925,244 @@ function teacherCourse(c) {
       ${unassignedList(c)}
     </div>
   </div>
+
+  <!-- 最新異動動態預覽卡片 -->
+  <div class="teacher-section logs-preview-box" style="margin-top:2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+      <h2 style="margin:0;font-size:1.2rem;">📜 最新分組異動紀錄 <small>Recent Activity</small></h2>
+      <button class="btn btn-secondary" data-act="view-course-logs" style="padding:0.35rem 0.85rem;font-size:0.85rem;margin:0;">
+        查看完整日誌 (${(c.logs || []).length} 筆) →
+      </button>
+    </div>
+    ${(c.logs && c.logs.length) ? `
+      <div class="table-wrap">
+        <table class="roster" style="background:#fff;margin:0;">
+          <thead>
+            <tr>
+              <th style="width:150px;">時間 Timestamp</th>
+              <th style="width:120px;">類別 Action</th>
+              <th style="width:140px;">操作者 Operator</th>
+              <th>詳細異動說明 Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${c.logs.slice(0, 5).map(l => `
+            <tr>
+              <td style="font-size:0.82rem;color:#475569;font-family:monospace;white-space:nowrap;">${formatLogTime(l.createdAt)}</td>
+              <td>${renderLogBadge(l.actionType)}</td>
+              <td><b>${esc(l.operatorName || '-')}</b> <small style="color:#64748b;">(${esc(l.operatorId || '')})</small></td>
+              <td>${esc(l.detail)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '<p class="file-path" style="margin:0;">目前尚無任何異動紀錄。當組長進行組員挑選或釋出時，系統將自動記錄於此。</p>'}
+  </div>
   ${publicBoard({ withUnassigned: false })}`;
+}
+
+/* ===== 異動日誌輔助函式 ===== */
+function formatLogTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return String(ts);
+  const pad = n => String(n).padStart(2, '0');
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const date = pad(d.getDate());
+  const h = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  const s = pad(d.getSeconds());
+  return `${y}-${m}-${date} ${h}:${min}:${s}`;
+}
+
+function isSameDay(ts1, ts2) {
+  if (!ts1 || !ts2) return false;
+  const d1 = new Date(ts1), d2 = new Date(ts2);
+  return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
+}
+
+function formatActionTypeLabel(type) {
+  switch (type) {
+    case 'pick': return '組長加入組員';
+    case 'drop': return '組長釋出組員';
+    case 'claim-leader': return '登記組長';
+    case 'unclaim-leader': return '放棄組長';
+    case 'toggle-vice': return '副組長設定變更';
+    case 'peer-eval': return '期末組長評分送出';
+    case 'teacher-assign': return '老師指派組員';
+    case 'teacher-set-leader': return '老師設定組長';
+    case 'teacher-auto-assign': return '老師隨機分配';
+    case 'make-groups': return '老師重建組別';
+    case 'make-remaining-groups': return '老師建立剩餘組別';
+    case 'clear-groups': return '老師清空分組';
+    case 'restore-snapshot': return '老師復原分組';
+    case 'del-groups': return '老師刪除組別';
+    case 'add-group': return '老師新增組別';
+    case 'toggle-group-edit': return '老師開放/關閉挑選權限';
+    case 'deadline-dissolve': return '系統解散不足額組別';
+    case 'auto-assign': return '系統自動分配未分組';
+    default: return type;
+  }
+}
+
+function renderLogBadge(type) {
+  switch (type) {
+    case 'pick':
+      return '<span class="log-badge tag-pick">＋ 組長加入</span>';
+    case 'drop':
+      return '<span class="log-badge tag-drop">－ 組長釋出</span>';
+    case 'claim-leader':
+      return '<span class="log-badge tag-leader">👑 登記組長</span>';
+    case 'unclaim-leader':
+      return '<span class="log-badge tag-leader">↩️ 放棄組長</span>';
+    case 'toggle-vice':
+      return '<span class="log-badge tag-vice">⭐ 副組長變更</span>';
+    case 'peer-eval':
+      return '<span class="log-badge tag-eval">📝 期末評分</span>';
+    case 'auto-assign':
+    case 'deadline-dissolve':
+      return '<span class="log-badge tag-system">🤖 系統處理</span>';
+    default:
+      if (type.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(type)) {
+        return '<span class="log-badge tag-teacher">🛠️ 老師操作</span>';
+      }
+      return `<span class="log-badge">${esc(type)}</span>`;
+  }
+}
+
+function teacherLogsBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section">
+      <h2>📜 學生分組異動日誌 <small>Activity Logs</small></h2>
+      <p class="file-path">請先從左側點選或建立課程，即可檢視該課程的學生分組異動日誌。</p>
+    </div>`;
+  }
+
+  const logs = c.logs || [];
+  const pickCount = logs.filter(l => l.actionType === 'pick').length;
+  const dropCount = logs.filter(l => l.actionType === 'drop').length;
+  const todayCount = logs.filter(l => isSameDay(l.createdAt, Date.now())).length;
+
+  const kw = (logSearchText || '').trim().toLowerCase();
+  const filtered = logs.filter(l => {
+    if (logActionFilter === 'pick' && l.actionType !== 'pick') return false;
+    if (logActionFilter === 'drop' && l.actionType !== 'drop') return false;
+    if (logActionFilter === 'leader' && !['claim-leader', 'unclaim-leader', 'toggle-vice', 'peer-eval'].includes(l.actionType)) return false;
+    if (logActionFilter === 'teacher' && !(l.actionType.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(l.actionType))) return false;
+    if (logActionFilter === 'system' && !['auto-assign', 'deadline-dissolve'].includes(l.actionType)) return false;
+
+    if (kw) {
+      const matchText = `${l.detail} ${l.operatorName} ${l.operatorId} ${l.targetName} ${l.targetId} ${l.groupName} ${formatLogTime(l.createdAt)}`.toLowerCase();
+      if (!matchText.includes(kw)) return false;
+    }
+    return true;
+  });
+
+  return `
+  <div class="teacher-section logs-admin-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.2rem;">
+      <div>
+        <h2 style="margin:0;">📜 學生分組異動日誌 <small>${esc(courseLabel(c))}</small></h2>
+        <p class="file-path" style="margin:0.25rem 0 0 0;">
+          即時記載組長加入/釋出組員、身分設定、老師調整與系統排程等所有操作歷程與時間軌跡。
+        </p>
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <button class="btn btn-secondary" data-act="back-to-course" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;">
+          🔙 返回分組管理
+        </button>
+        <button class="btn btn-success" data-act="export-logs-csv" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
+          📥 匯出異動日誌 CSV
+        </button>
+        <button class="btn btn-danger" data-act="clear-course-logs" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
+          🗑️ 清空日誌紀錄
+        </button>
+      </div>
+    </div>
+
+    <!-- 統計指標卡片 -->
+    <div class="stats" style="margin:0 0 1.5rem 0;">
+      <div class="stat"><div class="value">${logs.length}</div><div class="label">總異動筆數 Total</div></div>
+      <div class="stat"><div class="value" style="color:#16a34a;">${pickCount}</div><div class="label">組長加入組員 Picks</div></div>
+      <div class="stat"><div class="value" style="color:#dc2626;">${dropCount}</div><div class="label">組長釋出組員 Drops</div></div>
+      <div class="stat"><div class="value" style="color:#2563eb;">${todayCount}</div><div class="label">今日最新異動 Today</div></div>
+    </div>
+
+    <!-- 搜尋與過濾列 -->
+    <div class="logs-filter-bar" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;background:#f8fafc;padding:0.85rem 1rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <label style="font-weight:600;font-size:0.85rem;color:#475569;">🔍 搜尋：</label>
+        <input type="text" data-act="search-logs" value="${esc(logSearchText)}" placeholder="輸入姓名、學號、組別或關鍵字..." style="padding:0.35rem 0.6rem;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:4px;width:240px;">
+      </div>
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <label style="font-weight:600;font-size:0.85rem;color:#475569;">類別篩選：</label>
+        <select data-act="filter-log-action" style="padding:0.35rem 0.6rem;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:4px;background:#fff;">
+          <option value="all" ${logActionFilter === 'all' ? 'selected' : ''}>全部動作類別 All (${logs.length})</option>
+          <option value="pick" ${logActionFilter === 'pick' ? 'selected' : ''}>＋ 組長加入組員 (${pickCount})</option>
+          <option value="drop" ${logActionFilter === 'drop' ? 'selected' : ''}>－ 組長釋出組員 (${dropCount})</option>
+          <option value="leader" ${logActionFilter === 'leader' ? 'selected' : ''}>👑 組長/副組長身分變更</option>
+          <option value="teacher" ${logActionFilter === 'teacher' ? 'selected' : ''}>🛠️ 老師管理調整</option>
+          <option value="system" ${logActionFilter === 'system' ? 'selected' : ''}>🤖 系統自動處理</option>
+        </select>
+      </div>
+      ${(kw || logActionFilter !== 'all') ? `
+        <button class="tab-btn" data-act="reset-log-filter" style="padding:0.3rem 0.6rem;font-size:0.8rem;margin-left:auto;">
+          重設篩選 Reset
+        </button>
+      ` : ''}
+      <span style="font-size:0.82rem;color:#64748b;margin-left:${(kw || logActionFilter !== 'all') ? '0' : 'auto'};">
+        顯示 ${filtered.length} / 共 ${logs.length} 筆
+      </span>
+    </div>
+
+    <!-- 日誌資料表 -->
+    ${filtered.length ? `
+    <div class="table-wrap">
+      <table class="roster logs-table" style="background:#fff;">
+        <thead>
+          <tr>
+            <th style="width:150px;">時間 Timestamp</th>
+            <th style="width:120px;">動作類別 Action</th>
+            <th style="width:130px;">操作者 Operator</th>
+            <th style="width:95px;">相關組別 Group</th>
+            <th style="width:125px;">對象學生 Target</th>
+            <th>詳細異動說明 Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.map(l => `
+          <tr>
+            <td style="font-size:0.82rem;color:#475569;font-family:monospace;white-space:nowrap;">
+              ${formatLogTime(l.createdAt)}
+            </td>
+            <td>${renderLogBadge(l.actionType)}</td>
+            <td>
+              <b>${esc(l.operatorName || '-')}</b>
+              ${l.operatorId && l.operatorId !== l.operatorName ? `<br><small style="color:#64748b;">${esc(l.operatorId)}</small>` : ''}
+            </td>
+            <td>
+              ${l.groupName ? `<span class="group-name-tag">${esc(l.groupName)}</span>` : '<span style="color:#94a3b8;">-</span>'}
+            </td>
+            <td>
+              ${l.targetName ? `<b>${esc(l.targetName)}</b>` : '<span style="color:#94a3b8;">-</span>'}
+              ${l.targetId ? `<br><small style="color:#64748b;">${esc(l.targetId)}</small>` : ''}
+            </td>
+            <td style="line-height:1.4;">
+              <span class="log-detail-text">${esc(l.detail)}</span>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `
+    <div style="text-align:center;padding:3rem 1rem;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;color:#64748b;">
+      <p style="font-size:1.1rem;margin-bottom:0.5rem;">📭 目前無符合條件的異動紀錄</p>
+      <p style="font-size:0.85rem;margin:0;">
+        ${logs.length ? '請嘗試更換搜尋關鍵字或調整篩選類別。' : '當組長挑選、釋出組員或老師調整分組時，系統將自動於此留下精準的時間與操作歷程。'}
+      </p>
+    </div>`}
+  </div>`;
 }
 
 function teacherPasswordBlock() {
@@ -1256,6 +1501,26 @@ function exportCSV(c) {
   download(csv, `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
 }
 
+function exportLogsCSV(c) {
+  const rows = [['時間', '動作類別', '操作者身分', '操作者學號', '操作者姓名', '組別', '對象學號', '對象姓名', '詳細說明']];
+  const logs = c.logs || [];
+  logs.forEach(l => {
+    rows.push([
+      formatLogTime(l.createdAt),
+      formatActionTypeLabel(l.actionType),
+      l.operatorRole === 'leader' ? '組長' : l.operatorRole === 'teacher' ? '老師' : l.operatorRole === 'system' ? '系統' : l.operatorRole,
+      l.operatorId || '',
+      l.operatorName || '',
+      l.groupName || '',
+      l.targetId || '',
+      l.targetName || '',
+      l.detail || '',
+    ]);
+  });
+  const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_分組異動日誌.csv`);
+}
+
 function download(content, type, filename) {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement('a');
@@ -1422,9 +1687,23 @@ app.addEventListener('click', e => {
   if (a === 'close-login') { loginMode = null; return render(); }
   if (a === 'sys-password') { teacherView = 'settings'; return render(); }
   if (a === 'sys-peer-eval') { teacherView = 'eval'; return render(); }
+  if (a === 'sys-logs') { teacherView = 'logs'; return render(); }
+  if (a === 'view-course-logs') {
+    if (id) state.currentId = id;
+    teacherView = 'logs';
+    return render();
+  }
+  if (a === 'back-to-course') { teacherView = 'course'; return render(); }
+  if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; return render(); }
+  if (a === 'export-logs-csv') { return c && exportLogsCSV(c); }
+  if (a === 'clear-course-logs') {
+    if (!c) return;
+    if (!confirm(`確定要清空「${courseLabel(c)}」的所有異動日誌紀錄嗎？\n\n此動作將清除所有過往軌跡且無法復原！`)) return;
+    return act('teacher:clear-logs', { courseId: c.id });
+  }
   if (a === 'pick-course-node' || a === 'pick-course') {
     state.currentId = id || btn.value;
-    if (teacherView !== 'eval') {
+    if (teacherView !== 'eval' && teacherView !== 'logs') {
       teacherView = 'course';
     }
     localStorage.setItem(CURRENT_KEY, state.currentId);
@@ -1565,9 +1844,28 @@ app.addEventListener('change', e => {
     return r.readAsText(file);
   }
   if (!c) return;
+  if (a === 'filter-log-action') {
+    logActionFilter = t.value;
+    return render();
+  }
   if (a === 'assign-student') return act('teacher:assign-student', { courseId: c.id, studentId: id, groupId: t.value || null });
   if (a === 'set-leader') return act('teacher:set-leader', { courseId: c.id, studentId: id, on: t.checked });
   if (a === 'pick') return act('pick', { studentId: id });
+});
+
+app.addEventListener('input', e => {
+  const t = e.target;
+  const a = t.dataset.act;
+  if (!a) return;
+  if (a === 'search-logs') {
+    logSearchText = t.value;
+    render();
+    const input = document.querySelector('input[data-act="search-logs"]');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
 });
 
 /* ===== 啟動 ===== */

@@ -51,3 +51,21 @@ CREATE TABLE IF NOT EXISTS group_snapshots (
   snapshot   TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id     TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  group_id      TEXT,
+  group_name    TEXT NOT NULL DEFAULT '',
+  operator_role TEXT NOT NULL DEFAULT '',
+  operator_id   TEXT NOT NULL DEFAULT '',
+  operator_name TEXT NOT NULL DEFAULT '',
+  action_type   TEXT NOT NULL DEFAULT '',
+  target_id     TEXT NOT NULL DEFAULT '',
+  target_name   TEXT NOT NULL DEFAULT '',
+  detail        TEXT NOT NULL DEFAULT '',
+  created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_logs_course ON activity_logs(course_id, created_at DESC);
+
