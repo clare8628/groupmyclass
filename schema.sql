@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS attendance_records (
   status         TEXT NOT NULL DEFAULT 'present',  -- 'present' | 'absent'
   marked_by_id   TEXT NOT NULL DEFAULT '',
   marked_by_name TEXT NOT NULL DEFAULT '',
-  updated_at     INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL DEFAULT 0,  -- 首次點名時間
+  updated_at     INTEGER NOT NULL,            -- 最後修正時間
   PRIMARY KEY (course_id, session_id, student_id)
 );
 
@@ -105,5 +106,16 @@ CREATE TABLE IF NOT EXISTS attendance_unlocks (
   deadline   TEXT NOT NULL DEFAULT '',    -- 可空白＝不限期
   created_at INTEGER NOT NULL,
   PRIMARY KEY (course_id, session_id, group_id)
+);
+
+-- 點名功能：老師授權某位組長／副組長跨組代理特定時段／組別之點名
+CREATE TABLE IF NOT EXISTS attendance_delegates (
+  course_id     TEXT NOT NULL,
+  session_id    TEXT NOT NULL,
+  group_id      TEXT NOT NULL,   -- 被代理的組別
+  delegate_id   TEXT NOT NULL,   -- 代理點名之學生學號（通常為另一組組長／副組長）
+  delegate_name TEXT NOT NULL DEFAULT '',
+  created_at    INTEGER NOT NULL,
+  PRIMARY KEY (course_id, session_id, group_id, delegate_id)
 );
 

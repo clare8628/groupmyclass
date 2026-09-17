@@ -161,10 +161,14 @@ async function ensureAttendanceSchema(db) {
         status TEXT NOT NULL DEFAULT 'present',
         marked_by_id TEXT NOT NULL DEFAULT '',
         marked_by_name TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY (course_id, session_id, student_id)
       )
     `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE attendance_records ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0').run();
   } catch (_) {}
   try {
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_attendance_records_session ON attendance_records(course_id, session_id)').run();
@@ -178,6 +182,19 @@ async function ensureAttendanceSchema(db) {
         deadline TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         PRIMARY KEY (course_id, session_id, group_id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_delegates (
+        course_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        delegate_id TEXT NOT NULL,
+        delegate_name TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (course_id, session_id, group_id, delegate_id)
       )
     `).run();
   } catch (_) {}
@@ -337,7 +354,7 @@ export function calcAdjustment(c, g, s) {
 export async function loadState(db) {
   await ensureGroupSchema(db);
   await ensureAttendanceSchema(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks] = await Promise.all([
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
@@ -345,6 +362,7 @@ export async function loadState(db) {
     db.prepare('SELECT * FROM attendance_sessions ORDER BY date DESC, created_at DESC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_records').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_unlocks').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM attendance_delegates').all().catch(() => ({ results: [] })),
   ]);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   return courses.results.map(c => {
@@ -388,10 +406,15 @@ export async function loadState(db) {
     }));
     courseObj.attendanceRecords = (attRecords.results || []).filter(x => x.course_id === c.id).map(x => ({
       sessionId: x.session_id, studentId: x.student_id, groupId: x.group_id || '', status: x.status,
-      markedById: x.marked_by_id || '', markedByName: x.marked_by_name || '', updatedAt: x.updated_at,
+      markedById: x.marked_by_id || '', markedByName: x.marked_by_name || '',
+      createdAt: x.created_at || x.updated_at, updatedAt: x.updated_at,
     }));
     courseObj.attendanceUnlocks = (attUnlocks.results || []).filter(x => x.course_id === c.id).map(x => ({
       sessionId: x.session_id, groupId: x.group_id || '', deadline: x.deadline || '', createdAt: x.created_at,
+    }));
+    courseObj.attendanceDelegates = (attDelegates.results || []).filter(x => x.course_id === c.id).map(x => ({
+      sessionId: x.session_id, groupId: x.group_id, delegateId: x.delegate_id,
+      delegateName: x.delegate_name || '', createdAt: x.created_at,
     }));
 
     return courseObj;
@@ -521,6 +544,7 @@ export async function publicize(db, env, courses, session) {
     } catch (_) {}
     return courses.map(c => {
       const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
+      const studentName = sid => (c.students.find(s => s.id === sid) || {}).name || '';
       return {
         ...c,
         logs: logsByCourse[c.id] || [],
@@ -530,6 +554,12 @@ export async function publicize(db, env, courses, session) {
           return { ...r, studentName: st ? st.name : '', groupName: groupName(r.groupId) };
         }),
         attendanceUnlocks: c.attendanceUnlocks || [],
+        attendanceDelegates: (c.attendanceDelegates || []).map(d => ({
+          ...d,
+          delegateName: d.delegateName || studentName(d.delegateId),
+          delegateGroupName: groupName((c.students.find(s => s.id === d.delegateId) || {}).groupId),
+          groupName: groupName(d.groupId),
+        })),
       };
     });
   }
@@ -555,18 +585,27 @@ export async function publicize(db, env, courses, session) {
     }
     const isMine = !!selfId && c.id === selfCourse;
     const selfGroupId = isMine ? (c.students.find(s => s.id === selfId) || {}).groupId : null;
+    const myDelegates = isMine ? (c.attendanceDelegates || []).filter(d => d.delegateId === selfId) : [];
+    const delegatedGroupIds = new Set(myDelegates.map(d => d.groupId));
+    const visibleGroupIds = new Set([selfGroupId, ...delegatedGroupIds].filter(Boolean));
     const attendanceSessions = isMine ? (c.attendanceSessions || []) : [];
-    const attendanceRecords = (isMine && selfGroupId)
-      ? (c.attendanceRecords || []).filter(r => r.groupId === selfGroupId).map(r => ({
+    const attendanceRecords = isMine
+      ? (c.attendanceRecords || []).filter(r => visibleGroupIds.has(r.groupId)).map(r => ({
           sessionId: r.sessionId, groupId: r.groupId, status: r.status,
           markedByName: r.markedByName, updatedAt: r.updatedAt,
           ref: refById[r.studentId] || '',
         }))
       : [];
     const attendanceUnlocks = isMine
-      ? (c.attendanceUnlocks || []).filter(u => !u.groupId || u.groupId === selfGroupId)
+      ? (c.attendanceUnlocks || []).filter(u => !u.groupId || visibleGroupIds.has(u.groupId))
       : [];
-    out.push({ ...c, students, attendanceSessions, attendanceRecords, attendanceUnlocks });
+    const attendanceDelegates = isMine
+      ? myDelegates.map(d => ({
+          sessionId: d.sessionId, groupId: d.groupId,
+          groupName: (c.groups.find(g => g.id === d.groupId) || {}).name || '',
+        }))
+      : [];
+    out.push({ ...c, students, attendanceSessions, attendanceRecords, attendanceUnlocks, attendanceDelegates });
   }
   return out;
 }

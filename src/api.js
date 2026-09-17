@@ -547,6 +547,53 @@ export async function handleAction(request, env, db, body) {
       }
       return ok();
     }
+    if (op === 'set-attendance-delegate') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+      if (!s) return bad('點名時段不存在', 404);
+      const groupId = String(body.groupId || '');
+      const g = c.groups.find(x => x.id === groupId);
+      if (!g) return bad('組別不存在', 404);
+      const delegate = await resolveStudent(db, env, c, body.delegateId);
+      if (!delegate) return bad('找不到該學生', 404);
+      const delegateGroup = c.groups.find(x => x.id === delegate.groupId);
+
+      if (body.allow) {
+        if (!delegate.isLeader && !delegate.isVice) return bad('僅能指定目前擔任組長或副組長的學生代理跨組點名', 400);
+        if (delegate.groupId === groupId) return bad('該學生已屬於本組，無需代理', 400);
+        await db.prepare('INSERT OR REPLACE INTO attendance_delegates (course_id, session_id, group_id, delegate_id, delegate_name, created_at) VALUES (?,?,?,?,?,?)')
+          .bind(c.id, s.id, groupId, delegate.id, delegate.name, Date.now()).run();
+        await logActivity(db, {
+          courseId: c.id,
+          groupId,
+          groupName: g.name,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-delegate',
+          targetId: delegate.id,
+          targetName: delegate.name,
+          detail: `老師授權 ${delegate.name} (${delegate.id})（原屬「${delegateGroup ? delegateGroup.name : '無組別'}」）跨組代理「${g.name}」於「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}」之點名`,
+        });
+      } else {
+        await db.prepare('DELETE FROM attendance_delegates WHERE course_id=? AND session_id=? AND group_id=? AND delegate_id=?')
+          .bind(c.id, s.id, groupId, delegate.id).run();
+        await logActivity(db, {
+          courseId: c.id,
+          groupId,
+          groupName: g.name,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-delegate',
+          targetId: delegate.id,
+          targetName: delegate.name,
+          detail: `老師取消 ${delegate.name} (${delegate.id}) 跨組代理「${g.name}」於「${s.date}」之點名授權`,
+        });
+      }
+      return ok();
+    }
     if (op === 'clear-logs') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
@@ -682,35 +729,50 @@ export async function handleAction(request, env, db, body) {
   }
   if (action === 'mark-attendance') {
     if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only', 403);
-    if (!self.groupId) return bad('尚未加入組別', 400);
     const session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
     if (!session) return bad('點名時段不存在', 404);
-    if (!isAttendanceEditable(session, c.attendanceUnlocks || [], self.groupId)) {
+
+    const targetGroupId = body.groupId ? String(body.groupId) : self.groupId;
+    if (!targetGroupId) return bad('尚未加入組別', 400);
+
+    let isDelegate = false;
+    if (targetGroupId !== self.groupId) {
+      isDelegate = (c.attendanceDelegates || []).some(d => d.sessionId === session.id && d.groupId === targetGroupId && d.delegateId === self.id);
+      if (!isDelegate) return bad('您未被授權代理該組點名 Not authorized to mark for this group', 403);
+    }
+    if (!isDelegate && !isAttendanceEditable(session, c.attendanceUnlocks || [], targetGroupId)) {
       return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock', 403);
     }
-    const g = c.groups.find(x => x.id === self.groupId);
+
+    const g = c.groups.find(x => x.id === targetGroupId);
     const gName = g ? g.name : '';
+    const selfGroup = c.groups.find(x => x.id === self.groupId);
     const existingByStudent = {};
     (c.attendanceRecords || [])
-      .filter(r => r.sessionId === session.id && r.groupId === self.groupId)
-      .forEach(r => { existingByStudent[r.studentId] = r.status; });
+      .filter(r => r.sessionId === session.id && r.groupId === targetGroupId)
+      .forEach(r => { existingByStudent[r.studentId] = { status: r.status, createdAt: r.createdAt }; });
 
     const now = Date.now();
     const roleLabel = self.isLeader ? '組長' : '副組長';
+    const delegateNote = isDelegate ? `（跨組代理，原屬「${selfGroup ? selfGroup.name : ''}」）` : '';
+    const sessionLabel = `${session.date}${session.timeSlot ? ` ${session.timeSlot}` : ''}${session.name ? `「${session.name}」` : ''}`;
     const stmts = [];
     for (const rec of (Array.isArray(body.records) ? body.records : [])) {
       const t = await resolveStudent(db, env, c, rec.studentId);
-      if (!t || t.groupId !== self.groupId) continue;
+      if (!t || t.groupId !== targetGroupId) continue;
       const status = rec.status === 'absent' ? 'absent' : 'present';
+      const prior = existingByStudent[t.id];
+      const createdAt = prior ? prior.createdAt : now;
       stmts.push(db.prepare(`
         INSERT OR REPLACE INTO attendance_records
-          (course_id, session_id, student_id, group_id, status, marked_by_id, marked_by_name, updated_at)
-        VALUES (?,?,?,?,?,?,?,?)
-      `).bind(c.id, session.id, t.id, self.groupId, status, self.id, self.name, now));
-      if (existingByStudent[t.id] !== status) {
+          (course_id, session_id, student_id, group_id, status, marked_by_id, marked_by_name, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
+      `).bind(c.id, session.id, t.id, targetGroupId, status, self.id, self.name, createdAt, now));
+
+      if (!prior) {
         stmts.push(makeLogStmt(db, {
           courseId: c.id,
-          groupId: self.groupId,
+          groupId: targetGroupId,
           groupName: gName,
           operatorRole: self.isLeader ? 'leader' : 'vice',
           operatorId: self.id,
@@ -718,7 +780,21 @@ export async function handleAction(request, env, db, body) {
           actionType: 'attendance-mark',
           targetId: t.id,
           targetName: t.name,
-          detail: `${roleLabel} ${self.name} (${self.id}) 於「${gName}」${session.date}${session.timeSlot ? ` ${session.timeSlot}` : ''}${session.name ? `「${session.name}」` : ''}點名，將 ${t.name} (${t.id}) 標記為「${status === 'absent' ? '缺席' : '出席'}」`,
+          detail: `${roleLabel} ${self.name} (${self.id})${delegateNote} 於「${gName}」${sessionLabel}點名，將 ${t.name} (${t.id}) 標記為「${status === 'absent' ? '缺席' : '出席'}」`,
+          createdAt: now,
+        }));
+      } else if (prior.status !== status) {
+        stmts.push(makeLogStmt(db, {
+          courseId: c.id,
+          groupId: targetGroupId,
+          groupName: gName,
+          operatorRole: self.isLeader ? 'leader' : 'vice',
+          operatorId: self.id,
+          operatorName: self.name,
+          actionType: 'attendance-correct',
+          targetId: t.id,
+          targetName: t.name,
+          detail: `${roleLabel} ${self.name} (${self.id})${delegateNote} 修正「${gName}」${sessionLabel}點名紀錄，將 ${t.name} (${t.id}) 由「${prior.status === 'absent' ? '缺席' : '出席'}」改為「${status === 'absent' ? '缺席' : '出席'}」`,
           createdAt: now,
         }));
       }
