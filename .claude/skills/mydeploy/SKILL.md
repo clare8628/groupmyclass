@@ -1,20 +1,25 @@
 ---
 name: mydeploy
-description: 把 groupstu（學生分組系統）推上 GitHub 並部署到 Cloudflare Worker，含前置檢查與上線驗證。Use when the user asks to deploy, ship, publish, 推上去, 部署, 上線 this project.
+description: 把 groupmyclass（學生分組系統）推上 GitHub 並部署到 Cloudflare Worker，含前置檢查與上線驗證。Use when the user asks to deploy, ship, publish, 推上去, 部署, 上線 this project.
 ---
 
 一次完成：檢查 → commit → push GitHub → deploy Cloudflare → 驗證線上。
 
 ## 專案座標
 
-- 工作目錄：`/Users/clare/cowork/develop/groupstu`
-- GitHub：`clare8628/groupstu`（分支 `main`）
-- Cloudflare Worker：`groupstu` → https://groupstu.clare8628.workers.dev
-- D1 資料庫：`groupstu`（binding `DB`），schema 在 `schema.sql`
+- 工作目錄：本 repo 的 toplevel（以 `git rev-parse --show-toplevel` 為準，folder 名稱為 `groupmyclass`）
+- GitHub：`clare8628/groupmyclass`（分支 `main`）
+- Cloudflare Worker：`groupmyclass` → https://groupmyclass.clare8628.workers.dev
+- D1 資料庫：`groupmyclass`（binding `DB`），schema 在 `schema.sql`
+
+⚠️ 注意：帳號中還有一個**完全獨立、正在線上服務真實班級**的姊妹專案 `groupstu`
+（repo `clare8628/groupstu`、Worker `groupstu.clare8628.workers.dev`、獨立的 D1）。
+兩者程式碼與資料庫互不相通，**絕對不要把本專案的異動部署到 groupstu，也不要把 groupstu 的指令套用在這裡**。
+若不確定目前所在目錄／repo 是哪一個，先用 `git remote -v` 確認 origin 是 `groupmyclass` 再繼續。
 
 ## 硬性規則
 
-1. **所有 git 指令都要帶 `-C /Users/clare/cowork/develop/groupstu`**，或先確認 `git rev-parse --show-toplevel` 等於該路徑。
+1. **所有 git 指令都要在本 repo 的 toplevel 執行**（`git rev-parse --show-toplevel` 應以 `groupmyclass` 結尾，`git remote -v` 應為 `clare8628/groupmyclass`）。
    `/Users/clare` 本身是另一個 git repo（家目錄，含 `.ssh`、`.netrc`），**絕對不可以推送**。
 2. **不要建立 Cloudflare Pages 專案**。帳號中已有同名 Worker，本專案一律走 Worker + static assets。
 3. `schema.sql` 有異動時，**先套用到 remote D1 再部署**，否則線上會 500。
@@ -25,8 +30,8 @@ description: 把 groupstu（學生分組系統）推上 GitHub 並部署到 Clou
 ### 1. 前置檢查
 
 ```bash
-cd /Users/clare/cowork/develop/groupstu
-git rev-parse --show-toplevel          # 必須是本專案路徑
+git rev-parse --show-toplevel          # 必須以 groupmyclass 結尾
+git remote -v                          # origin 必須是 clare8628/groupmyclass
 git status --short
 node --check src/index.js && node --check src/api.js && node --check src/lib.js && node --check public/js/script.js
 ```
@@ -36,7 +41,7 @@ node --check src/index.js && node --check src/api.js && node --check src/lib.js 
 ### 2. schema 有改才做
 
 ```bash
-npx wrangler d1 execute groupstu --remote --file=schema.sql -y
+npx wrangler d1 execute groupmyclass --remote --file=schema.sql -y
 ```
 
 只加欄位／資料表；要刪改既有欄位，先確認線上資料可以捨棄再動手。
@@ -66,8 +71,8 @@ npx wrangler deploy
 ### 6. 線上驗證（必做）
 
 ```bash
-curl -s -o /dev/null -w "page:%{http_code}\n" https://groupstu.clare8628.workers.dev/
-curl -s https://groupstu.clare8628.workers.dev/api/state | head -c 200
+curl -s -o /dev/null -w "page:%{http_code}\n" https://groupmyclass.clare8628.workers.dev/
+curl -s https://groupmyclass.clare8628.workers.dev/api/state | head -c 200
 ```
 
 `page:200` 且 `/api/state` 回得出 JSON（`{"courses":[...],"session":null}`）才算成功。
