@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.41';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.43';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1447,9 +1447,9 @@ function studentScreen() {
   <div class="student-section">
     <h2>${esc(courseLabel(c))}</h2>
     <div class="student-info">
-      <strong>學生 Student:</strong> ${esc(s.name)} (${esc(s.id)})<br>
-      <strong>角色 Role:</strong> ${s.isLeader ? '組長 Leader' : s.isVice ? '副組長 Vice leader' : '組員 Member'}<br>
-      <strong>組別 Group:</strong> ${g ? esc(g.name) : '未分組 Unassigned'}${s.autoAssigned ? '（自動分配 Auto-assigned）' : ''}
+      <strong>學生 Student（Học sinh）:</strong> ${esc(s.name)} (${esc(s.id)})<br>
+      <strong>角色 Role（Vai trò）:</strong> ${s.isLeader ? '組長 Leader（Trưởng nhóm）' : s.isVice ? '副組長 Vice leader（Phó nhóm）' : '組員 Member（Thành viên）'}<br>
+      <strong>組別 Group（Nhóm）:</strong> ${g ? esc(g.name) : '未分組 Unassigned（Chưa có nhóm）'}${s.autoAssigned ? '（自動分配 Auto-assigned／Tự động phân）' : ''}
     </div>`;
 
   if (s.isLeader) {
@@ -1458,7 +1458,7 @@ function studentScreen() {
         <div class="deadline-alert locked">
           <span class="alert-icon">⏳</span>
           <div>
-            <strong>已超過分組截止時間，組長無法更換組員 Deadline passed</strong>
+            <strong>已超過分組截止時間，組長無法更換組員 Deadline passed（Đã quá hạn, không thể đổi thành viên）</strong>
             <p>目前分組截止時間已過${(g && g.editDeadline) ? `（本組專屬截止時間 ${esc(g.editDeadline.replace('T', ' '))} 亦已截止）` : ''}，組員名單已鎖定。如需更換，請聯絡老師個別重新開放挑選權限，或由老師於後台手動調整。</p>
           </div>
         </div>`;
@@ -1467,25 +1467,25 @@ function studentScreen() {
         <div class="deadline-alert unlocked">
           <span class="alert-icon">🔓</span>
           <div>
-            <strong>老師已重新開放本科目本組挑選權限 Permission re-opened</strong>
+            <strong>老師已重新開放本科目本組挑選權限 Permission re-opened（Đã mở lại quyền）</strong>
             <p>授課老師已特別為本組開放重新挑選權限，您現在可以更換組員或調整副組長。${(g && g.editDeadline) ? `<br><b style="color:#92400e;">⏳ 本組專屬截止時間為：${esc(g.editDeadline.replace('T', ' '))}，逾時將自動鎖定。</b>` : ''}</p>
           </div>
         </div>
-        ${!isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>` : ''}`;
+        ${!isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down（Từ chức trưởng nhóm）</button>` : ''}`;
     } else {
-      html += !isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down</button>` : '';
+      html += !isPreview ? `<button class="btn btn-secondary" data-act="unclaim-leader">取消組長身分 Step down（Từ chức trưởng nhóm）</button>` : '';
     }
   } else if (closed) {
-    html += '<p class="file-path">已超過分組截止時間，無法再變更。Deadline passed.</p>';
+    html += '<p class="file-path">已超過分組截止時間，無法再變更。Deadline passed.（Đã quá hạn, không thể thay đổi）</p>';
   } else if (otherLeader) {
-    html += `<p class="file-path">本組組長為 ${esc(otherLeader.name)}，無法重複擔任。Group already has a leader.</p>`;
+    html += `<p class="file-path">本組組長為 ${esc(otherLeader.name)}，無法重複擔任。Group already has a leader.（Nhóm đã có trưởng nhóm）</p>`;
   } else {
     html += `
       <div class="leader-actions-row">
-        <button class="btn btn-primary" data-act="claim-leader">我要當組長 Become leader</button>
-        <button class="btn btn-neutral" data-act="logout">不願意擔任組長，返回首頁</button>
+        <button class="btn btn-primary" data-act="claim-leader">我要當組長 Become leader（Tôi muốn làm trưởng nhóm）</button>
+        <button class="btn btn-neutral" data-act="logout">不願意擔任組長，返回首頁（Không muốn làm trưởng nhóm）</button>
       </div>
-      <p class="file-path">${g ? '成為本組組長後即可挑選組員。' : '將自動為你開一組並擔任組長。'}</p>`;
+      <p class="file-path">${g ? '成為本組組長後即可挑選組員。Sau khi làm trưởng nhóm có thể chọn thành viên.' : '將自動為你開一組並擔任組長。Hệ thống sẽ tự động tạo nhóm cho bạn.'}</p>`;
   }
 
   /* 組長專用成員管理區塊 */
@@ -1503,41 +1503,41 @@ function studentScreen() {
     html += `
     <div class="selected-members-panel">
       <div class="panel-header">
-        <h3 style="margin:0">已挑選成員 Selected members <small>（下限 ${min} 人，上限 ${max} 人，目前 ${mates.length} 人）</small></h3>
+        <h3 style="margin:0">已挑選成員 Selected members（Thành viên đã chọn） <small>（下限 ${min} 人，上限 ${max} 人，目前 ${mates.length} 人）</small></h3>
         <div class="header-badges">
           ${isBelowMin
-            ? `<span class="status-badge under-threshold">⚠️ 低於下限（缺 ${needed} 人）· 僅能新增組員</span>`
+            ? `<span class="status-badge under-threshold">⚠️ 低於下限（缺 ${needed} 人）· 僅能新增組員 Below minimum（Dưới mức tối thiểu）</span>`
             : isAboveMax
-            ? `<span class="status-badge under-threshold" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;">⚠️ 高於上限（多 ${excess} 人）· 僅能刪減組員</span>`
-            : `<span class="status-badge meets-threshold">✅ 人數合規（${mates.length}人，符合 ${min}~${max} 人）</span>`}
-          ${canEdit ? '<span class="status-badge can-edit">組長調整中</span>' : '<span class="status-badge is-locked">已鎖定</span>'}
+            ? `<span class="status-badge under-threshold" style="background:#fef2f2;color:#991b1b;border-color:#fecaca;">⚠️ 高於上限（多 ${excess} 人）· 僅能刪減組員 Above maximum（Vượt mức tối đa）</span>`
+            : `<span class="status-badge meets-threshold">✅ 人數合規（${mates.length}人，符合 ${min}~${max} 人）Valid（Hợp lệ）</span>`}
+          ${canEdit ? '<span class="status-badge can-edit">組長調整中 Editable（Đang điều chỉnh）</span>' : '<span class="status-badge is-locked">已鎖定 Locked（Đã khóa）</span>'}
         </div>
       </div>
       ${isBelowMin ? `
         <div class="threshold-notice">
           <strong>⚠️ 本組現有成員數（${mates.length} 人）低於分組下限（${min} 人）</strong>
-          <p>依規則：<b>此時組長只能新增組員</b>，且需從未分配的成員名單中挑選至少 <b>${needed}</b> 位組員加入，無法刪減現有成員。請於截止前完成挑選以符合門檻。</p>
+          <p>依規則：<b>此時組長只能新增組員</b>，且需從未分配的成員名單中挑選至少 <b>${needed}</b> 位組員加入，無法刪減現有成員。請於截止前完成挑選以符合門檻。（Số thành viên hiện tại thấp hơn mức tối thiểu, chỉ có thể thêm thành viên, không thể loại bớt）</p>
         </div>` : ''}
       ${isAboveMax ? `
         <div class="threshold-notice" style="background:#fff1f2;border-color:#fecdd3;color:#9f1239;">
           <strong>⚠️ 本組現有成員數（${mates.length} 人）高於分組上限（${max} 人）</strong>
-          <p>依規則：<b>此時組長只能刪減組員</b>，需將至少 <b>${excess}</b> 位成員移出釋出至未分配名單中，無法再新增組員。</p>
+          <p>依規則：<b>此時組長只能刪減組員</b>，需將至少 <b>${excess}</b> 位成員移出釋出至未分配名單中，無法再新增組員。（Số thành viên hiện tại vượt mức tối đa, chỉ có thể loại bớt, không thể thêm）</p>
         </div>` : ''}
       <div class="pick-list" style="margin-top:0.75rem">${mates.map(m => `
         <div class="student ${m.isLeader ? 'leader' : ''} ${m.isVice ? 'vice-leader' : ''}">
           <span class="student-name-tag">
-            ${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長' : m.isVice ? ' — 副組長' : ''}${m.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}
+            ${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' — 組長 Leader（Trưởng nhóm）' : m.isVice ? ' — 副組長 Vice leader（Phó nhóm）' : ''}${m.autoAssigned ? ' <span class="tag-inline auto">自動 Auto（Tự động）</span>' : ''}
           </span>
           ${(canEdit && m.id !== s.id) ? `
             <button class="tab-btn ${m.isVice ? 'on' : ''}" data-act="toggle-vice" data-id="${esc(keyOf(m))}">
-              ${m.isVice ? '取消副組長' : '設為副組長'}</button>
+              ${m.isVice ? '取消副組長 Unset vice（Hủy phó nhóm）' : '設為副組長 Set vice（Đặt làm phó nhóm）'}</button>
             ${canDrop ? `
-              <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}" title="移出組員釋出至未分配名單">移出釋出</button>
+              <button class="tab-btn" data-act="drop" data-id="${esc(keyOf(m))}" title="移出組員釋出至未分配名單">移出釋出 Remove（Loại khỏi nhóm）</button>
             ` : `
-              <button class="tab-btn disabled" disabled title="現有人數已低於或等於下限（${min}人），依規則無法移出組員，只能新增組員" style="opacity:0.5;cursor:not-allowed;">不可移出</button>
+              <button class="tab-btn disabled" disabled title="現有人數已低於或等於下限（${min}人），依規則無法移出組員，只能新增組員" style="opacity:0.5;cursor:not-allowed;">不可移出 Cannot remove（Không thể loại）</button>
             `}` : ''}
         </div>`).join('')}</div>
-      <p class="file-path">提示：每組僅能有一位副組長。若現有人數低於下限只能新增組員；高於上限只能刪減組員釋出至未分配名單。</p>
+      <p class="file-path">提示：每組僅能有一位副組長。若現有人數低於下限只能新增組員；高於上限只能刪減組員釋出至未分配名單。（Mỗi nhóm chỉ có một phó nhóm）</p>
     </div>`;
 
     /* 2. 挑選組員（顯示在已挑選成員區塊下方） */
@@ -1546,19 +1546,26 @@ function studentScreen() {
       html += `
       <div class="pick-members-panel" style="margin-top:1.5rem">
         <div class="panel-header">
-          <h3 style="margin:0">挑選組員 Pick members <small>（從未分配名單新增）</small></h3>
-          ${!canPick ? `<span class="badge-full" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">本組人數（${mates.length}人）已達或高於上限（${max}人），依規定只能刪減組員，無法再新增</span>` : ''}
+          <h3 style="margin:0">挑選組員 Pick members（Chọn thành viên） <small>（從未分配名單新增）</small></h3>
+          ${!canPick ? `<span class="badge-full" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">本組人數（${mates.length}人）已達或高於上限（${max}人），依規定只能刪減組員，無法再新增（Đã đạt mức tối đa, không thể thêm）</span>` : ''}
         </div>
         <div class="pick-list" style="margin-top:0.75rem">${pool.length ? pool.map(p => `
           <label class="student ${!canPick ? 'disabled' : ''}">
             <input type="checkbox" data-act="pick" data-id="${esc(keyOf(p))}" ${!canPick ? 'disabled' : ''}>
             ${esc(p.name)} (${esc(p.id)})
           </label>`).join('')
-          : '<p class="file-path">目前沒有未分配的成員名單 No unassigned students.</p>'}</div>
+          : '<p class="file-path">目前沒有未分配的成員名單 No unassigned students.（Hiện không có thành viên chưa phân nhóm）</p>'}</div>
       </div>`;
     }
+  }
 
-    /* 3. 組長專屬：期末成員貢獻度評分面板（當老師開放權限時顯示） */
+  /* 組長／副組長皆可執行：點名 Attendance（Điểm danh）—— 置於期末評分之上 */
+  if ((s.isLeader || s.isVice) && g) {
+    html += attendanceLeaderPanel(c, g, s, mates);
+  }
+
+  /* 組長專屬：期末成員貢獻度評分面板（當老師開放權限時顯示） */
+  if (s.isLeader && g) {
     const maxB = Number(c && c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
     const isEvalOpen = !!g.peerEvalOpen;
     const isSubmitted = !!g.peerEvalSubmitted;
@@ -1568,14 +1575,14 @@ function studentScreen() {
     html += `
     <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;">
       <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
-        <h3 style="margin:0;color:#166534;">📝 期末組員貢獻度評分 Peer Evaluation</h3>
+        <h3 style="margin:0;color:#166534;">📝 期末組員貢獻度評分 Peer Evaluation（Đánh giá đóng góp cuối kỳ）</h3>
         ${isSubmitted
-          ? '<span class="status-badge meets-threshold">✅ 您已完成評分提交</span>'
+          ? '<span class="status-badge meets-threshold">✅ 您已完成評分提交 Submitted（Đã nộp）</span>'
           : isOverdue
-          ? '<span class="status-badge under-threshold">⚠️ 已超過評分截止時間 (逾時懲罰生效)</span>'
+          ? '<span class="status-badge under-threshold">⚠️ 已超過評分截止時間 (逾時懲罰生效) Overdue（Đã quá hạn）</span>'
           : isEvalOpen
-          ? '<span class="status-badge can-edit">開放評分中 Open</span>'
-          : '<span class="status-badge is-locked">老師尚未開放評分</span>'}
+          ? '<span class="status-badge can-edit">開放評分中 Open（Đang mở）</span>'
+          : '<span class="status-badge is-locked">老師尚未開放評分 Not open（Chưa mở）</span>'}
       </div>
 
       <div style="margin:0.75rem 0;font-size:0.88rem;color:#14532d;line-height:1.6;">
@@ -1602,10 +1609,10 @@ function studentScreen() {
             <table class="roster" style="background:#fff;">
               <thead>
                 <tr>
-                  <th>組員姓名 (學號)</th>
-                  <th>角色</th>
-                  <th>期末考加分 (0 ~ ${maxB} 分)</th>
-                  <th>加分原因 / 貢獻說明 (選填)</th>
+                  <th>組員姓名 (學號) Name（Họ tên）</th>
+                  <th>角色 Role（Vai trò）</th>
+                  <th>期末考加分 (0 ~ ${maxB} 分) Bonus（Điểm cộng）</th>
+                  <th>加分原因 / 貢獻說明 (選填) Note（Ghi chú, có thể để trống）</th>
                 </tr>
               </thead>
               <tbody>
@@ -1618,7 +1625,7 @@ function studentScreen() {
                   return `
                   <tr>
                     <td><b>${esc(m.name)}</b> (${esc(m.id)})</td>
-                    <td>${m.isVice ? '<span class="tag-inline">副組長</span>' : '組員'}</td>
+                    <td>${m.isVice ? '<span class="tag-inline">副組長（Phó nhóm）</span>' : '組員（Thành viên）'}</td>
                     <td>
                       <select name="penalty_${esc(keyOf(m))}" style="padding:0.35rem 0.5rem;font-size:0.9rem;border:1.5px solid #cbd5e1;border-radius:4px;" ${isSubmitted ? 'disabled' : ''}>
                         ${options}
@@ -1635,9 +1642,9 @@ function studentScreen() {
           <div style="margin-top:0.85rem;display:flex;align-items:center;gap:0.75rem;">
             ${isSubmitted ? `
               <span style="color:#166534;font-weight:600;font-size:0.9rem;">✅ 評分已送出完成（您已獲得組長 ${maxB} 分加分）。如需調整請直接修改並重新送出：</span>
-              <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.1rem;font-size:0.9rem;">重新更新評分 Update</button>
+              <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.1rem;font-size:0.9rem;">重新更新評分 Update（Cập nhật）</button>
             ` : `
-              <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.95rem;">送出評分（組長即獲 +${maxB} 分）Submit Evaluation</button>
+              <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.95rem;">送出評分（組長即獲 +${maxB} 分）Submit Evaluation（Gửi đánh giá）</button>
               <span style="font-size:0.82rem;color:#64748b;">提交後組長自身立即獲得 ${maxB} 分加分，截止前仍可重複調整組員分數。</span>
             `}
           </div>
@@ -1645,11 +1652,7 @@ function studentScreen() {
     </div>`;
   }
 
-  /* 組長／副組長皆可執行：點名 Attendance（Điểm danh）*/
-  if ((s.isLeader || s.isVice) && g) {
-    html += attendanceLeaderPanel(c, g, s, mates);
-  }
-  return html + '</div>' + publicBoard();
+  return html + '</div>';
 }
 
 /* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
@@ -1684,7 +1687,7 @@ function attendanceLeaderPanel(c, g, s, mates) {
             const st = recByRef[key] || 'present';
             return `
             <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.3rem 0;border-bottom:1px dashed #e2e8f0;">
-              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長' : m.isVice ? ' ⭐副組長' : ''}</span>
+              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長（Trưởng nhóm）' : m.isVice ? ' ⭐副組長（Phó nhóm）' : ''}</span>
               <span style="display:flex;gap:0.75rem;font-size:0.85rem;">
                 <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''}> 出席 Present（Có mặt）</label>
                 <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''}> 缺席 Absent（Vắng mặt）</label>
