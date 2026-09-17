@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.39';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.41';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -14,8 +14,12 @@ let state = {
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
 let teacherView = 'course';   // 後台主區：'course' | 'settings' | 'eval' | 'logs'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
-let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system'
+let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
 let logSearchText = '';       // 異動日誌搜尋關鍵字
+let attendanceEditingId = null;     // 後台目前正在編輯的點名時段 id（null＝新增模式）
+let attendanceStatScope = 'date';   // 缺席統計範圍：'date'（依日期）| 'all'（整學期）
+let attendanceStatDate = '';        // 缺席統計所選日期，預設為今天
+let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
 let busy = false;
 let lastSig = '';
 
@@ -148,6 +152,49 @@ function canGroupLeaderEdit(c, g) {
   if (!g || !g.allowEdit) return false;
   if (g.editDeadline && editDeadlinePassed(g)) return false;
   return true;
+}
+
+/* ===== 點名 Attendance（Điểm danh）helpers ===== */
+const todayDateStr = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+
+function attendanceSessions(c) {
+  return (c.attendanceSessions || []).slice().sort((a, b) =>
+    a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0));
+}
+/* 老師視角的紀錄沒有 ref（用真實學號），這裡統一補上 ref 別名，讓組長面板可共用同一套比對邏輯 */
+const attendanceRecordsFor = (c, sessionId) => (c.attendanceRecords || [])
+  .filter(r => r.sessionId === sessionId)
+  .map(r => ({ ...r, ref: r.ref || r.studentId }));
+function attendanceUnlockFor(c, sessionId, groupId) {
+  const now = Date.now();
+  return (c.attendanceUnlocks || []).find(u => u.sessionId === sessionId
+    && (u.groupId === groupId || u.groupId === '')
+    && (!u.deadline || parseDate(u.deadline) > now)) || null;
+}
+function isAttendanceEditable(c, session, groupId) {
+  if (!session) return false;
+  if (session.date === todayDateStr()) return true;
+  return !!attendanceUnlockFor(c, session.id, groupId);
+}
+const attendanceSessionLabel = s => [s.date, s.timeSlot, s.name].filter(Boolean).join(' · ');
+/* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄） */
+function attendanceGroupProgress(c, sessionId) {
+  const recs = attendanceRecordsFor(c, sessionId);
+  return c.groups.map(g => {
+    const total = members(c, g.id).length;
+    const done = recs.filter(r => r.groupId === g.id).length;
+    return { group: g, total, done, complete: total > 0 && done >= total };
+  });
+}
+/* 老師視角：依日期或整學期（全部時段）統計各組員缺席次數 */
+function attendanceAbsentCounts(c, date) {
+  const ids = attendanceSessions(c).filter(s => !date || s.date === date).map(s => s.id);
+  const counts = {};
+  (c.attendanceRecords || []).forEach(r => {
+    if (r.status !== 'absent' || !ids.includes(r.sessionId)) return;
+    counts[r.studentId] = (counts[r.studentId] || 0) + 1;
+  });
+  return counts;
 }
 
 /* 計算每位同學的期末考調分 */
@@ -640,6 +687,9 @@ function courseTree() {
         <li class="${teacherView === 'logs' ? 'active' : ''}">
           <button data-act="sys-logs">📜 分組異動日誌<span class="count">Activity logs</span></button>
         </li>
+        <li class="${teacherView === 'attendance' ? 'active' : ''}">
+          <button data-act="sys-attendance">📋 點名管理（Điểm danh）<span class="count">Attendance</span></button>
+        </li>
       </ul>
     </div>
   </aside>`;
@@ -654,6 +704,8 @@ function teacherScreen() {
     main = teacherPeerEvalBlock(c);
   } else if (teacherView === 'logs') {
     main = teacherLogsBlock(c);
+  } else if (teacherView === 'attendance') {
+    main = teacherAttendanceBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -1002,6 +1054,10 @@ function formatActionTypeLabel(type) {
     case 'toggle-group-edit': return '老師開放/關閉挑選權限';
     case 'deadline-dissolve': return '系統解散不足額組別';
     case 'auto-assign': return '系統自動分配未分組';
+    case 'attendance-mark': return '組長/副組長點名標記';
+    case 'attendance-session-save': return '老師設定點名時段';
+    case 'attendance-session-delete': return '老師刪除點名時段';
+    case 'attendance-unlock': return '老師開放/關閉點名補登';
     default: return type;
   }
 }
@@ -1023,6 +1079,12 @@ function renderLogBadge(type) {
     case 'auto-assign':
     case 'deadline-dissolve':
       return '<span class="log-badge tag-system">🤖 系統處理</span>';
+    case 'attendance-mark':
+      return '<span class="log-badge tag-vice">📋 點名標記</span>';
+    case 'attendance-session-save':
+    case 'attendance-session-delete':
+    case 'attendance-unlock':
+      return '<span class="log-badge tag-teacher">📋 點名管理</span>';
     default:
       if (type.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(type)) {
         return '<span class="log-badge tag-teacher">🛠️ 老師操作</span>';
@@ -1052,6 +1114,7 @@ function teacherLogsBlock(c) {
     if (logActionFilter === 'leader' && !['claim-leader', 'unclaim-leader', 'toggle-vice', 'peer-eval'].includes(l.actionType)) return false;
     if (logActionFilter === 'teacher' && !(l.actionType.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(l.actionType))) return false;
     if (logActionFilter === 'system' && !['auto-assign', 'deadline-dissolve'].includes(l.actionType)) return false;
+    if (logActionFilter === 'attendance' && !l.actionType.startsWith('attendance')) return false;
 
     if (kw) {
       const matchText = `${l.detail} ${l.operatorName} ${l.operatorId} ${l.targetName} ${l.targetId} ${l.groupName} ${formatLogTime(l.createdAt)}`.toLowerCase();
@@ -1105,6 +1168,7 @@ function teacherLogsBlock(c) {
           <option value="leader" ${logActionFilter === 'leader' ? 'selected' : ''}>👑 組長/副組長身分變更</option>
           <option value="teacher" ${logActionFilter === 'teacher' ? 'selected' : ''}>🛠️ 老師管理調整</option>
           <option value="system" ${logActionFilter === 'system' ? 'selected' : ''}>🤖 系統自動處理</option>
+          <option value="attendance" ${logActionFilter === 'attendance' ? 'selected' : ''}>📋 點名相關</option>
         </select>
       </div>
       ${(kw || logActionFilter !== 'all') ? `
@@ -1162,6 +1226,174 @@ function teacherLogsBlock(c) {
         ${logs.length ? '請嘗試更換搜尋關鍵字或調整篩選類別。' : '當組長挑選、釋出組員或老師調整分組時，系統將自動於此留下精準的時間與操作歷程。'}
       </p>
     </div>`}
+  </div>`;
+}
+
+/* ===== 後台：點名管理 Attendance（Điểm danh）===== */
+function teacherAttendanceBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section">
+      <h2>📋 點名管理 Attendance <small>Điểm danh</small></h2>
+      <p class="file-path">請先從左側點選或建立課程，即可設定該課程的點名時段。</p>
+    </div>`;
+  }
+
+  const sessions = attendanceSessions(c);
+  const editing = attendanceEditingId ? sessions.find(s => s.id === attendanceEditingId) : null;
+  const today = todayDateStr();
+
+  /* ---- 1. 點名時段設定 ---- */
+  const sessionForm = `
+    <form data-act="save-attendance-session" class="form-row">
+      <div class="form-group"><label>點名日期 Date（Ngày điểm danh）</label><input type="date" name="date" value="${esc(editing ? editing.date : today)}" required></div>
+      <div class="form-group"><label>點名時段 Time slot（Khung giờ）</label><input name="timeSlot" value="${esc(editing ? editing.timeSlot : '')}" placeholder="例如：第3-4節"></div>
+      <div class="form-group"><label>點名名稱（可不填）Name（Tên buổi, có thể để trống）</label><input name="name" value="${esc(editing ? editing.name : '')}" placeholder="例如：期中小組會議"></div>
+      <div class="form-group full">
+        <button class="btn btn-primary" type="submit">${editing ? '儲存修改 Save' : '新增點名時段 Add session'}</button>
+        ${editing ? `<button class="btn btn-secondary" type="button" data-act="cancel-edit-attendance-session">取消編輯 Cancel</button>` : ''}
+      </div>
+    </form>`;
+
+  const sessionRows = sessions.map(s => {
+    const isToday = s.date === today;
+    const allUnlock = (c.attendanceUnlocks || []).find(u => u.sessionId === s.id && u.groupId === '');
+    return `
+    <tr>
+      <td><b>${esc(s.date)}</b>${isToday ? ' <span class="status-badge can-edit">今日</span>' : ''}</td>
+      <td>${esc(s.timeSlot) || '<span style="color:#94a3b8;">-</span>'}</td>
+      <td>${esc(s.name) || '<span style="color:#94a3b8;">-</span>'}</td>
+      <td>
+        ${isToday
+          ? '<span class="status-badge can-edit">當日開放編輯 Open</span>'
+          : allUnlock
+          ? `<span class="status-badge can-edit">已開放全部組別補登${allUnlock.deadline ? `（至 ${esc(allUnlock.deadline.replace('T', ' '))}）` : ''}</span>`
+          : '<span class="status-badge is-locked">已鎖定 Locked</span>'}
+      </td>
+      <td style="min-width:260px;">
+        <div style="display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;">
+          <button class="tab-btn" data-act="edit-attendance-session" data-id="${s.id}">✏️ 編輯</button>
+          <button class="tab-btn" data-act="del-attendance-session" data-id="${s.id}">🗑️ 刪除</button>
+          ${!isToday ? `
+            <button class="tab-btn" data-act="attendance-unlock-all" data-id="${s.id}" data-allow="1">🔓 開放全部補登</button>
+            ${allUnlock ? `<button class="tab-btn" data-act="attendance-unlock-all" data-id="${s.id}" data-allow="0">🔒 關閉全部補登</button>` : ''}
+            <select data-act="attendance-unlock-group" data-id="${s.id}" style="padding:0.3rem 0.4rem;font-size:0.8rem;">
+              <option value="">指定組別開放/關閉…</option>
+              ${c.groups.map(g => {
+                const u = (c.attendanceUnlocks || []).find(x => x.sessionId === s.id && x.groupId === g.id);
+                return `<option value="${esc(g.id)}">${esc(g.name)}${u ? '（已開放）' : ''}</option>`;
+              }).join('')}
+            </select>
+          ` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  /* ---- 2. 依日期查看各組缺席紀錄 ---- */
+  if (!attendanceStatDate) attendanceStatDate = today;
+  const dailySessions = sessions.filter(s => s.date === attendanceStatDate);
+  const dailyRows = c.groups.map(g => {
+    const mates = members(c, g.id);
+    const perSession = dailySessions.map(s => {
+      const recs = attendanceRecordsFor(c, s.id).filter(r => r.groupId === g.id);
+      const absent = recs.filter(r => r.status === 'absent').map(r => c.students.find(x => x.id === r.studentId)).filter(Boolean);
+      const label = attendanceSessionLabel(s) || s.date;
+      if (!recs.length) return `<div style="color:#94a3b8;font-size:0.85rem;">${esc(label)}：尚未點名 Not taken</div>`;
+      if (!absent.length) return `<div style="color:#166534;font-size:0.85rem;">${esc(label)}：✅ 全員到齊</div>`;
+      return `<div style="font-size:0.85rem;">${esc(label)}：${absent.map(a => `<span class="attendance-absent-tag">${esc(a.name)} (${esc(a.id)}) 缺席</span>`).join(' ')}</div>`;
+    }).join('');
+    return `
+    <tr>
+      <td><b>${esc(g.name)}</b></td>
+      <td>${mates.length} 人</td>
+      <td>${perSession || '<span style="color:#94a3b8;">當日無點名時段</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  /* ---- 3. 尚未完成點名的組別 ---- */
+  const progressSession = attendanceProgressSessionId
+    ? sessions.find(s => s.id === attendanceProgressSessionId)
+    : (sessions.find(s => s.date === today) || sessions[0] || null);
+  const progress = progressSession ? attendanceGroupProgress(c, progressSession.id) : [];
+  const incomplete = progress.filter(p => !p.complete && p.total > 0);
+
+  /* ---- 4. 組員缺席排行榜 ---- */
+  const counts = attendanceAbsentCounts(c, attendanceStatScope === 'date' ? attendanceStatDate : null);
+  const leaderboard = Object.entries(counts)
+    .map(([sid, n]) => {
+      const st = c.students.find(x => x.id === sid);
+      const g = st ? c.groups.find(x => x.id === st.groupId) : null;
+      return { id: sid, name: st ? st.name : sid, groupName: g ? g.name : '未分組', count: n };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 15);
+
+  return `
+  <div class="teacher-section">
+    <h2>📋 點名管理 Attendance <small>${esc(courseLabel(c))} · Điểm danh</small></h2>
+    <p class="file-path">設定點名的日期與時段（名稱可不填）後，該組組長或副組長即可於當天執行點名。超過當天需老師於下方開放補登權限才能修改。</p>
+    ${sessionForm}
+    ${sessions.length ? `
+    <div class="table-wrap" style="margin-top:1rem;">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>日期</th><th>時段</th><th>名稱</th><th>狀態</th><th>操作</th></tr></thead>
+        <tbody>${sessionRows}</tbody>
+      </table>
+    </div>` : '<p class="file-path">尚未設定任何點名時段。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>各組當日缺席紀錄 <small>Daily absence</small></h2>
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <label style="font-weight:600;font-size:0.85rem;">查詢日期：</label>
+      <input type="date" data-act="attendance-stat-date" value="${esc(attendanceStatDate)}">
+    </div>
+    ${c.groups.length ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>組別</th><th>人數</th><th>缺席標記</th></tr></thead>
+        <tbody>${dailyRows}</tbody>
+      </table>
+    </div>` : '<p class="file-path">尚未建立組別。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>尚未完成點名的組別 <small>Incomplete groups</small></h2>
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <label style="font-weight:600;font-size:0.85rem;">選擇時段：</label>
+      <select data-act="attendance-progress-session">
+        ${sessions.map(s => `<option value="${s.id}" ${progressSession && progressSession.id === s.id ? 'selected' : ''}>${esc(attendanceSessionLabel(s))}</option>`).join('') || '<option value="">尚無時段</option>'}
+      </select>
+    </div>
+    ${!progressSession ? '<p class="file-path">尚無點名時段。</p>' : incomplete.length ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>組別</th><th>完成進度</th></tr></thead>
+        <tbody>${incomplete.map(p => `
+          <tr><td><b>${esc(p.group.name)}</b></td><td><span class="status-badge under-threshold">${p.done} / ${p.total} 人</span></td></tr>
+        `).join('')}</tbody>
+      </table>
+    </div>` : '<p class="file-path">✅ 該時段所有組別皆已完成點名。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>組員缺席排行榜 <small>Absence leaderboard</small></h2>
+    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <select data-act="attendance-stat-scope">
+        <option value="date" ${attendanceStatScope === 'date' ? 'selected' : ''}>依日期（${esc(attendanceStatDate)}）</option>
+        <option value="all" ${attendanceStatScope === 'all' ? 'selected' : ''}>整學期 Whole semester</option>
+      </select>
+    </div>
+    ${leaderboard.length ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>排名</th><th>學號</th><th>姓名</th><th>組別</th><th>缺席次數</th></tr></thead>
+        <tbody>${leaderboard.map((l, i) => `
+          <tr><td>${i + 1}</td><td>${esc(l.id)}</td><td>${esc(l.name)}</td><td>${esc(l.groupName)}</td><td><b style="color:#b91c1c;">${l.count}</b></td></tr>
+        `).join('')}</tbody>
+      </table>
+    </div>` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
 }
 
@@ -1412,7 +1644,83 @@ function studentScreen() {
         </form>`}
     </div>`;
   }
+
+  /* 組長／副組長皆可執行：點名 Attendance（Điểm danh）*/
+  if ((s.isLeader || s.isVice) && g) {
+    html += attendanceLeaderPanel(c, g, s, mates);
+  }
   return html + '</div>' + publicBoard();
+}
+
+/* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
+function attendanceLeaderPanel(c, g, s, mates) {
+  const sessions = attendanceSessions(c).slice(0, 15);
+  if (!sessions.length) {
+    return `
+    <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#eff6ff;border:2px solid #bfdbfe;border-radius:10px;">
+      <h3 style="margin:0;color:#1e3a8a;">📋 點名 Attendance（Điểm danh）</h3>
+      <p class="file-path" style="margin-top:0.5rem;">老師尚未設定任何點名時段。Teacher has not set up any attendance session yet.（Giáo viên chưa thiết lập buổi điểm danh nào）</p>
+    </div>`;
+  }
+
+  const rows = sessions.map(session => {
+    const editable = isAttendanceEditable(c, session, g.id);
+    const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
+    const recByRef = {};
+    recs.forEach(r => { recByRef[r.ref] = r.status; });
+    const label = attendanceSessionLabel(session) || session.date;
+    const isToday = session.date === todayDateStr();
+
+    if (editable) {
+      return `
+      <form data-act="mark-attendance" data-session="${session.id}" class="attendance-mark-form" style="background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;margin-bottom:0.75rem;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.6rem;">
+          <b>${esc(label)}</b>
+          <span class="status-badge can-edit">${isToday ? '今日可編輯 Today（Hôm nay）' : '老師已開放補登 Unlocked（Đã mở）'}</span>
+        </div>
+        <div class="attendance-mark-list">
+          ${mates.map(m => {
+            const key = keyOf(m);
+            const st = recByRef[key] || 'present';
+            return `
+            <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.3rem 0;border-bottom:1px dashed #e2e8f0;">
+              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長' : m.isVice ? ' ⭐副組長' : ''}</span>
+              <span style="display:flex;gap:0.75rem;font-size:0.85rem;">
+                <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''}> 出席 Present（Có mặt）</label>
+                <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''}> 缺席 Absent（Vắng mặt）</label>
+              </span>
+            </div>`;
+          }).join('')}
+        </div>
+        <button class="btn btn-primary" type="submit" style="margin-top:0.75rem;padding:0.4rem 1.1rem;font-size:0.88rem;">送出點名 Submit（Gửi điểm danh）</button>
+      </form>`;
+    }
+
+    const absentNames = recs.filter(r => r.status === 'absent').map(r => {
+      const m = mates.find(x => x.ref === r.ref);
+      return m ? `${m.name} (${m.id})` : r.ref;
+    });
+    return `
+    <div class="attendance-session-row" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.6rem;font-size:0.88rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+        <b>${esc(label)}</b>
+        <span class="status-badge is-locked">已鎖定 Locked（Đã khóa）</span>
+      </div>
+      <div style="margin-top:0.3rem;color:#475569;">
+        ${!recs.length ? '尚未點名 Not taken（Chưa điểm danh）'
+          : absentNames.length ? `缺席 Absent（Vắng mặt）：${absentNames.map(esc).join('、')}`
+          : '✅ 全員到齊 All present（Đầy đủ）'}
+      </div>
+      <div style="margin-top:0.25rem;font-size:0.78rem;color:#94a3b8;">如需補登請聯絡老師開放權限 Ask teacher to unlock（Liên hệ giáo viên để mở lại）</div>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#eff6ff;border:2px solid #bfdbfe;border-radius:10px;">
+    <h3 style="margin:0 0 0.75rem;color:#1e3a8a;">📋 點名 Attendance（Điểm danh）</h3>
+    <p class="file-path" style="margin:0 0 0.75rem;">組長 Leader（Trưởng nhóm）或副組長 Vice leader（Phó nhóm）可於當天為本組組員 Members（Thành viên）點名；超過當天則需老師開放補登權限。</p>
+    ${rows}
+  </div>`;
 }
 
 /* ===== 老師切換預覽模式專用提示橫幅 ===== */
@@ -1645,6 +1953,30 @@ app.addEventListener('submit', e => {
     const c = needCourse(); if (!c) return;
     return act('teacher:add-students', { courseId: c.id, students: [{ id: f.id.value.trim(), name: f.name.value.trim() }] });
   }
+  if (a === 'save-attendance-session') {
+    const c = needCourse(); if (!c) return;
+    return act('teacher:save-attendance-session', {
+      courseId: c.id,
+      id: attendanceEditingId || undefined,
+      date: f.date.value,
+      timeSlot: f.timeSlot.value.trim(),
+      name: f.name.value.trim(),
+    }, { after: () => { attendanceEditingId = null; } });
+  }
+  if (a === 'mark-attendance') {
+    const c = cur(), s = me();
+    if (!c || !s || !s.groupId) return;
+    const g = c.groups.find(x => x.id === s.groupId);
+    const mates = g ? members(c, g.id) : [];
+    const sessionId = f.dataset.session;
+    const fd = new FormData(f);
+    const records = mates.map(m => {
+      const key = keyOf(m);
+      return { studentId: key, status: fd.get(`att_${key}`) === 'absent' ? 'absent' : 'present' };
+    });
+    return act('mark-attendance', { sessionId, records },
+      { after: () => alert('點名已送出 Attendance submitted（Đã gửi điểm danh）') });
+  }
 });
 
 app.addEventListener('click', e => {
@@ -1688,6 +2020,25 @@ app.addEventListener('click', e => {
   if (a === 'sys-password') { teacherView = 'settings'; return render(); }
   if (a === 'sys-peer-eval') { teacherView = 'eval'; return render(); }
   if (a === 'sys-logs') { teacherView = 'logs'; return render(); }
+  if (a === 'sys-attendance') { teacherView = 'attendance'; attendanceEditingId = null; return render(); }
+  if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
+  if (a === 'cancel-edit-attendance-session') { attendanceEditingId = null; return render(); }
+  if (a === 'del-attendance-session') {
+    if (!c) return;
+    const s = (c.attendanceSessions || []).find(x => x.id === id);
+    if (!s || !confirm(`確定刪除點名時段「${attendanceSessionLabel(s) || s.date}」？此時段所有點名紀錄將一併刪除，且無法復原！`)) return;
+    return act('teacher:del-attendance-session', { courseId: c.id, sessionId: id });
+  }
+  if (a === 'attendance-unlock-all') {
+    if (!c) return;
+    const allow = btn.dataset.allow === '1';
+    let deadline = '';
+    if (allow) {
+      deadline = prompt('請輸入全部組別補登截止時間（格式 YYYY-MM-DDTHH:mm，留白＝不限期）：', '');
+      if (deadline === null) return;
+    }
+    return act('teacher:set-attendance-unlock', { courseId: c.id, sessionId: id, groupId: '', allow, deadline: (deadline || '').trim() });
+  }
   if (a === 'view-course-logs') {
     if (id) state.currentId = id;
     teacherView = 'logs';
@@ -1851,6 +2202,19 @@ app.addEventListener('change', e => {
   if (a === 'assign-student') return act('teacher:assign-student', { courseId: c.id, studentId: id, groupId: t.value || null });
   if (a === 'set-leader') return act('teacher:set-leader', { courseId: c.id, studentId: id, on: t.checked });
   if (a === 'pick') return act('pick', { studentId: id });
+  if (a === 'attendance-unlock-group') {
+    const groupId = t.value;
+    t.value = '';
+    if (!groupId) return;
+    const already = (c.attendanceUnlocks || []).some(u => u.sessionId === id && u.groupId === groupId);
+    if (already) return act('teacher:set-attendance-unlock', { courseId: c.id, sessionId: id, groupId, allow: false });
+    const deadline = prompt('請輸入該組補登截止時間（格式 YYYY-MM-DDTHH:mm，留白＝不限期）：', '');
+    if (deadline === null) return;
+    return act('teacher:set-attendance-unlock', { courseId: c.id, sessionId: id, groupId, allow: true, deadline: deadline.trim() });
+  }
+  if (a === 'attendance-stat-date') { attendanceStatDate = t.value; return render(); }
+  if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; return render(); }
+  if (a === 'attendance-progress-session') { attendanceProgressSessionId = t.value; return render(); }
 });
 
 app.addEventListener('input', e => {

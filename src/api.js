@@ -2,7 +2,7 @@ import {
   json, bad, sha256, makeToken, readSession, sessionCookie, clearCookie,
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
-  makeLogStmt, logActivity, evalDeadlinePassed,
+  makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 
@@ -464,6 +464,89 @@ export async function handleAction(request, env, db, body) {
       if (stmts.length) await db.batch(stmts);
       return ok();
     }
+    if (op === 'save-attendance-session') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const date = String(body.date || '').trim();
+      if (!date) return bad('請填寫點名日期', 400);
+      const timeSlot = String(body.timeSlot || '').trim();
+      const name = String(body.name || '').trim();
+      const existing = body.id && (c.attendanceSessions || []).find(x => x.id === body.id);
+      const id = existing ? existing.id : ('as' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+      if (existing) {
+        await db.prepare('UPDATE attendance_sessions SET date=?, time_slot=?, name=? WHERE course_id=? AND id=?')
+          .bind(date, timeSlot, name, c.id, id).run();
+      } else {
+        await db.prepare('INSERT INTO attendance_sessions (id, course_id, date, time_slot, name, created_at) VALUES (?,?,?,?,?,?)')
+          .bind(id, c.id, date, timeSlot, name, Date.now()).run();
+      }
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'attendance-session-save',
+        detail: `老師${existing ? '修改' : '新增'}點名時段「${date}${timeSlot ? ` ${timeSlot}` : ''}${name ? ` ${name}` : ''}」`,
+      });
+      return ok({ sessionId: id });
+    }
+    if (op === 'del-attendance-session') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+      if (!s) return bad('點名時段不存在', 404);
+      await db.batch([
+        db.prepare('DELETE FROM attendance_records WHERE course_id=? AND session_id=?').bind(c.id, s.id),
+        db.prepare('DELETE FROM attendance_unlocks WHERE course_id=? AND session_id=?').bind(c.id, s.id),
+        db.prepare('DELETE FROM attendance_sessions WHERE course_id=? AND id=?').bind(c.id, s.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-session-delete',
+          detail: `老師刪除點名時段「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${s.name ? ` ${s.name}` : ''}」及其所有點名紀錄`,
+        }),
+      ]);
+      return ok();
+    }
+    if (op === 'set-attendance-unlock') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+      if (!s) return bad('點名時段不存在', 404);
+      const groupId = body.groupId ? String(body.groupId) : '';
+      const g = groupId ? c.groups.find(x => x.id === groupId) : null;
+      const scopeLabel = groupId ? `「${g ? g.name : groupId}」` : '全部組別';
+      if (body.allow) {
+        const deadline = body.deadline !== undefined ? String(body.deadline) : '';
+        await db.prepare('INSERT OR REPLACE INTO attendance_unlocks (course_id, session_id, group_id, deadline, created_at) VALUES (?,?,?,?,?)')
+          .bind(c.id, s.id, groupId, deadline, Date.now()).run();
+        await logActivity(db, {
+          courseId: c.id,
+          groupId,
+          groupName: g ? g.name : '',
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-unlock',
+          detail: `老師開放${scopeLabel}補登「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}」點名紀錄${deadline ? `（截止 ${deadline.replace('T', ' ')}）` : '（不限期）'}`,
+        });
+      } else {
+        await db.prepare('DELETE FROM attendance_unlocks WHERE course_id=? AND session_id=? AND group_id=?').bind(c.id, s.id, groupId).run();
+        await logActivity(db, {
+          courseId: c.id,
+          groupId,
+          groupName: g ? g.name : '',
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-unlock',
+          detail: `老師關閉${scopeLabel}對「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}」的點名補登權限`,
+        });
+      }
+      return ok();
+    }
     if (op === 'clear-logs') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
@@ -597,6 +680,53 @@ export async function handleAction(request, env, db, body) {
     if (stmts.length) await db.batch(stmts);
     return ok();
   }
+  if (action === 'mark-attendance') {
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only', 403);
+    if (!self.groupId) return bad('尚未加入組別', 400);
+    const session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+    if (!session) return bad('點名時段不存在', 404);
+    if (!isAttendanceEditable(session, c.attendanceUnlocks || [], self.groupId)) {
+      return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock', 403);
+    }
+    const g = c.groups.find(x => x.id === self.groupId);
+    const gName = g ? g.name : '';
+    const existingByStudent = {};
+    (c.attendanceRecords || [])
+      .filter(r => r.sessionId === session.id && r.groupId === self.groupId)
+      .forEach(r => { existingByStudent[r.studentId] = r.status; });
+
+    const now = Date.now();
+    const roleLabel = self.isLeader ? '組長' : '副組長';
+    const stmts = [];
+    for (const rec of (Array.isArray(body.records) ? body.records : [])) {
+      const t = await resolveStudent(db, env, c, rec.studentId);
+      if (!t || t.groupId !== self.groupId) continue;
+      const status = rec.status === 'absent' ? 'absent' : 'present';
+      stmts.push(db.prepare(`
+        INSERT OR REPLACE INTO attendance_records
+          (course_id, session_id, student_id, group_id, status, marked_by_id, marked_by_name, updated_at)
+        VALUES (?,?,?,?,?,?,?,?)
+      `).bind(c.id, session.id, t.id, self.groupId, status, self.id, self.name, now));
+      if (existingByStudent[t.id] !== status) {
+        stmts.push(makeLogStmt(db, {
+          courseId: c.id,
+          groupId: self.groupId,
+          groupName: gName,
+          operatorRole: self.isLeader ? 'leader' : 'vice',
+          operatorId: self.id,
+          operatorName: self.name,
+          actionType: 'attendance-mark',
+          targetId: t.id,
+          targetName: t.name,
+          detail: `${roleLabel} ${self.name} (${self.id}) 於「${gName}」${session.date}${session.timeSlot ? ` ${session.timeSlot}` : ''}${session.name ? `「${session.name}」` : ''}點名，將 ${t.name} (${t.id}) 標記為「${status === 'absent' ? '缺席' : '出席'}」`,
+          createdAt: now,
+        }));
+      }
+    }
+    if (stmts.length) await db.batch(stmts);
+    return ok();
+  }
+
   if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);
   if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
 

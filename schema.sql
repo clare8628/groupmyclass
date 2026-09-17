@@ -69,3 +69,41 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 
 CREATE INDEX IF NOT EXISTS idx_logs_course ON activity_logs(course_id, created_at DESC);
 
+-- 點名功能：老師設定的點名時段
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  id          TEXT NOT NULL,
+  course_id   TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  date        TEXT NOT NULL DEFAULT '',   -- YYYY-MM-DD
+  time_slot   TEXT NOT NULL DEFAULT '',   -- 時段文字，例如「第3-4節」
+  name        TEXT NOT NULL DEFAULT '',   -- 點名名稱，可空白
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (course_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_course ON attendance_sessions(course_id, date DESC);
+
+-- 點名功能：組長／副組長為組員標記之出缺席紀錄
+CREATE TABLE IF NOT EXISTS attendance_records (
+  course_id      TEXT NOT NULL,
+  session_id     TEXT NOT NULL,
+  student_id     TEXT NOT NULL,           -- 學號
+  group_id       TEXT NOT NULL DEFAULT '',
+  status         TEXT NOT NULL DEFAULT 'present',  -- 'present' | 'absent'
+  marked_by_id   TEXT NOT NULL DEFAULT '',
+  marked_by_name TEXT NOT NULL DEFAULT '',
+  updated_at     INTEGER NOT NULL,
+  PRIMARY KEY (course_id, session_id, student_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_records_session ON attendance_records(course_id, session_id);
+
+-- 點名功能：老師針對特定時段／組別開放「超過當日」之補登權限
+CREATE TABLE IF NOT EXISTS attendance_unlocks (
+  course_id  TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  group_id   TEXT NOT NULL DEFAULT '',    -- '' 表示開放給該時段的全部組別
+  deadline   TEXT NOT NULL DEFAULT '',    -- 可空白＝不限期
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (course_id, session_id, group_id)
+);
+

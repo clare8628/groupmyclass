@@ -132,6 +132,58 @@ async function ensureGroupSchema(db) {
   _ensuredGroupSchema = true;
 }
 
+let _ensuredAttendanceSchema = false;
+async function ensureAttendanceSchema(db) {
+  if (_ensuredAttendanceSchema) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id TEXT NOT NULL,
+        course_id TEXT NOT NULL,
+        date TEXT NOT NULL DEFAULT '',
+        time_slot TEXT NOT NULL DEFAULT '',
+        name TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (course_id, id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_attendance_sessions_course ON attendance_sessions(course_id, date DESC)').run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_records (
+        course_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        group_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'present',
+        marked_by_id TEXT NOT NULL DEFAULT '',
+        marked_by_name TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (course_id, session_id, student_id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_attendance_records_session ON attendance_records(course_id, session_id)').run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_unlocks (
+        course_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        group_id TEXT NOT NULL DEFAULT '',
+        deadline TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (course_id, session_id, group_id)
+      )
+    `).run();
+  } catch (_) {}
+  _ensuredAttendanceSchema = true;
+}
+
 export function makeLogStmt(db, {
   courseId,
   groupId = '',
@@ -186,6 +238,25 @@ export const parseDate = str => {
   }
   return new Date(s.replace(' ', 'T') + '+08:00').getTime();
 };
+
+/* 點名功能：台北時區（+8）今天日期字串 YYYY-MM-DD */
+export const todayDateStr = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+
+/* 找出適用於某時段＋組別、且尚未過期的老師補登開放紀錄 */
+export function attendanceUnlockFor(unlocks, sessionId, groupId) {
+  const now = Date.now();
+  return (unlocks || []).find(u => u.sessionId === sessionId
+    && (u.groupId === groupId || u.groupId === '')
+    && (!u.deadline || parseDate(u.deadline) > now)) || null;
+}
+
+/* 判斷組長／副組長目前是否可編輯某點名時段之紀錄：
+   當天可自由編輯；超過當天則需老師針對該時段（或該組）開放補登權限 */
+export function isAttendanceEditable(session, unlocks, groupId) {
+  if (!session) return false;
+  if (session.date === todayDateStr()) return true;
+  return !!attendanceUnlockFor(unlocks, session.id, groupId);
+}
 
 /* 判斷組長評分是否逾時 */
 export const evalDeadlinePassed = g => !!g.peerEvalDeadline && Date.now() > parseDate(g.peerEvalDeadline);
@@ -265,11 +336,15 @@ export function calcAdjustment(c, g, s) {
 
 export async function loadState(db) {
   await ensureGroupSchema(db);
-  const [courses, groups, students, snapshots] = await Promise.all([
+  await ensureAttendanceSchema(db);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
     db.prepare('SELECT course_id FROM group_snapshots').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM attendance_sessions ORDER BY date DESC, created_at DESC').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM attendance_records').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM attendance_unlocks').all().catch(() => ({ results: [] })),
   ]);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   return courses.results.map(c => {
@@ -307,6 +382,17 @@ export async function loadState(db) {
       const g = courseGroups.find(x => x.id === s.groupId);
       s.adjustment = calcAdjustment(courseObj, g, s);
     });
+
+    courseObj.attendanceSessions = (attSessions.results || []).filter(x => x.course_id === c.id).map(x => ({
+      id: x.id, date: x.date || '', timeSlot: x.time_slot || '', name: x.name || '', createdAt: x.created_at,
+    }));
+    courseObj.attendanceRecords = (attRecords.results || []).filter(x => x.course_id === c.id).map(x => ({
+      sessionId: x.session_id, studentId: x.student_id, groupId: x.group_id || '', status: x.status,
+      markedById: x.marked_by_id || '', markedByName: x.marked_by_name || '', updatedAt: x.updated_at,
+    }));
+    courseObj.attendanceUnlocks = (attUnlocks.results || []).filter(x => x.course_id === c.id).map(x => ({
+      sessionId: x.session_id, groupId: x.group_id || '', deadline: x.deadline || '', createdAt: x.created_at,
+    }));
 
     return courseObj;
   });
@@ -433,10 +519,19 @@ export async function publicize(db, env, courses, session) {
         });
       }
     } catch (_) {}
-    return courses.map(c => ({
-      ...c,
-      logs: logsByCourse[c.id] || [],
-    }));
+    return courses.map(c => {
+      const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
+      return {
+        ...c,
+        logs: logsByCourse[c.id] || [],
+        attendanceSessions: c.attendanceSessions || [],
+        attendanceRecords: (c.attendanceRecords || []).map(r => {
+          const st = c.students.find(s => s.id === r.studentId);
+          return { ...r, studentName: st ? st.name : '', groupName: groupName(r.groupId) };
+        }),
+        attendanceUnlocks: c.attendanceUnlocks || [],
+      };
+    });
   }
   const selfId = session && session.role === 'student' ? session.id : null;
   const selfCourse = session && session.courseId;
@@ -444,18 +539,34 @@ export async function publicize(db, env, courses, session) {
   const out = [];
   for (const c of courses) {
     const students = [];
+    const refById = {};
     for (const s of c.students) {
       const mine = selfId && s.id === selfId && c.id === selfCourse;
+      const ref = await studentRef(db, env, c.id, s.id, hmacKey);
+      refById[s.id] = ref;
       students.push({
         ...s,
         id: mine ? s.id : maskId(s.id),
-        ref: await studentRef(db, env, c.id, s.id, hmacKey),
+        ref,
         peerPenalty: 0,
         peerComment: '',
         adjustment: null,
       });
     }
-    out.push({ ...c, students });
+    const isMine = !!selfId && c.id === selfCourse;
+    const selfGroupId = isMine ? (c.students.find(s => s.id === selfId) || {}).groupId : null;
+    const attendanceSessions = isMine ? (c.attendanceSessions || []) : [];
+    const attendanceRecords = (isMine && selfGroupId)
+      ? (c.attendanceRecords || []).filter(r => r.groupId === selfGroupId).map(r => ({
+          sessionId: r.sessionId, groupId: r.groupId, status: r.status,
+          markedByName: r.markedByName, updatedAt: r.updatedAt,
+          ref: refById[r.studentId] || '',
+        }))
+      : [];
+    const attendanceUnlocks = isMine
+      ? (c.attendanceUnlocks || []).filter(u => !u.groupId || u.groupId === selfGroupId)
+      : [];
+    out.push({ ...c, students, attendanceSessions, attendanceRecords, attendanceUnlocks });
   }
   return out;
 }
