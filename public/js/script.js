@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.43';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.44';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -177,13 +177,16 @@ function isAttendanceEditable(c, session, groupId) {
   return !!attendanceUnlockFor(c, session.id, groupId);
 }
 const attendanceSessionLabel = s => [s.date, s.timeSlot, s.name].filter(Boolean).join(' · ');
-/* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄） */
+/* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄），並列出尚未被點名的組員（含組長／副組長） */
 function attendanceGroupProgress(c, sessionId) {
-  const recs = attendanceRecordsFor(c, sessionId);
+  const recs = attendanceRecordsFor(c, sessionId).filter(r => r.status === 'present' || r.status === 'absent');
   return c.groups.map(g => {
-    const total = members(c, g.id).length;
-    const done = recs.filter(r => r.groupId === g.id).length;
-    return { group: g, total, done, complete: total > 0 && done >= total };
+    const mates = members(c, g.id);
+    const recordedIds = new Set(recs.filter(r => r.groupId === g.id).map(r => r.studentId));
+    const missing = mates.filter(m => !recordedIds.has(m.id));
+    const total = mates.length;
+    const done = total - missing.length;
+    return { group: g, total, done, missing, complete: total > 0 && missing.length === 0 };
   });
 }
 /* 老師視角：依日期或整學期（全部時段）統計各組員缺席次數 */
@@ -1359,7 +1362,7 @@ function teacherAttendanceBlock(c) {
   </div>
 
   <div class="teacher-section">
-    <h2>尚未完成點名的組別 <small>Incomplete groups</small></h2>
+    <h2>尚未完成點名的組別與組員 <small>Incomplete groups &amp; members</small></h2>
     <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
       <label style="font-weight:600;font-size:0.85rem;">選擇時段：</label>
       <select data-act="attendance-progress-session">
@@ -1369,12 +1372,16 @@ function teacherAttendanceBlock(c) {
     ${!progressSession ? '<p class="file-path">尚無點名時段。</p>' : incomplete.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>組別</th><th>完成進度</th></tr></thead>
+        <thead><tr><th>組別</th><th>完成進度</th><th>尚未被點名的組員（含組長／副組長）</th></tr></thead>
         <tbody>${incomplete.map(p => `
-          <tr><td><b>${esc(p.group.name)}</b></td><td><span class="status-badge under-threshold">${p.done} / ${p.total} 人</span></td></tr>
+          <tr>
+            <td><b>${esc(p.group.name)}</b></td>
+            <td><span class="status-badge under-threshold">${p.done} / ${p.total} 人</span></td>
+            <td>${p.missing.map(m => `<span class="attendance-absent-tag">${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 組長' : m.isVice ? ' 副組長' : ''}</span>`).join(' ')}</td>
+          </tr>
         `).join('')}</tbody>
       </table>
-    </div>` : '<p class="file-path">✅ 該時段所有組別皆已完成點名。</p>'}
+    </div>` : '<p class="file-path">✅ 該時段所有組別的全部組員皆已完成點名。</p>'}
   </div>
 
   <div class="teacher-section">
@@ -1681,13 +1688,14 @@ function attendanceLeaderPanel(c, g, s, mates) {
           <b>${esc(label)}</b>
           <span class="status-badge can-edit">${isToday ? '今日可編輯 Today（Hôm nay）' : '老師已開放補登 Unlocked（Đã mở）'}</span>
         </div>
+        <p class="file-path" style="margin:0 0 0.5rem;">請逐一點選每位組員之出席或缺席，未點選者將視為「尚未點名」。Please select present/absent for each member individually（Vui lòng chọn cho từng thành viên）。</p>
         <div class="attendance-mark-list">
           ${mates.map(m => {
             const key = keyOf(m);
-            const st = recByRef[key] || 'present';
+            const st = recByRef[key] || '';
             return `
             <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.3rem 0;border-bottom:1px dashed #e2e8f0;">
-              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長（Trưởng nhóm）' : m.isVice ? ' ⭐副組長（Phó nhóm）' : ''}</span>
+              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長（Trưởng nhóm）' : m.isVice ? ' ⭐副組長（Phó nhóm）' : ''}${!st ? ' <span class="status-badge under-threshold">尚未點名（Chưa điểm danh）</span>' : ''}</span>
               <span style="display:flex;gap:0.75rem;font-size:0.85rem;">
                 <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''}> 出席 Present（Có mặt）</label>
                 <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''}> 缺席 Absent（Vắng mặt）</label>
@@ -1973,10 +1981,12 @@ app.addEventListener('submit', e => {
     const mates = g ? members(c, g.id) : [];
     const sessionId = f.dataset.session;
     const fd = new FormData(f);
-    const records = mates.map(m => {
-      const key = keyOf(m);
-      return { studentId: key, status: fd.get(`att_${key}`) === 'absent' ? 'absent' : 'present' };
-    });
+    const records = mates
+      .map(m => ({ studentId: keyOf(m), status: fd.get(`att_${keyOf(m)}`) }))
+      .filter(r => r.status === 'present' || r.status === 'absent');
+    if (!records.length) {
+      return alert('請至少為一位組員點選出席或缺席 Please mark at least one member（Vui lòng chọn ít nhất một thành viên）');
+    }
     return act('mark-attendance', { sessionId, records },
       { after: () => alert('點名已送出 Attendance submitted（Đã gửi điểm danh）') });
   }
