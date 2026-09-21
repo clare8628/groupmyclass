@@ -61,11 +61,11 @@ export async function handleAction(request, env, db, body) {
     const inputAccount = String(body.name || body.account || '').trim();
     const inputPassword = String(body.password || body.sid || '').trim();
     if (!inputAccount || !inputPassword) {
-      return bad('請輸入姓名或學號，以及密碼 Please enter account and password', 400);
+      return bad('請輸入姓名或學號，以及密碼 Please enter account and password（Vui lòng nhập họ tên/mã SV và mật khẩu）', 400);
     }
     // 先依學號或姓名尋找學生
     const s = c.students.find(x => x.name === inputAccount || x.id === inputAccount);
-    if (!s) return bad('找不到該學生，或不在本課程修課名單中 Student not found in this course', 401);
+    if (!s) return bad('找不到該學生，或不在本課程修課名單中 Student not found in this course（Không tìm thấy sinh viên trong khóa học này）', 401);
 
     // 驗證密碼：若有自訂密碼 hash 則比對雜湊；若尚未自訂則預設密碼為學號
     let valid = false;
@@ -75,7 +75,7 @@ export async function handleAction(request, env, db, body) {
       valid = inputPassword === s.id;
     }
     if (!valid) {
-      return bad('密碼錯誤 Wrong password（預設密碼為學號，若已修改請輸入新密碼；若忘記密碼請聯繫老師重設）', 401);
+      return bad('密碼錯誤 Wrong password（Mật khẩu không đúng. Mật khẩu mặc định là mã SV, nếu đã đổi hãy nhập mật khẩu mới; nếu quên hãy nhờ giáo viên đặt lại）', 401);
     }
     const token = await makeToken(db, env, { role: 'student', id: s.id, courseId: c.id });
     return ok({ session: { role: 'student', id: s.id, courseId: c.id } }, { 'set-cookie': sessionCookie(token) });
@@ -679,11 +679,11 @@ export async function handleAction(request, env, db, body) {
   const canEdit = canGroupLeaderEdit(c, myGroup);
 
   if (action === 'change-student-password') {
-    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼 Leader or vice leader only', 403);
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼 Leader or vice leader only（Chỉ nhóm trưởng hoặc nhóm phó mới có thể đổi mật khẩu）', 403);
     const current = String(body.current || '').trim();
     const next = String(body.next || '').trim();
-    if (!current) return bad('請輸入目前密碼 Please enter current password', 400);
-    if (next.length < 4) return bad('新密碼長度至少需 4 碼 Password must be at least 4 characters', 400);
+    if (!current) return bad('請輸入目前密碼 Please enter current password（Vui lòng nhập mật khẩu hiện tại）', 400);
+    if (next.length < 4) return bad('新密碼長度至少需 4 碼 Password must be at least 4 characters（Mật khẩu mới phải có ít nhất 4 ký tự）', 400);
 
     // 驗證目前密碼：若尚未修改過，預設密碼為學號
     let currentValid = false;
@@ -692,7 +692,7 @@ export async function handleAction(request, env, db, body) {
     } else {
       currentValid = current === self.id;
     }
-    if (!currentValid) return bad('目前密碼不正確 Incorrect current password（若首次修改，預設密碼為學號）', 401);
+    if (!currentValid) return bad('目前密碼不正確 Incorrect current password（Mật khẩu hiện tại không đúng. Lần đầu đổi hãy dùng mã SV）', 401);
 
     const newHash = await sha256(next);
     await db.prepare('UPDATE students SET password_hash=? WHERE course_id=? AND id=?')
@@ -716,7 +716,7 @@ export async function handleAction(request, env, db, body) {
   }
 
   if (action === 'claim-leader') {
-    if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed', 403);
+    if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed（Đã hết hạn chia nhóm, không thể đăng ký làm nhóm trưởng）', 403);
     let gid = self.groupId;
     let gName = '';
     const stmts = [];
@@ -736,7 +736,7 @@ export async function handleAction(request, env, db, body) {
       const g = c.groups.find(x => x.id === gid);
       gName = g ? g.name : '';
     }
-    if (membersOf(c, gid).some(m => m.isLeader && m.id !== self.id)) return bad('本組已有組長 This group already has a leader', 409);
+    if (membersOf(c, gid).some(m => m.isLeader && m.id !== self.id)) return bad('本組已有組長 This group already has a leader（Nhóm này đã có nhóm trưởng）', 409);
     stmts.push(db.prepare('UPDATE students SET group_id=?, is_leader=1, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
       .bind(gid, c.id, self.id));
     stmts.push(makeLogStmt(db, {
@@ -755,7 +755,7 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'unclaim-leader') {
-    if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分 Deadline passed', 403);
+    if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分 Deadline passed（Đã hết hạn chia nhóm, không thể hủy quyền nhóm trưởng）', 403);
     const g = c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
     const vice = membersOf(c, self.groupId).find(m => m.isVice && m.id !== self.id);
@@ -797,10 +797,10 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'submit-peer-eval') {
-    if (!self.isLeader) return bad('僅組長可進行評分 Leader only', 403);
-    if (!myGroup) return bad('尚未加入組別', 400);
-    if (!myGroup.peerEvalOpen) return bad('老師尚未開放本組組長評分權限 Peer evaluation is not open', 403);
-    if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分 Deadline passed', 403);
+    if (!self.isLeader) return bad('僅組長可進行評分 Leader only（Chỉ nhóm trưởng mới có thể đánh giá）', 403);
+    if (!myGroup) return bad('尚未加入組別 Not in a group（Chưa vào nhóm）', 400);
+    if (!myGroup.peerEvalOpen) return bad('老師尚未開放本組組長評分權限 Peer evaluation is not open（Giáo viên chưa mở quyền đánh giá cho nhóm này）', 403);
+    if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分 Deadline passed（Đã quá hạn đánh giá, không thể nộp điểm）', 403);
 
     const evaluations = Array.isArray(body.evaluations) ? body.evaluations : [];
     const maxB = Number(c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
@@ -830,24 +830,24 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'mark-attendance') {
-    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only', 403);
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only（Chỉ nhóm trưởng hoặc nhóm phó mới có thể điểm danh）', 403);
     const today = todayDateStr();
     let session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
     if (!session && (body.sessionId === `daily-${today}` || body.sessionId === 'daily')) {
       session = { id: `daily-${today}`, courseId: c.id, date: today, timeSlot: '', name: '一般日常點名', isDaily: true, createdAt: Date.now() };
     }
-    if (!session) return bad('點名時段不存在', 404);
+    if (!session) return bad('點名時段不存在 Session not found（Buổi điểm danh không tồn tại）', 404);
 
     const targetGroupId = body.groupId ? String(body.groupId) : self.groupId;
-    if (!targetGroupId) return bad('尚未加入組別', 400);
+    if (!targetGroupId) return bad('尚未加入組別 Not in a group（Chưa vào nhóm）', 400);
 
     let isDelegate = false;
     if (targetGroupId !== self.groupId) {
       isDelegate = (c.attendanceDelegates || []).some(d => d.sessionId === session.id && d.groupId === targetGroupId && d.delegateId === self.id);
-      if (!isDelegate) return bad('您未被授權代理該組點名 Not authorized to mark for this group', 403);
+      if (!isDelegate) return bad('您未被授權代理該組點名 Not authorized to mark for this group（Bạn chưa được ủy quyền điểm danh nhóm này）', 403);
     }
     if (!isDelegate && !isAttendanceEditable(session, c.attendanceUnlocks || [], targetGroupId)) {
-      return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock', 403);
+      return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock（Đã qua ngày, bản điểm danh đã khóa, cần nhờ giáo viên mở quyền）', 403);
     }
 
     // 確保點名時段已持久化至資料庫（特別是當日自動生成的日常點名時段）
@@ -915,18 +915,18 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
 
-  if (!self.isLeader) return bad('僅組長可操作 Leader only', 403);
-  if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員（需由老師個別開放權限或手動調整）Deadline passed', 403);
+  if (!self.isLeader) return bad('僅組長可操作 Leader only（Chỉ nhóm trưởng mới có thể thao tác）', 403);
+  if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員 Deadline passed（Đã hết hạn chia nhóm, nhóm trưởng không thể đổi thành viên）', 403);
 
   if (action === 'pick') {
     const curMembers = membersOf(c, self.groupId);
     const max = cap(c);
     if (curMembers.length >= max) {
-      return bad(`本組現有成員數（${curMembers.length} 人）已達或高於上限（${max} 人），組長只能刪減組員釋出至未分配名單，無法再新增組員。`, 409);
+      return bad(`本組現有成員數（${curMembers.length} 人）已達或高於上限（${max} 人），組長只能刪減組員釋出至未分配名單，無法再新增組員。Group is full（Nhóm đã đủ hoặc vượt quá số lượng tối đa ${max} người, chỉ có thể loại bớt, không thể thêm thành viên）。`, 409);
     }
     const t = await resolveStudent(db, env, c, body.studentId);
-    if (!t) return bad('學生不存在', 404);
-    if (t.groupId) return bad('該生已被分組 Already assigned', 409);
+    if (!t) return bad('學生不存在 Student not found（Sinh viên không tồn tại）', 404);
+    if (t.groupId) return bad('該生已被分組 Already assigned（Sinh viên này đã vào nhóm khác）', 409);
     const g = myGroup || c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
     const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 加入「${gName}」`;
@@ -952,10 +952,10 @@ export async function handleAction(request, env, db, body) {
     const curMembers = membersOf(c, self.groupId);
     const min = minCap(c);
     if (curMembers.length <= min) {
-      return bad(`本組現有成員數（${curMembers.length} 人）已低於或等於下限（${min} 人），組長只能新增組員，無法再刪減成員。`, 400);
+      return bad(`本組現有成員數（${curMembers.length} 人）已低於或等於下限（${min} 人），組長只能新增組員，無法再刪減成員。Group is at minimum size（Nhóm đang ở mức tối thiểu ${min} người, chỉ có thể thêm, không thể loại bớt thành viên）。`, 400);
     }
     const t = await resolveStudent(db, env, c, body.studentId);
-    if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生', 400);
+    if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生 Cannot remove student（Không thể loại sinh viên này）', 400);
     const g = myGroup || c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
     const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 釋出至未分組名單（原組別：「${gName}」）`;
