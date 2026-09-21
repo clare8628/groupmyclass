@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.46';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.47';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -296,7 +296,7 @@ function unassignedList(c) {
   ${showLoginPrompt && pool.length ? `
     <div class="unassigned-login-tip" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:0.85rem;color:#1e40af;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
       <span>💡 未分組學生若欲擔任組長開組，請直接點選下方姓名或點擊登入：</span>
-      <button class="btn btn-primary" data-act="show-student-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組（輸入姓名、學號）</button>
+      <button class="btn btn-primary" data-act="show-student-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組（帳號、密碼）</button>
     </div>
   ` : ''}
   <div class="pick-list">${pool.length
@@ -333,7 +333,7 @@ function publicBoard({ withUnassigned = true } = {}) {
       ${(!state.session || (state.session && state.session.role !== 'student')) ? `
         <div class="board-actions">
           <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="show-student-login">
-            <span class="btn-icon">🎓</span> 擔任組長之學生登入（輸入姓名、學號）
+            <span class="btn-icon">🎓</span> 擔任組長或副組長之學生登入（帳號、密碼）
           </button>
         </div>` : ''}
     </div>
@@ -458,7 +458,7 @@ function nav() {
       right = `<span class="who">${who}</span><button class="tab-btn" data-act="logout">登出 Logout</button>`;
     }
   } else {
-    center = `<a href="#login" class="student-link ${loginMode === 'student' ? 'on' : ''}" data-act="show-student-login">🎓 擔任組長之學生登入（輸入姓名、學號）</a>`;
+    center = `<a href="#login" class="student-link ${loginMode === 'student' ? 'on' : ''}" data-act="show-student-login">🎓 擔任組長/副組長之學生登入（帳號、密碼）</a>`;
     right = `<a href="#login" class="teacher-link ${loginMode === 'teacher' ? 'on' : ''}" data-act="show-teacher-login">老師登入 Teacher login</a>`;
   }
   return `<nav>
@@ -477,15 +477,15 @@ function loginCard() {
     const c = cur();
     return `<div class="login-bar embedded" id="login">
       <div class="login-header">
-        <strong>擔任組長之學生登入 Student login</strong>
+        <strong>🎓 擔任組長/副組長之學生登入 Student login</strong>
         <button class="tab-btn close" type="button" data-act="close-login" title="關閉 Close">✕</button>
       </div>
       <form data-act="login-student" class="inline-form">
-        <div class="form-group"><label>姓名 Name（帳號）</label><input name="name" placeholder="王小明" required autocomplete="off"></div>
-        <div class="form-group"><label>學號 Student ID（密碼）</label><input type="password" name="sid" placeholder="410001" required autocomplete="off"></div>
+        <div class="form-group"><label>帳號 Account（姓名或學號）</label><input name="name" placeholder="請輸入姓名或學號" required autocomplete="off"></div>
+        <div class="form-group"><label>密碼 Password（預設為學號）</label><input type="password" name="password" placeholder="預設學號，已改請填新密碼" required autocomplete="off"></div>
         <button class="btn btn-primary" type="submit">登入 Sign in</button>
       </form>
-      <p class="file-path">目前登入課程：<b>${esc(c ? courseLabel(c) : '請先於左側選擇課程')}</b>。登入後可擔任組長並挑選組員。</p>
+      <p class="file-path">目前課程：<b>${esc(c ? courseLabel(c) : '請先於左側選擇課程')}</b>。預設密碼為學號，登入後可於後台自訂密碼。若忘記密碼請洽老師重設。</p>
     </div>`;
   }
   if (loginMode === 'teacher') {
@@ -713,7 +713,7 @@ function courseTree() {
       <div class="tree-year-label">系統設定 System</div>
       <ul>
         <li class="${teacherView === 'settings' ? 'active' : ''}">
-          <button data-act="sys-password">更改管理者密碼<span class="count">Change admin password</span></button>
+          <button data-act="sys-password">🔑 密碼與安全性管理<span class="count">管理者與組長密碼 Password security</span></button>
         </li>
         <li class="${teacherView === 'eval' ? 'active' : ''}">
           <button data-act="sys-peer-eval">學期成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
@@ -733,7 +733,7 @@ function teacherScreen() {
   const c = cur();
   let main;
   if (teacherView === 'settings') {
-    main = teacherPasswordBlock();
+    main = teacherPasswordBlock(c);
   } else if (teacherView === 'eval') {
     main = teacherPeerEvalBlock(c);
   } else if (teacherView === 'logs') {
@@ -1415,11 +1415,18 @@ function teacherAttendanceBlock(c) {
         <tbody>${c.groups.map(g => {
           const lead = leaderOf(c, g.id);
           const vice = members(c, g.id).find(m => m.isVice);
+          const renderPerson = (st, role) => {
+            if (!st) return `<span style="color:${role === '組長' ? '#dc2626' : '#94a3b8'};">（無${role}）</span>`;
+            return `<div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
+              <span><b>${esc(st.name)}</b> <small style="color:#64748b;">(${esc(st.id)})</small></span>
+              <button class="tab-btn" data-act="teacher-manage-student-pw" data-id="${esc(st.id)}" data-name="${esc(st.name)}" data-has-custom="${st.hasCustomPassword ? '1' : '0'}" title="協助修改或重設密碼 (${st.hasCustomPassword ? '已自訂密碼' : '預設學號'})" style="padding:0.15rem 0.45rem;font-size:0.75rem;">🔑 密碼</button>
+            </div>`;
+          };
           return `
           <tr>
             <td><b>${esc(g.name)}</b></td>
-            <td>${lead ? `${esc(lead.name)} (${esc(lead.id)})` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
-            <td>${vice ? `${esc(vice.name)} (${esc(vice.id)})` : '<span style="color:#94a3b8;">（無副組長）</span>'}</td>
+            <td>${renderPerson(lead, '組長')}</td>
+            <td>${renderPerson(vice, '副組長')}</td>
           </tr>`;
         }).join('')}</tbody>
       </table>
@@ -1498,7 +1505,9 @@ function teacherAttendanceBlock(c) {
   </div>`;
 }
 
-function teacherPasswordBlock() {
+function teacherPasswordBlock(c) {
+  const leaders = c ? c.students.filter(s => s.isLeader || s.isVice) : [];
+
   return `
   <div class="teacher-section">
     <h2>更改管理者密碼 <small>Change admin password</small></h2>
@@ -1507,7 +1516,59 @@ function teacherPasswordBlock() {
       <div class="form-group"><label>新密碼 New（至少 4 碼）</label><input type="password" name="next" required minlength="4" autocomplete="off"></div>
       <button class="btn btn-primary" type="submit">更新密碼 Update password</button>
     </form>
-    <p class="file-path">學生登入固定為「姓名 + 學號」，不需另設密碼。Students sign in with name + student ID.</p>
+    <p class="file-path">更換老師管理後台密碼。預設密碼為 admin。</p>
+  </div>
+
+  <div class="teacher-section" style="margin-top:2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+      <h2 style="margin:0;">🔑 各組組長與副組長密碼管理 <small>Leader &amp; Vice-leader Passwords</small></h2>
+      ${c ? `<span class="status-badge" style="background:#f1f5f9;color:#334155;">目前課程：<b>${esc(c.year)} ${esc(c.subject)}</b></span>` : ''}
+    </div>
+    <p class="file-path" style="margin:0 0 1rem;color:#475569;">
+      擔任組長與副組長之學生登入後台時，預設密碼為「學號」。學生登入後可於其個人後台自行設定新密碼。<br>
+      若組長或副組長忘記自訂密碼，老師可在此協助<b>設定新密碼</b>或直接<b>重設回預設學號</b>。
+    </p>
+
+    ${!c ? '<p class="file-path" style="color:#dc2626;">請先從左側選擇學年度課程，以檢視該班級之組長／副組長名單。</p>' :
+      leaders.length ? `
+      <div class="table-wrap">
+        <table class="roster" style="background:#fff;">
+          <thead>
+            <tr>
+              <th>組別 Group</th>
+              <th>職位 Role</th>
+              <th>學號 ID</th>
+              <th>姓名 Name</th>
+              <th>密碼狀態 Status</th>
+              <th style="width:210px;">密碼管理操作 Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${leaders.map(s => {
+              const g = c.groups.find(x => x.id === s.groupId);
+              const roleText = s.isLeader ? '⭐ 組長' : '🛡️ 副組長';
+              return `
+              <tr>
+                <td><b>${esc(g ? g.name : '未編組')}</b></td>
+                <td><span class="tag-inline ${s.isLeader ? 'leader' : ''}">${roleText}</span></td>
+                <td>${esc(s.id)}</td>
+                <td><b>${esc(s.name)}</b></td>
+                <td>
+                  ${s.hasCustomPassword
+                    ? '<span class="status-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;">🔐 已自訂密碼</span>'
+                    : '<span class="status-badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;">ℹ️ 預設學號</span>'}
+                </td>
+                <td style="white-space:nowrap;">
+                  <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;margin-right:0.35rem;" data-act="teacher-set-student-pw" data-id="${esc(s.id)}" data-name="${esc(s.name)}">✏️ 設定新密碼</button>
+                  <button class="tab-btn" style="padding:0.25rem 0.6rem;font-size:0.8rem;" data-act="teacher-reset-student-pw" data-id="${esc(s.id)}" data-name="${esc(s.name)}">🔄 重設為學號</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : '<p class="file-path">本課程目前尚未產生任何組長或副組長。學生登記或指派為組長／副組長後，即可於此處管理其登入密碼。</p>'
+    }
   </div>`;
 }
 
@@ -1517,18 +1578,25 @@ function rosterTable(c) {
     .concat(c.groups.map(g => `<option value="${g.id}" ${s.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`))
     .join('');
   return `<div class="table-wrap"><table class="roster">
-    <thead><tr><th>學號 ID</th><th>姓名 Name</th><th>組別 Group</th><th>組長 Leader</th><th>期末考調分</th><th></th></tr></thead>
+    <thead><tr><th>學號 ID</th><th>姓名 Name</th><th>組別 Group</th><th>組長 Leader</th><th>期末考調分</th><th>動作</th></tr></thead>
     <tbody>${c.students.map(s => {
       const g = c.groups.find(x => x.id === s.groupId);
       const adj = calcAdjustment(c, g, s);
+      const isLeadOrVice = s.isLeader || s.isVice;
       return `
       <tr>
         <td>${esc(s.id)}</td>
-        <td>${esc(s.name)}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}${s.isVice ? ' <span class="tag-inline">副組長</span>' : ''}</td>
+        <td>
+          ${esc(s.name)}${s.autoAssigned ? ' <span class="tag-inline auto">自動</span>' : ''}${s.isVice ? ' <span class="tag-inline">副組長</span>' : ''}
+          ${isLeadOrVice ? (s.hasCustomPassword ? ' <span title="已自訂密碼" style="cursor:help;font-size:0.75rem;">🔐</span>' : ' <span title="使用預設密碼（學號）" style="cursor:help;font-size:0.75rem;color:#94a3b8;">🔑</span>') : ''}
+        </td>
         <td><select data-act="assign-student" data-id="${esc(keyOf(s))}">${opts(s)}</select></td>
         <td><input type="checkbox" data-act="set-leader" data-id="${esc(keyOf(s))}" ${s.isLeader ? 'checked' : ''} ${s.groupId ? '' : 'disabled'}></td>
         <td>${scoreBadge(adj)}</td>
-        <td><button class="tab-btn" data-act="del-student" data-id="${esc(keyOf(s))}">刪除</button></td>
+        <td style="white-space:nowrap;">
+          ${isLeadOrVice ? `<button class="tab-btn" data-act="teacher-manage-student-pw" data-id="${esc(s.id)}" data-name="${esc(s.name)}" data-has-custom="${s.hasCustomPassword ? '1' : '0'}" title="協助修改或重設密碼" style="margin-right:0.35rem;">🔑 密碼</button>` : ''}
+          <button class="tab-btn" data-act="del-student" data-id="${esc(keyOf(s))}">刪除</button>
+        </td>
       </tr>`;
     }).join('')}
     </tbody></table></div>`;
@@ -1758,7 +1826,49 @@ function studentScreen() {
     </div>`;
   }
 
+  /* 組長／副組長皆可修改個人登入密碼 */
+  if (s.isLeader || s.isVice) {
+    html += studentPasswordPanel(s);
+  }
+
   return html + '</div>';
+}
+
+/* ===== 組長／副組長：個人密碼修改卡片 ===== */
+function studentPasswordPanel(s) {
+  return `
+  <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.15rem 1.25rem;background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+      <h3 style="margin:0;color:#1e293b;font-size:1.05rem;display:flex;align-items:center;gap:0.4rem;">
+        <span>🔑</span> 修改個人登入密碼 <small style="color:#64748b;font-weight:normal;">Change Password（Đổi mật khẩu）</small>
+      </h3>
+      <span class="status-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;font-size:0.8rem;">
+        ${s.hasCustomPassword ? '🔐 已自訂密碼' : 'ℹ️ 使用預設密碼（學號）'}
+      </span>
+    </div>
+    <p class="file-path" style="margin:0 0 0.85rem;color:#475569;">
+      擔任組長或副組長可在此修改個人登入密碼。預設密碼為您的學號。修改後下次登入請使用新密碼。若日後忘記密碼，可請授課老師於後台協助重設。（Mật khẩu mặc định là mã sinh viên. Nếu quên mật khẩu, hãy nhờ giáo viên đặt lại.）
+    </p>
+    <form data-act="change-student-password" class="form-row" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1rem;">
+      <div class="form-group" style="flex:1;min-width:180px;">
+        <label>目前密碼 Current Password</label>
+        <input type="password" name="current" placeholder="${s.hasCustomPassword ? '請輸入目前密碼' : '首次修改請輸入您的學號'}" required autocomplete="off">
+      </div>
+      <div class="form-group" style="flex:1;min-width:180px;">
+        <label>新密碼 New Password（至少 4 碼）</label>
+        <input type="password" name="next" minlength="4" placeholder="請輸入新密碼" required autocomplete="off">
+      </div>
+      <div class="form-group" style="flex:1;min-width:180px;">
+        <label>再次確認新密碼 Confirm</label>
+        <input type="password" name="confirm" minlength="4" placeholder="請再次輸入新密碼" required autocomplete="off">
+      </div>
+      <div class="form-group full" style="margin-top:0.25rem;">
+        <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.25rem;font-size:0.9rem;">
+          💾 儲存修改新密碼 Save Password
+        </button>
+      </div>
+    </form>
+  </div>`;
 }
 
 /* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
@@ -2138,8 +2248,27 @@ app.addEventListener('submit', e => {
   if (a === 'login-student') {
     const c = cur();
     if (!c) return alert('請先選擇課程 Select a course');
-    return act('login-student', { courseId: c.id, name: f.name.value.trim(), sid: f.sid.value.trim() },
+    const name = (f.name ? f.name.value : '').trim();
+    const password = (f.password ? f.password.value : (f.sid ? f.sid.value : '')).trim();
+    return act('login-student', { courseId: c.id, name, password },
       { after: () => { loginMode = null; } });
+  }
+  if (a === 'change-student-password') {
+    const current = (f.current ? f.current.value : '').trim();
+    const next = (f.next ? f.next.value : '').trim();
+    const confirm = (f.confirm ? f.confirm.value : '').trim();
+    if (next !== confirm) {
+      return alert('兩次輸入的新密碼不相符！\nPasswords do not match.');
+    }
+    if (next.length < 4) {
+      return alert('新密碼長度至少需 4 碼！\nPassword must be at least 4 characters.');
+    }
+    return act('change-student-password', { current, next }, {
+      after: () => {
+        alert('🎉 密碼已成功修改！下次登入請使用新密碼。\nPassword changed successfully.');
+        f.reset();
+      }
+    });
   }
   if (a === 'change-password') {
     const next = f.next.value;
@@ -2273,11 +2402,11 @@ app.addEventListener('click', e => {
     loginMode = 'student';
     render();
     const nameIn = document.querySelector('#login input[name="name"]');
-    const sidIn = document.querySelector('#login input[name="sid"]');
+    const pwIn = document.querySelector('#login input[name="password"]') || document.querySelector('#login input[name="sid"]');
     if (nameIn && btn.dataset.name) nameIn.value = btn.dataset.name;
-    if (sidIn) {
-      if (btn.dataset.id && !btn.dataset.id.includes('*')) sidIn.value = btn.dataset.id;
-      sidIn.focus();
+    if (pwIn) {
+      if (btn.dataset.id && !btn.dataset.id.includes('*')) pwIn.value = btn.dataset.id;
+      pwIn.focus();
     }
     document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
@@ -2448,6 +2577,76 @@ app.addEventListener('click', e => {
   if (a === 'drop') {
     if (!confirm('確定要將該組員移出？\n\n移出後該成員將釋出回到「未分配的成員名單」中。')) return;
     return act('drop', { studentId: id });
+  }
+  if (a === 'teacher-set-student-pw') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const sname = btn.dataset.name;
+    const newPw = prompt(`請輸入要為【${sname} (${sid})】設定的新密碼（至少 4 碼）：`, '');
+    if (newPw === null) return;
+    const trimmed = newPw.trim();
+    if (trimmed.length < 4) {
+      return alert('新密碼長度至少需 4 碼！\nPassword must be at least 4 characters.');
+    }
+    return act('teacher:change-student-password', {
+      courseId: c.id,
+      studentId: sid,
+      next: trimmed,
+      resetToDefault: false,
+    }, {
+      after: () => alert(`✅ 已成功為【${sname}】設定新密碼！\nPassword updated successfully.`),
+    });
+  }
+  if (a === 'teacher-reset-student-pw') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const sname = btn.dataset.name;
+    if (!confirm(`確定要將【${sname} (${sid})】的登入密碼重設回「預設學號 (${sid})」嗎？\nReset password back to student ID?`)) return;
+    return act('teacher:change-student-password', {
+      courseId: c.id,
+      studentId: sid,
+      resetToDefault: true,
+    }, {
+      after: () => alert(`✅ 已成功將【${sname}】的登入密碼重設為預設學號：${sid}\nPassword reset to student ID.`),
+    });
+  }
+  if (a === 'teacher-manage-student-pw') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const sname = btn.dataset.name;
+    const hasCustom = btn.dataset.hasCustom === '1';
+    const choice = prompt(
+      `【組長／副組長密碼管理】\n學生姓名：${sname}\n學號：${sid}\n目前密碼狀態：${hasCustom ? '🔐 已自訂密碼' : 'ℹ️ 使用預設學號'}\n\n請選擇要執行的操作：\n1. 輸入「1」：重設密碼回預設學號（${sid}）\n2. 輸入「2」：手動為該學生設定新密碼\n\n請輸入 1 或 2（按取消放棄）：`,
+      '1'
+    );
+    if (!choice) return;
+    if (choice.trim() === '1') {
+      if (!confirm(`確定要將【${sname} (${sid})】的登入密碼重設回「預設學號 (${sid})」嗎？`)) return;
+      return act('teacher:change-student-password', {
+        courseId: c.id,
+        studentId: sid,
+        resetToDefault: true,
+      }, {
+        after: () => alert(`✅ 已成功將【${sname}】的登入密碼重設為學號：${sid}`),
+      });
+    } else if (choice.trim() === '2') {
+      const newPw = prompt(`請輸入要為【${sname} (${sid})】設定的新密碼（至少 4 碼）：`, '');
+      if (newPw === null) return;
+      const trimmed = newPw.trim();
+      if (trimmed.length < 4) {
+        return alert('新密碼長度至少需 4 碼！');
+      }
+      return act('teacher:change-student-password', {
+        courseId: c.id,
+        studentId: sid,
+        next: trimmed,
+        resetToDefault: false,
+      }, {
+        after: () => alert(`✅ 已成功為【${sname}】設定新密碼！`),
+      });
+    } else {
+      alert('輸入無效，請輸入 1 或 2。');
+    }
   }
 });
 

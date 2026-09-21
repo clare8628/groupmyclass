@@ -58,8 +58,25 @@ export async function handleAction(request, env, db, body) {
   if (action === 'login-student') {
     const c = course(body.courseId);
     if (!c) return bad('課程不存在 Course not found', 404);
-    const s = c.students.find(x => x.name === String(body.name || '').trim() && x.id === String(body.sid || '').trim());
-    if (!s) return bad('姓名或學號不正確，或不在本課程修課名單中', 401);
+    const inputAccount = String(body.name || body.account || '').trim();
+    const inputPassword = String(body.password || body.sid || '').trim();
+    if (!inputAccount || !inputPassword) {
+      return bad('請輸入姓名或學號，以及密碼 Please enter account and password', 400);
+    }
+    // 先依學號或姓名尋找學生
+    const s = c.students.find(x => x.name === inputAccount || x.id === inputAccount);
+    if (!s) return bad('找不到該學生，或不在本課程修課名單中 Student not found in this course', 401);
+
+    // 驗證密碼：若有自訂密碼 hash 則比對雜湊；若尚未自訂則預設密碼為學號
+    let valid = false;
+    if (s.password_hash) {
+      valid = (await sha256(inputPassword)) === s.password_hash;
+    } else {
+      valid = inputPassword === s.id;
+    }
+    if (!valid) {
+      return bad('密碼錯誤 Wrong password（預設密碼為學號，若已修改請輸入新密碼；若忘記密碼請聯繫老師重設）', 401);
+    }
     const token = await makeToken(db, env, { role: 'student', id: s.id, courseId: c.id });
     return ok({ session: { role: 'student', id: s.id, courseId: c.id } }, { 'set-cookie': sessionCookie(token) });
   }
@@ -77,6 +94,39 @@ export async function handleAction(request, env, db, body) {
       await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
         .bind('teacher_password', await sha256(next)).run();
       return ok();
+    }
+    if (op === 'change-student-password') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在 Course not found', 404);
+      const studentId = String(body.studentId || '').trim();
+      const s = c.students.find(x => x.id === studentId);
+      if (!s) return bad('找不到該學生 Student not found', 404);
+      const resetToDefault = !!body.resetToDefault;
+      let newHash = '';
+      if (!resetToDefault) {
+        const next = String(body.next || '').trim();
+        if (next.length < 4) return bad('新密碼至少需 4 碼 Password must be at least 4 chars', 400);
+        newHash = await sha256(next);
+      }
+      await db.prepare('UPDATE students SET password_hash=? WHERE course_id=? AND id=?')
+        .bind(newHash, c.id, s.id).run();
+
+      const roleLabel = s.isLeader ? '組長' : s.isVice ? '副組長' : '學生';
+      const myGroup = s.groupId ? c.groups.find(g => g.id === s.groupId) : null;
+      const gName = myGroup ? `「${myGroup.name}」` : '';
+      await logActivity(db, {
+        courseId: c.id,
+        groupId: s.groupId || '',
+        groupName: myGroup ? myGroup.name : '',
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'password-reset',
+        targetId: s.id,
+        targetName: s.name,
+        detail: `老師將${gName}${roleLabel} ${s.name} (${s.id}) 的登入密碼${resetToDefault ? '重設為預設學號' : '修改為新自訂密碼'}`,
+      });
+      return ok({ studentId: s.id, hasCustomPassword: !resetToDefault });
     }
     if (op === 'save-course') {
       const exists = course(body.id);
@@ -627,6 +677,43 @@ export async function handleAction(request, env, db, body) {
 
   const myGroup = self.groupId ? c.groups.find(g => g.id === self.groupId) : null;
   const canEdit = canGroupLeaderEdit(c, myGroup);
+
+  if (action === 'change-student-password') {
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼 Leader or vice leader only', 403);
+    const current = String(body.current || '').trim();
+    const next = String(body.next || '').trim();
+    if (!current) return bad('請輸入目前密碼 Please enter current password', 400);
+    if (next.length < 4) return bad('新密碼長度至少需 4 碼 Password must be at least 4 characters', 400);
+
+    // 驗證目前密碼：若尚未修改過，預設密碼為學號
+    let currentValid = false;
+    if (self.password_hash) {
+      currentValid = (await sha256(current)) === self.password_hash;
+    } else {
+      currentValid = current === self.id;
+    }
+    if (!currentValid) return bad('目前密碼不正確 Incorrect current password（若首次修改，預設密碼為學號）', 401);
+
+    const newHash = await sha256(next);
+    await db.prepare('UPDATE students SET password_hash=? WHERE course_id=? AND id=?')
+      .bind(newHash, c.id, self.id).run();
+
+    const roleLabel = self.isLeader ? '組長' : '副組長';
+    const gName = myGroup ? `「${myGroup.name}」` : '';
+    await logActivity(db, {
+      courseId: c.id,
+      groupId: self.groupId || '',
+      groupName: myGroup ? myGroup.name : '',
+      operatorRole: self.isLeader ? 'leader' : 'vice',
+      operatorId: self.id,
+      operatorName: self.name,
+      actionType: 'password-change',
+      targetId: self.id,
+      targetName: self.name,
+      detail: `${roleLabel} ${self.name} (${self.id}) 修改個人登入密碼`,
+    });
+    return ok();
+  }
 
   if (action === 'claim-leader') {
     if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed', 403);

@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS students (
   auto_assigned INTEGER NOT NULL DEFAULT 0,
   peer_penalty  INTEGER NOT NULL DEFAULT 0,  -- 加分 (0 到 10)
   peer_comment  TEXT NOT NULL DEFAULT '',    -- 加分原因與貢獻說明
+  password_hash TEXT NOT NULL DEFAULT '',    -- 自訂密碼 SHA-256 雜湊，空白表示使用預設學號
   seq           INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (course_id, id)
 );

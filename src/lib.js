@@ -106,6 +106,9 @@ async function ensureGroupSchema(db) {
     await db.prepare('ALTER TABLE students ADD COLUMN peer_comment TEXT NOT NULL DEFAULT \'\'').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE students ADD COLUMN password_hash TEXT NOT NULL DEFAULT \'\'').run();
+  } catch (_) {}
+  try {
     await db.prepare('CREATE TABLE IF NOT EXISTS group_snapshots (course_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, created_at INTEGER NOT NULL)').run();
   } catch (_) {}
   try {
@@ -389,6 +392,8 @@ export async function loadState(db) {
       isLeader: !!s.is_leader, isVice: !!s.is_vice, autoAssigned: !!s.auto_assigned,
       peerPenalty: Number(s.peer_penalty) || 0,
       peerComment: s.peer_comment || '',
+      password_hash: s.password_hash || '',
+      hasCustomPassword: !!s.password_hash,
     }));
 
     // 計算每位同學的調分結果
@@ -568,6 +573,10 @@ export async function publicize(db, env, courses, session) {
       const studentName = sid => (c.students.find(s => s.id === sid) || {}).name || '';
       return {
         ...c,
+        students: c.students.map(s => {
+          const { password_hash, ...rest } = s;
+          return { ...rest, hasCustomPassword: !!password_hash };
+        }),
         logs: logsByCourse[c.id] || [],
         attendanceSessions: c.attendanceSessions || [],
         attendanceRecords: (c.attendanceRecords || []).map(r => {
@@ -595,13 +604,15 @@ export async function publicize(db, env, courses, session) {
       const mine = selfId && s.id === selfId && c.id === selfCourse;
       const ref = await studentRef(db, env, c.id, s.id, hmacKey);
       refById[s.id] = ref;
+      const { password_hash, ...rest } = s;
       students.push({
-        ...s,
+        ...rest,
         id: mine ? s.id : maskId(s.id),
         ref,
         peerPenalty: 0,
         peerComment: '',
         adjustment: null,
+        hasCustomPassword: !!password_hash,
       });
     }
     const isMine = !!selfId && c.id === selfCourse;
