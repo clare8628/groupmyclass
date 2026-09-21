@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.45';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.46';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -157,8 +157,31 @@ function canGroupLeaderEdit(c, g) {
 /* ===== 點名 Attendance（Điểm danh）helpers ===== */
 const todayDateStr = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 
+/* 判斷點名時段是否為一般日常點名 */
+function isDailySession(s) {
+  if (!s) return false;
+  if (s.isDaily) return true;
+  if (s.id && String(s.id).startsWith('daily-')) return true;
+  if (s.name === '一般日常點名' || s.name === '日常點名') return true;
+  return false;
+}
+
 function attendanceSessions(c) {
-  return (c.attendanceSessions || []).slice().sort((a, b) =>
+  const today = todayDateStr();
+  const list = (c.attendanceSessions || []).slice();
+  const hasTodayDaily = list.some(x => x.date === today && isDailySession(x));
+  if (!hasTodayDaily) {
+    list.unshift({
+      id: `daily-${today}`,
+      courseId: c.id,
+      date: today,
+      timeSlot: '',
+      name: '一般日常點名',
+      isDaily: true,
+      createdAt: 0,
+    });
+  }
+  return list.sort((a, b) =>
     a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0));
 }
 /* 老師視角的紀錄沒有 ref（用真實學號），這裡統一補上 ref 別名，讓組長面板可共用同一套比對邏輯 */
@@ -176,7 +199,12 @@ function isAttendanceEditable(c, session, groupId) {
   if (session.date === todayDateStr()) return true;
   return !!attendanceUnlockFor(c, session.id, groupId);
 }
-const attendanceSessionLabel = s => [s.date, s.timeSlot, s.name].filter(Boolean).join(' · ');
+const attendanceSessionLabel = s => {
+  if (!s) return '';
+  const isDaily = isDailySession(s);
+  const namePart = isDaily ? '一般日常點名' : s.name;
+  return [s.date, s.timeSlot, namePart].filter(Boolean).join(' · ');
+};
 /* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄），並列出尚未被點名的組員（含組長／副組長） */
 function attendanceGroupProgress(c, sessionId) {
   const recs = attendanceRecordsFor(c, sessionId).filter(r => r.status === 'present' || r.status === 'absent');
@@ -1255,25 +1283,41 @@ function teacherAttendanceBlock(c) {
   const today = todayDateStr();
 
   /* ---- 1. 點名時段設定 ---- */
+  const noticeBanner = `
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1.15rem;font-size:0.88rem;color:#1e3a8a;line-height:1.5;">
+    💡 <b>一般日常點名已自動啟用</b>：每逢上課當日，系統會自動為組長或副組長開放該日之「一般日常點名」，登入即可直接逐一確認組員出缺席，老師<b>無需</b>事先在此新增日常時段。<br>
+    📌 <b>重要集會／額外點名</b>：若遇重要集會、系週會、成果展示或期中報告，老師可使用下方表單新增點名時段並<b>加註點名名稱</b>，組長或副組長將於前台專區進行額外點名。超過當天需老師於操作欄開放補登權限才能修改。
+  </div>`;
+
   const sessionForm = `
-    <form data-act="save-attendance-session" class="form-row">
+    <form data-act="save-attendance-session" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:1rem;">
+      <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">
+        ${editing ? '✏️ 編輯點名時段 Edit Session' : '➕ 新增重要集會／額外點名時段 Add Special Session'}
+      </div>
       <div class="form-group"><label>點名日期 Date（Ngày điểm danh）</label><input type="date" name="date" value="${esc(editing ? editing.date : today)}" required></div>
       <div class="form-group"><label>點名時段 Time slot（Khung giờ）</label><input name="timeSlot" value="${esc(editing ? editing.timeSlot : '')}" placeholder="例如：第3-4節"></div>
-      <div class="form-group"><label>點名名稱（可不填）Name（Tên buổi, có thể để trống）</label><input name="name" value="${esc(editing ? editing.name : '')}" placeholder="例如：期中小組會議"></div>
+      <div class="form-group"><label>點名名稱／重要集會備註 Name（Tên buổi / Sự kiện）</label><input name="name" value="${esc(editing ? editing.name : '')}" placeholder="例如：系週會、重要集會、期中專案報告"></div>
       <div class="form-group full">
-        <button class="btn btn-primary" type="submit">${editing ? '儲存修改 Save' : '新增點名時段 Add session'}</button>
+        <button class="btn btn-primary" type="submit">${editing ? '儲存修改 Save' : '新增重要集會時段 Add session'}</button>
         ${editing ? `<button class="btn btn-secondary" type="button" data-act="cancel-edit-attendance-session">取消編輯 Cancel</button>` : ''}
       </div>
     </form>`;
 
   const sessionRows = sessions.map(s => {
     const isToday = s.date === today;
+    const isDaily = isDailySession(s);
     const allUnlock = (c.attendanceUnlocks || []).find(u => u.sessionId === s.id && u.groupId === '');
+    const typeBadge = isDaily
+      ? '<span class="status-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;font-weight:600;">📅 一般日常</span>'
+      : '<span class="status-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;font-weight:600;">📌 重要集會</span>';
+    const displayName = isDaily ? (s.name || '一般日常點名') : (s.name ? esc(s.name) : '<span style="color:#94a3b8;">（未命名）</span>');
+    const delLabel = isDaily ? '🗑️ 清除點名' : '🗑️ 刪除時段';
     return `
     <tr>
       <td><b>${esc(s.date)}</b>${isToday ? ' <span class="status-badge can-edit">今日</span>' : ''}</td>
+      <td>${typeBadge}</td>
       <td>${esc(s.timeSlot) || '<span style="color:#94a3b8;">-</span>'}</td>
-      <td>${esc(s.name) || '<span style="color:#94a3b8;">-</span>'}</td>
+      <td><b>${displayName}</b></td>
       <td>
         ${isToday
           ? '<span class="status-badge can-edit">當日開放編輯 Open</span>'
@@ -1284,7 +1328,7 @@ function teacherAttendanceBlock(c) {
       <td style="min-width:260px;">
         <div style="display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;">
           <button class="tab-btn" data-act="edit-attendance-session" data-id="${s.id}">✏️ 編輯</button>
-          <button class="tab-btn" data-act="del-attendance-session" data-id="${s.id}">🗑️ 刪除</button>
+          <button class="tab-btn" data-act="del-attendance-session" data-id="${s.id}">${delLabel}</button>
           ${!isToday ? `
             <button class="tab-btn" data-act="attendance-unlock-all" data-id="${s.id}" data-allow="1">🔓 開放全部補登</button>
             ${allUnlock ? `<button class="tab-btn" data-act="attendance-unlock-all" data-id="${s.id}" data-allow="0">🔒 關閉全部補登</button>` : ''}
@@ -1351,12 +1395,12 @@ function teacherAttendanceBlock(c) {
   return `
   <div class="teacher-section">
     <h2>📋 點名管理 Attendance <small>${esc(courseLabel(c))} · Điểm danh</small></h2>
-    <p class="file-path">設定點名的日期與時段（名稱可不填）後，該組組長或副組長即可於當天執行點名。超過當天需老師於下方開放補登權限才能修改。</p>
+    ${noticeBanner}
     ${sessionForm}
     ${sessions.length ? `
     <div class="table-wrap" style="margin-top:1rem;">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>日期</th><th>時段</th><th>名稱</th><th>狀態</th><th>操作</th></tr></thead>
+        <thead><tr><th>日期</th><th>類型</th><th>時段</th><th>點名名稱</th><th>狀態</th><th>操作</th></tr></thead>
         <tbody>${sessionRows}</tbody>
       </table>
     </div>` : '<p class="file-path">尚未設定任何點名時段。</p>'}
@@ -1719,73 +1763,188 @@ function studentScreen() {
 
 /* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
 function attendanceLeaderPanel(c, g, s, mates) {
-  const sessions = attendanceSessions(c).slice(0, 15);
-  if (!sessions.length) {
+  const sessions = attendanceSessions(c);
+  const today = todayDateStr();
+
+  // 1. 取得或準備當日「一般日常點名」時段
+  const todayDaily = sessions.find(x => x.date === today && isDailySession(x)) || {
+    id: `daily-${today}`,
+    courseId: c.id,
+    date: today,
+    timeSlot: '',
+    name: '一般日常點名',
+    isDaily: true,
+  };
+
+  // 當日日常點名紀錄與狀態
+  const dailyRecs = attendanceRecordsFor(c, todayDaily.id).filter(r => r.groupId === g.id);
+  const dailyRecByRef = {};
+  dailyRecs.forEach(r => { dailyRecByRef[r.ref] = r.status; });
+  const dailyMarkedMates = mates.filter(m => dailyRecByRef[keyOf(m)] === 'present' || dailyRecByRef[keyOf(m)] === 'absent');
+  const dailyCompleted = mates.length > 0 && dailyMarkedMates.length === mates.length;
+  const dailyAbsentCount = mates.filter(m => dailyRecByRef[keyOf(m)] === 'absent').length;
+  const dailyPresentCount = mates.filter(m => dailyRecByRef[keyOf(m)] === 'present').length;
+
+  const renderMemberRows = (recMap) => mates.map(m => {
+    const key = keyOf(m);
+    const st = recMap[key] || '';
     return `
-    <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#eff6ff;border:2px solid #bfdbfe;border-radius:10px;">
-      <h3 style="margin:0;color:#1e3a8a;">📋 點名 Attendance（Điểm danh）</h3>
-      <p class="file-path" style="margin-top:0.5rem;">老師尚未設定任何點名時段。Teacher has not set up any attendance session yet.（Giáo viên chưa thiết lập buổi điểm danh nào）</p>
-    </div>`;
-  }
-
-  const rows = sessions.map(session => {
-    const editable = isAttendanceEditable(c, session, g.id);
-    const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
-    const recByRef = {};
-    recs.forEach(r => { recByRef[r.ref] = r.status; });
-    const label = attendanceSessionLabel(session) || session.date;
-    const isToday = session.date === todayDateStr();
-
-    if (editable) {
-      return `
-      <form data-act="mark-attendance" data-session="${session.id}" data-group="${g.id}" class="attendance-mark-form" style="background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;margin-bottom:0.75rem;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.6rem;">
-          <b>${esc(label)}</b>
-          <span class="status-badge can-edit">${isToday ? '今日可編輯 Today（Hôm nay）' : '老師已開放補登 Unlocked（Đã mở）'}</span>
-        </div>
-        <p class="file-path" style="margin:0 0 0.5rem;">請逐一點選每位組員之出席或缺席，未點選者將視為「尚未點名」。Please select present/absent for each member individually（Vui lòng chọn cho từng thành viên）。</p>
-        <div class="attendance-mark-list">
-          ${mates.map(m => {
-            const key = keyOf(m);
-            const st = recByRef[key] || '';
-            return `
-            <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.3rem 0;border-bottom:1px dashed #e2e8f0;">
-              <span>${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 👑組長（Trưởng nhóm）' : m.isVice ? ' ⭐副組長（Phó nhóm）' : ''}${!st ? ' <span class="status-badge under-threshold">尚未點名（Chưa điểm danh）</span>' : ''}</span>
-              <span style="display:flex;gap:0.75rem;font-size:0.85rem;">
-                <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''}> 出席 Present（Có mặt）</label>
-                <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''}> 缺席 Absent（Vắng mặt）</label>
-              </span>
-            </div>`;
-          }).join('')}
-        </div>
-        <button class="btn btn-primary" type="submit" style="margin-top:0.75rem;padding:0.4rem 1.1rem;font-size:0.88rem;">送出點名 Submit（Gửi điểm danh）</button>
-      </form>`;
-    }
-
-    const absentNames = recs.filter(r => r.status === 'absent').map(r => {
-      const m = mates.find(x => x.ref === r.ref);
-      return m ? `${m.name} (${m.id})` : r.ref;
-    });
-    return `
-    <div class="attendance-session-row" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.6rem;font-size:0.88rem;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
-        <b>${esc(label)}</b>
-        <span class="status-badge is-locked">已鎖定 Locked（Đã khóa）</span>
-      </div>
-      <div style="margin-top:0.3rem;color:#475569;">
-        ${!recs.length ? '尚未點名 Not taken（Chưa điểm danh）'
-          : absentNames.length ? `缺席 Absent（Vắng mặt）：${absentNames.map(esc).join('、')}`
-          : '✅ 全員到齊 All present（Đầy đủ）'}
-      </div>
-      <div style="margin-top:0.25rem;font-size:0.78rem;color:#94a3b8;">如需補登請聯絡老師開放權限 Ask teacher to unlock（Liên hệ giáo viên để mở lại）</div>
+    <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.45rem 0.25rem;border-bottom:1px dashed #e2e8f0;">
+      <span style="font-size:0.92rem;">
+        <b>${esc(m.name)}</b> <span style="color:#64748b;font-size:0.88rem;">(${esc(m.id)})</span>
+        ${m.isLeader ? ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">👑組長</span>' : m.isVice ? ' <span class="status-badge" style="background:#f0fdf4;color:#166534;font-size:0.75rem;">⭐副組長</span>' : ''}
+        ${!st ? ' <span class="status-badge under-threshold" style="font-size:0.75rem;">尚未確認</span>' : ''}
+      </span>
+      <span style="display:flex;gap:1.25rem;font-size:0.88rem;">
+        <label style="cursor:pointer;display:inline-flex;align-items:center;gap:0.3rem;">
+          <input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''} required>
+          <span style="color:#166534;font-weight:${st === 'present' ? '700' : 'normal'};">出席 Present（Có mặt）</span>
+        </label>
+        <label style="cursor:pointer;display:inline-flex;align-items:center;gap:0.3rem;">
+          <input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''} required>
+          <span style="color:#dc2626;font-weight:${st === 'absent' ? '700' : 'normal'};">缺席 Absent（Vắng mặt）</span>
+        </label>
+      </span>
     </div>`;
   }).join('');
 
+  // 區塊 1：今日一般日常點名卡片
+  const dailyCard = `
+  <div style="background:#ffffff;border:2px solid #2563eb;border-radius:10px;padding:1.15rem 1.25rem;margin-bottom:1.25rem;box-shadow:0 2px 4px rgba(37,99,235,0.06);">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+      <div style="display:flex;align-items:center;gap:0.5rem;">
+        <span style="font-size:1.35rem;">📅</span>
+        <h4 style="margin:0;font-size:1.1rem;color:#1e3a8a;">
+          今日一般日常點名 Daily Attendance <small style="font-weight:normal;color:#64748b;">（Điểm danh hàng ngày hôm nay）</small>
+        </h4>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+        <span class="status-badge" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600;">日期：${esc(today)}</span>
+        ${dailyCompleted
+          ? `<span class="status-badge can-edit" style="font-size:0.85rem;">✅ 今日點名已完成（出席 ${dailyPresentCount} / 缺席 ${dailyAbsentCount}）</span>`
+          : dailyMarkedMates.length > 0
+          ? `<span class="status-badge under-threshold" style="font-size:0.85rem;">⚠️ 點名進行中（已確認 ${dailyMarkedMates.length}/${mates.length} 人）</span>`
+          : `<span class="status-badge under-threshold" style="font-size:0.85rem;">⏳ 今日尚未點名 Not Yet Taken</span>`}
+      </div>
+    </div>
+    <div style="background:#f8fafc;border-left:4px solid #2563eb;padding:0.6rem 0.85rem;margin-bottom:0.85rem;font-size:0.85rem;color:#334155;border-radius:0 6px 6px 0;">
+      💡 <b>一般日常點名無需老師在後台建立時段</b>。請組長或副組長<b>逐一確認</b>每位組員今天是否出席或缺席，確認後點選下方送出（當日可隨時重新更新修正）。<br>
+      <small style="color:#64748b;">(Không cần giáo viên tạo trước. Trưởng/Phó nhóm vui lòng xác nhận từng thành viên có mặt hoặc vắng mặt hôm nay.)</small>
+    </div>
+    <form data-act="mark-attendance" data-session="${todayDaily.id}" data-group="${g.id}" class="attendance-mark-form">
+      <div class="attendance-mark-list">
+        ${renderMemberRows(dailyRecByRef)}
+      </div>
+      <div style="margin-top:0.9rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;">
+        <span style="font-size:0.82rem;color:#64748b;">※ 請逐一為每位組員勾選出缺席後送出（Vui lòng chọn đủ cho tất cả thành viên）。</span>
+        <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.92rem;">
+          ${dailyMarkedMates.length > 0 ? '🔄 重新更新今日日常點名 Update Daily Attendance' : '📋 送出今日日常點名 Submit Daily Attendance'}
+        </button>
+      </div>
+    </form>
+  </div>`;
+
+  // 2. 重要集會與額外點名時段（排除今日一般日常點名後的其餘時段）
+  const specialSessions = sessions.filter(x => x.id !== todayDaily.id);
+  const activeSpecialSessions = specialSessions.filter(x => isAttendanceEditable(c, x, g.id));
+  const historySessions = specialSessions.filter(x => !isAttendanceEditable(c, x, g.id)).slice(0, 10);
+
+  // 區塊 2：重要集會與額外點名時段
+  let specialCard = '';
+  if (activeSpecialSessions.length > 0) {
+    specialCard = `
+    <div style="background:#ffffff;border:2px solid #f59e0b;border-radius:10px;padding:1.15rem 1.25rem;margin-bottom:1.25rem;box-shadow:0 2px 4px rgba(245,158,11,0.06);">
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+        <span style="font-size:1.35rem;">📌</span>
+        <h4 style="margin:0;font-size:1.1rem;color:#b45309;">
+          重要集會與額外點名 Special Sessions &amp; Assemblies <small style="font-weight:normal;color:#78350f;">（Điểm danh sự kiện / tập trung quan trọng）</small>
+        </h4>
+      </div>
+      <p class="file-path" style="margin:0 0 0.75rem;">老師已在後台指定重要集會或額外點名時段，請組長或副組長逐一確認點名：</p>
+      ${activeSpecialSessions.map(session => {
+        const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
+        const recByRef = {};
+        recs.forEach(r => { recByRef[r.ref] = r.status; });
+        const label = attendanceSessionLabel(session) || session.date;
+        const isToday = session.date === today;
+        const marked = mates.filter(m => recByRef[keyOf(m)] === 'present' || recByRef[keyOf(m)] === 'absent');
+        const done = mates.length > 0 && marked.length === mates.length;
+        const absents = mates.filter(m => recByRef[keyOf(m)] === 'absent').length;
+        const presents = mates.filter(m => recByRef[keyOf(m)] === 'present').length;
+        return `
+        <div style="border:1px solid #fed7aa;background:#fffaf5;border-radius:8px;padding:0.9rem 1rem;margin-bottom:0.85rem;">
+          <form data-act="mark-attendance" data-session="${session.id}" data-group="${g.id}" class="attendance-mark-form">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.6rem;">
+              <b style="font-size:0.98rem;color:#9a3412;">${esc(label)}</b>
+              <div style="display:flex;align-items:center;gap:0.4rem;">
+                <span class="status-badge can-edit">${isToday ? '今日可編輯 Today' : '老師已開放補登 Unlocked'}</span>
+                ${done ? `<span class="status-badge can-edit">✅ 已完成（出席 ${presents} / 缺席 ${absents}）</span>` : ''}
+              </div>
+            </div>
+            <div class="attendance-mark-list">
+              ${renderMemberRows(recByRef)}
+            </div>
+            <div style="margin-top:0.75rem;text-align:right;">
+              <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.2rem;font-size:0.9rem;">
+                ${marked.length > 0 ? '🔄 重新更新此時段點名 Update' : '📋 送出重要集會點名 Submit'}
+              </button>
+            </div>
+          </form>
+        </div>`;
+      }).join('')}
+    </div>`;
+  } else {
+    specialCard = `
+    <div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.86rem;color:#92400e;">
+      📌 <b>重要集會與額外點名時段</b>：目前無老師設定的特殊集會點名時段。若遇系週會、專案評審或重要集會，老師將於後台加註名稱並新增時段，屆時將在此處開放額外點名。
+    </div>`;
+  }
+
+  // 區塊 3：歷史點名紀錄
+  let historySection = '';
+  if (historySessions.length > 0) {
+    historySection = `
+    <div style="margin-top:1.25rem;">
+      <h5 style="margin:0 0 0.5rem;color:#475569;font-size:0.95rem;">📜 歷史點名紀錄 Past Attendance Records（Lịch sử điểm danh）</h5>
+      ${historySessions.map(session => {
+        const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
+        const label = attendanceSessionLabel(session) || session.date;
+        const absentNames = recs.filter(r => r.status === 'absent').map(r => {
+          const m = mates.find(x => x.ref === r.ref);
+          return m ? `${m.name} (${m.id})` : r.ref;
+        });
+        const isDaily = isDailySession(session);
+        return `
+        <div class="attendance-session-row" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.65rem 0.9rem;margin-bottom:0.5rem;font-size:0.86rem;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+            <span>
+              <b>${esc(label)}</b>
+              ${isDaily ? ' <span class="status-badge" style="background:#e0f2fe;color:#0369a1;font-size:0.75rem;">日常點名</span>' : ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">重要集會</span>'}
+            </span>
+            <span class="status-badge is-locked">已鎖定 Locked</span>
+          </div>
+          <div style="margin-top:0.25rem;color:#475569;">
+            ${!recs.length ? '尚未點名 Not taken（Chưa điểm danh）'
+              : absentNames.length ? `缺席 Absent（Vắng mặt）：${absentNames.map(esc).join('、')}`
+              : '✅ 全員到齊 All present（Đầy đủ）'}
+          </div>
+          <div style="margin-top:0.2rem;font-size:0.76rem;color:#94a3b8;">如需補登請聯絡老師開放權限 Ask teacher to unlock（Liên hệ giáo viên để mở lại）</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
   return `
-  <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#eff6ff;border:2px solid #bfdbfe;border-radius:10px;">
-    <h3 style="margin:0 0 0.75rem;color:#1e3a8a;">📋 點名 Attendance（Điểm danh）</h3>
-    <p class="file-path" style="margin:0 0 0.75rem;">組長 Leader（Trưởng nhóm）或副組長 Vice leader（Phó nhóm）可於當天為本組組員 Members（Thành viên）點名；超過當天則需老師開放補登權限。</p>
-    ${rows}
+  <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;">
+    <h3 style="margin:0 0 0.5rem;color:#1e3a8a;display:flex;align-items:center;gap:0.4rem;">
+      <span>📋</span> 點名面板 Attendance <small style="color:#64748b;font-weight:normal;">Điểm danh</small>
+    </h3>
+    <p class="file-path" style="margin:0 0 1rem;">
+      組長 Leader（Trưởng nhóm）或副組長 Vice leader（Phó nhóm）可於當天直接進行<b>一般日常點名</b>；若遇<b>重要集會</b>，亦可於下方專區進行額外點名。超過當天需老師開放補登權限。
+    </p>
+    ${dailyCard}
+    ${specialCard}
+    ${historySection}
   </div>`;
 }
 
@@ -2075,12 +2234,13 @@ app.addEventListener('submit', e => {
     const mates = members(c, groupId);
     const sessionId = f.dataset.session;
     const fd = new FormData(f);
+    const missing = mates.filter(m => !fd.get(`att_${keyOf(m)}`));
+    if (missing.length > 0) {
+      return alert(`尚有 ${missing.length} 位組員尚未確認出缺席，請組長／副組長逐一確認每位組員是否出席或缺席：\n${missing.map(m => m.name + ' (' + m.id + ')').join('、')}\n\n(Vui lòng xác nhận riêng cho tất cả thành viên)`);
+    }
     const records = mates
       .map(m => ({ studentId: keyOf(m), status: fd.get(`att_${keyOf(m)}`) }))
       .filter(r => r.status === 'present' || r.status === 'absent');
-    if (!records.length) {
-      return alert('請至少為一位組員點選出席或缺席 Please mark at least one member（Vui lòng chọn ít nhất một thành viên）');
-    }
     return act('mark-attendance', { sessionId, groupId, records },
       { after: () => alert('點名已送出 Attendance submitted（Đã gửi điểm danh）') });
   }

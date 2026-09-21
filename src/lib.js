@@ -267,6 +267,15 @@ export function attendanceUnlockFor(unlocks, sessionId, groupId) {
     && (!u.deadline || parseDate(u.deadline) > now)) || null;
 }
 
+/* 判斷點名時段是否為一般日常點名 */
+export function isDailySession(s) {
+  if (!s) return false;
+  if (s.isDaily) return true;
+  if (s.id && String(s.id).startsWith('daily-')) return true;
+  if (s.name === '一般日常點名' || s.name === '日常點名') return true;
+  return false;
+}
+
 /* 判斷組長／副組長目前是否可編輯某點名時段之紀錄：
    當天可自由編輯；超過當天則需老師針對該時段（或該組）開放補登權限 */
 export function isAttendanceEditable(session, unlocks, groupId) {
@@ -404,6 +413,18 @@ export async function loadState(db) {
     courseObj.attendanceSessions = (attSessions.results || []).filter(x => x.course_id === c.id).map(x => ({
       id: x.id, date: x.date || '', timeSlot: x.time_slot || '', name: x.name || '', createdAt: x.created_at,
     }));
+    const today = todayDateStr();
+    const hasTodayDaily = courseObj.attendanceSessions.some(x => x.date === today && isDailySession(x));
+    if (!hasTodayDaily) {
+      courseObj.attendanceSessions.unshift({
+        id: `daily-${today}`,
+        date: today,
+        timeSlot: '',
+        name: '一般日常點名',
+        isDaily: true,
+        createdAt: 0,
+      });
+    }
     courseObj.attendanceRecords = (attRecords.results || []).filter(x => x.course_id === c.id).map(x => ({
       sessionId: x.session_id, studentId: x.student_id, groupId: x.group_id || '', status: x.status,
       markedById: x.marked_by_id || '', markedByName: x.marked_by_name || '',

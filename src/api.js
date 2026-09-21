@@ -3,8 +3,19 @@ import {
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
+  isDailySession, todayDateStr,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
+
+/* 確保點名時段寫入資料庫（用於日常點名自動建立或補登驗證） */
+async function ensureSessionInDb(db, courseId, s) {
+  if (!s) return;
+  const isDaily = isDailySession(s);
+  await db.prepare(`
+    INSERT OR IGNORE INTO attendance_sessions (id, course_id, date, time_slot, name, created_at)
+    VALUES (?,?,?,?,?,?)
+  `).bind(s.id, courseId, s.date, s.timeSlot || '', s.name || (isDaily ? '一般日常點名' : ''), s.createdAt || Date.now()).run();
+}
 
 /* GET /api/state — 公開讀取全部課程／名單／分組 */
 export async function handleState(request, env, db) {
@@ -473,20 +484,20 @@ export async function handleAction(request, env, db, body) {
       const name = String(body.name || '').trim();
       const existing = body.id && (c.attendanceSessions || []).find(x => x.id === body.id);
       const id = existing ? existing.id : ('as' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
-      if (existing) {
-        await db.prepare('UPDATE attendance_sessions SET date=?, time_slot=?, name=? WHERE course_id=? AND id=?')
-          .bind(date, timeSlot, name, c.id, id).run();
-      } else {
-        await db.prepare('INSERT INTO attendance_sessions (id, course_id, date, time_slot, name, created_at) VALUES (?,?,?,?,?,?)')
-          .bind(id, c.id, date, timeSlot, name, Date.now()).run();
-      }
+      await db.prepare(`
+        INSERT INTO attendance_sessions (id, course_id, date, time_slot, name, created_at)
+        VALUES (?,?,?,?,?,?)
+        ON CONFLICT(course_id, id) DO UPDATE SET date=excluded.date, time_slot=excluded.time_slot, name=excluded.name
+      `).bind(id, c.id, date, timeSlot, name, Date.now()).run();
+      const isDaily = isDailySession({ id, name });
+      const label = `${date}${timeSlot ? ` ${timeSlot}` : ''}${name ? ` ${name}` : (isDaily ? ' 一般日常點名' : '')}`;
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
         operatorId: 'teacher',
         operatorName: '老師',
         actionType: 'attendance-session-save',
-        detail: `老師${existing ? '修改' : '新增'}點名時段「${date}${timeSlot ? ` ${timeSlot}` : ''}${name ? ` ${name}` : ''}」`,
+        detail: `老師${existing ? '修改' : '新增'}點名時段「${label}」`,
       });
       return ok({ sessionId: id });
     }
@@ -495,9 +506,11 @@ export async function handleAction(request, env, db, body) {
       if (!c) return bad('課程不存在', 404);
       const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
       if (!s) return bad('點名時段不存在', 404);
+      const isDaily = isDailySession(s);
       await db.batch([
         db.prepare('DELETE FROM attendance_records WHERE course_id=? AND session_id=?').bind(c.id, s.id),
         db.prepare('DELETE FROM attendance_unlocks WHERE course_id=? AND session_id=?').bind(c.id, s.id),
+        db.prepare('DELETE FROM attendance_delegates WHERE course_id=? AND session_id=?').bind(c.id, s.id),
         db.prepare('DELETE FROM attendance_sessions WHERE course_id=? AND id=?').bind(c.id, s.id),
         makeLogStmt(db, {
           courseId: c.id,
@@ -505,7 +518,7 @@ export async function handleAction(request, env, db, body) {
           operatorId: 'teacher',
           operatorName: '老師',
           actionType: 'attendance-session-delete',
-          detail: `老師刪除點名時段「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${s.name ? ` ${s.name}` : ''}」及其所有點名紀錄`,
+          detail: `老師刪除點名時段「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${s.name ? ` ${s.name}` : (isDaily ? ' 一般日常點名' : '')}」及其所有點名紀錄`,
         }),
       ]);
       return ok();
@@ -515,6 +528,7 @@ export async function handleAction(request, env, db, body) {
       if (!c) return bad('課程不存在', 404);
       const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
       if (!s) return bad('點名時段不存在', 404);
+      await ensureSessionInDb(db, c.id, s);
       const groupId = body.groupId ? String(body.groupId) : '';
       const g = groupId ? c.groups.find(x => x.id === groupId) : null;
       const scopeLabel = groupId ? `「${g ? g.name : groupId}」` : '全部組別';
@@ -552,6 +566,7 @@ export async function handleAction(request, env, db, body) {
       if (!c) return bad('課程不存在', 404);
       const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
       if (!s) return bad('點名時段不存在', 404);
+      await ensureSessionInDb(db, c.id, s);
       const groupId = String(body.groupId || '');
       const g = c.groups.find(x => x.id === groupId);
       if (!g) return bad('組別不存在', 404);
@@ -729,7 +744,11 @@ export async function handleAction(request, env, db, body) {
   }
   if (action === 'mark-attendance') {
     if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only', 403);
-    const session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+    const today = todayDateStr();
+    let session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+    if (!session && (body.sessionId === `daily-${today}` || body.sessionId === 'daily')) {
+      session = { id: `daily-${today}`, courseId: c.id, date: today, timeSlot: '', name: '一般日常點名', isDaily: true, createdAt: Date.now() };
+    }
     if (!session) return bad('點名時段不存在', 404);
 
     const targetGroupId = body.groupId ? String(body.groupId) : self.groupId;
@@ -744,6 +763,9 @@ export async function handleAction(request, env, db, body) {
       return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock', 403);
     }
 
+    // 確保點名時段已持久化至資料庫（特別是當日自動生成的日常點名時段）
+    await ensureSessionInDb(db, c.id, session);
+
     const g = c.groups.find(x => x.id === targetGroupId);
     const gName = g ? g.name : '';
     const selfGroup = c.groups.find(x => x.id === self.groupId);
@@ -755,7 +777,10 @@ export async function handleAction(request, env, db, body) {
     const now = Date.now();
     const roleLabel = self.isLeader ? '組長' : '副組長';
     const delegateNote = isDelegate ? `（跨組代理，原屬「${selfGroup ? selfGroup.name : ''}」）` : '';
-    const sessionLabel = `${session.date}${session.timeSlot ? ` ${session.timeSlot}` : ''}${session.name ? `「${session.name}」` : ''}`;
+    const isDaily = isDailySession(session);
+    const sessionLabel = isDaily
+      ? `${session.date}「一般日常點名」`
+      : `${session.date}${session.timeSlot ? ` ${session.timeSlot}` : ''}${session.name ? `「${session.name}」` : ''}`;
     const stmts = [];
     for (const rec of (Array.isArray(body.records) ? body.records : [])) {
       const t = await resolveStudent(db, env, c, rec.studentId);
