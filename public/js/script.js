@@ -22,9 +22,12 @@ let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老�
 let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
 let logSearchText = '';       // 異動日誌搜尋關鍵字
 let attendanceEditingId = null;     // 後台目前正在編輯的點名時段 id（null＝新增模式）
-let attendanceStatScope = 'date';   // 缺席統計範圍：'date'（依日期）| 'all'（整學期）
+let attendanceStatScope = 'all';    // 老師後台缺席統計範圍：預設 'all'（整學期）| 'date'（依日期）
+let publicAttendanceStatScope = 'all'; // 前台缺席統計範圍：預設 'all'（整學期）| 'date'（依日期）
+let leaderAttendanceStatScope = 'all'; // 組長後台缺席統計範圍：預設 'all'（整學期）| 'date'（依日期）
 let attendanceStatDate = '';        // 缺席統計所選日期，預設為今天
 let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
+let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentName, studentId, details: [] } | null
 let busy = false;
 let lastSig = '';
 
@@ -267,15 +270,59 @@ function attendanceGroupProgress(c, sessionId) {
     return { group: g, total, done, missing, complete: total > 0 && missing.length === 0 };
   });
 }
-/* 老師視角：依日期或整學期（全部時段）統計各組員缺席次數 */
-function attendanceAbsentCounts(c, date) {
+/* 統計各組員缺席次數（支援整學期或特定日期，相容 studentId 與 ref 標識） */
+function attendanceAbsentCounts(c, date, filterStudentIds = null) {
   const ids = attendanceSessions(c).filter(s => !date || s.date === date).map(s => s.id);
   const counts = {};
+  const filterSet = filterStudentIds ? new Set(filterStudentIds) : null;
   (c.attendanceRecords || []).forEach(r => {
     if (r.status !== 'absent' || !ids.includes(r.sessionId)) return;
-    counts[r.studentId] = (counts[r.studentId] || 0) + 1;
+    const key = r.studentId || r.ref;
+    if (!key) return;
+    // 若該生有真實學號，比對是否在學生名單中，優先歸一化到學生真實/顯示識別
+    const st = c.students.find(s => s.id === key || s.ref === key);
+    const targetKey = st ? (st.id || st.ref) : key;
+    if (filterSet && !filterSet.has(targetKey) && !filterSet.has(st?.ref) && !filterSet.has(st?.id)) return;
+    counts[targetKey] = (counts[targetKey] || 0) + 1;
   });
   return counts;
+}
+
+/* 取得特定學生的缺席明細（依日期排序，列出日期、活動/時段名稱、更新時間） */
+function getStudentAbsenceList(c, studentKey, date = null) {
+  const sessions = attendanceSessions(c);
+  const sessionMap = {};
+  sessions.forEach(s => { sessionMap[s.id] = s; });
+
+  const st = c.students.find(s => s.id === studentKey || s.ref === studentKey);
+  const validKeys = new Set([studentKey, st?.id, st?.ref].filter(Boolean));
+
+  const list = [];
+  (c.attendanceRecords || []).forEach(r => {
+    if (r.status !== 'absent') return;
+    const recKey = r.studentId || r.ref;
+    if (!validKeys.has(recKey)) return;
+    const session = sessionMap[r.sessionId];
+    if (!session) return;
+    if (date && session.date !== date) return;
+
+    const isDaily = isDailySession(session);
+    const activityName = isDaily
+      ? '一般日常點名 Daily Attendance'
+      : (session.name || '重要集會 Special Session');
+    const timeSlotStr = session.timeSlot ? `（${session.timeSlot}）` : '';
+
+    list.push({
+      sessionId: session.id,
+      date: session.date,
+      activityName: `${activityName}${timeSlotStr}`,
+      isDaily,
+      updatedAt: r.updatedAt || r.createdAt || 0,
+      markedByName: r.markedByName || '',
+    });
+  });
+
+  return list.sort((a, b) => b.date.localeCompare(a.date) || (b.updatedAt - a.updatedAt));
 }
 
 /* 計算每位同學的期末考調分 */
@@ -555,6 +602,75 @@ function loginCard() {
   return '';
 }
 
+/* ---- 共用元件：組員缺席排行榜卡片（支援全班或組內、前台或後台，點選數字開明細） ---- */
+function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subTitle = 'Absence leaderboard', filterMates = null, scopeAct = 'public-attendance-stat-scope', currentScope = 'all', limit = 15, isPublicFlow = false } = {}) {
+  if (!c) return '';
+  const filterIds = filterMates ? filterMates.map(m => m.id || m.ref) : null;
+  const counts = attendanceAbsentCounts(c, currentScope === 'date' ? (attendanceStatDate || todayDateStr()) : null, filterIds);
+
+  const listSource = filterMates || c.students;
+  const leaderboard = Object.entries(counts)
+    .map(([key, n]) => {
+      const st = listSource.find(x => x.id === key || x.ref === key) || c.students.find(x => x.id === key || x.ref === key);
+      const g = st ? c.groups.find(x => x.id === st.groupId) : null;
+      return {
+        key,
+        id: st ? st.id : key,
+        name: st ? st.name : key,
+        groupName: g ? g.name : '未分組',
+        count: n,
+      };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+
+  const dateStr = attendanceStatDate || todayDateStr();
+
+  return `
+  <div class="absence-leaderboard-box ${isPublicFlow ? 'public-flow' : ''}">
+    <div class="absence-leaderboard-header">
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <span style="font-size:1.15rem;">🏆</span>
+        <strong style="color:#991b1b;font-size:1.02rem;">${esc(title)} <small style="font-weight:normal;color:#64748b;font-size:0.82rem;">${esc(subTitle)}</small></strong>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <select data-act="${esc(scopeAct)}" style="font-size:0.8rem;padding:0.25rem 0.45rem;border-radius:6px;border:1px solid #cbd5e1;">
+          <option value="all" ${currentScope === 'all' ? 'selected' : ''}>整個學期 Whole semester</option>
+          <option value="date" ${currentScope === 'date' ? 'selected' : ''}>依日期（${esc(dateStr)}）</option>
+        </select>
+      </div>
+    </div>
+    ${leaderboard.length ? `
+    <div class="table-wrap" style="margin:0;">
+      <table class="roster" style="background:#fff;margin:0;font-size:0.86rem;">
+        <thead>
+          <tr>
+            <th style="width:48px;">排名</th>
+            <th>學號 ID</th>
+            <th>姓名 Name</th>
+            <th>組別 Group</th>
+            <th style="text-align:center;width:95px;">缺席次數</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${leaderboard.map((l, i) => `
+          <tr>
+            <td><span style="font-weight:700;color:${i === 0 ? '#b91c1c' : i === 1 ? '#ea580c' : i === 2 ? '#d97706' : '#64748b'};">${i + 1}</span></td>
+            <td>${esc(l.id)}</td>
+            <td><b>${esc(l.name)}</b></td>
+            <td><span class="group-name-tag" style="font-size:0.75rem;">${esc(l.groupName)}</span></td>
+            <td style="text-align:center;">
+              <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.key)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細 / Click to view absent dates & activities">
+                ⚠️ ${l.count} 次
+              </button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : '<p class="file-path" style="margin:0.25rem 0 0;font-size:0.84rem;color:#166534;">✅ 統計範圍內目前無任何組員缺席紀錄 No absence records found.</p>'}
+  </div>`;
+}
+
 /* ---- 目前選取的課程展示區塊（與左側 Step 1 樹狀區塊產生連動感） ---- */
 function courseSelectionBlock() {
   const c = cur();
@@ -589,6 +705,14 @@ function courseSelectionBlock() {
             <div class="spec-item"><span class="spec-label">分組進度 Progress（Tiến độ）</span><span class="spec-val">${c.students.filter(s => s.groupId).length} 人已分組（Đã vào nhóm） / ${unassigned(c).length} 人待分組（Chưa vào nhóm）</span></div>
           </div>
         </div>
+        ${renderAbsenceLeaderboardCard(c, {
+          title: '組員缺席排行榜',
+          subTitle: 'Absence Leaderboard（Bảng xếp hạng vắng mặt）',
+          scopeAct: 'public-attendance-stat-scope',
+          currentScope: publicAttendanceStatScope,
+          limit: 15,
+          isPublicFlow: true
+        })}
       ` : `
         <div class="empty-selection-guide">
           <div class="guide-arrow">👈</div>
@@ -1554,16 +1678,26 @@ function teacherAttendanceBlock(c) {
     <h2>組員缺席排行榜 <small>Absence leaderboard</small></h2>
     <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
       <select data-act="attendance-stat-scope">
-        <option value="date" ${attendanceStatScope === 'date' ? 'selected' : ''}>依日期（${esc(attendanceStatDate)}）</option>
-        <option value="all" ${attendanceStatScope === 'all' ? 'selected' : ''}>整學期 Whole semester</option>
+        <option value="all" ${attendanceStatScope === 'all' ? 'selected' : ''}>整個學期 Whole semester</option>
+        <option value="date" ${attendanceStatScope === 'date' ? 'selected' : ''}>依日期（${esc(attendanceStatDate || todayDateStr())}）</option>
       </select>
     </div>
     ${leaderboard.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>排名</th><th>學號</th><th>姓名</th><th>組別</th><th>缺席次數</th></tr></thead>
+        <thead><tr><th>排名</th><th>學號</th><th>姓名</th><th>組別</th><th style="text-align:center;">缺席次數</th></tr></thead>
         <tbody>${leaderboard.map((l, i) => `
-          <tr><td>${i + 1}</td><td>${esc(l.id)}</td><td>${esc(l.name)}</td><td>${esc(l.groupName)}</td><td><b style="color:#b91c1c;">${l.count}</b></td></tr>
+          <tr>
+            <td>${i + 1}</td>
+            <td>${esc(l.id)}</td>
+            <td>${esc(l.name)}</td>
+            <td>${esc(l.groupName)}</td>
+            <td style="text-align:center;">
+              <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.id)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細">
+                ⚠️ ${l.count} 次
+              </button>
+            </td>
+          </tr>
         `).join('')}</tbody>
       </table>
     </div>` : '<p class="file-path">目前無缺席紀錄。</p>'}
@@ -2126,6 +2260,16 @@ function attendanceLeaderPanel(c, g, s, mates) {
     ${dailyCard}
     ${specialCard}
     ${historySection}
+    <div style="margin-top:1.25rem;">
+      ${renderAbsenceLeaderboardCard(c, {
+        title: `${esc(g.name)} 組員缺席排行榜`,
+        subTitle: 'Group absence leaderboard（Bảng xếp hạng vắng mặt của nhóm）',
+        filterMates: mates,
+        scopeAct: 'leader-attendance-stat-scope',
+        currentScope: leaderAttendanceStatScope,
+        limit: 20
+      })}
+    </div>
   </div>`;
 }
 
@@ -2199,6 +2343,53 @@ function teacherPreviewBanner() {
   </div>`;
 }
 
+/* ===== 缺席明細 Modal 彈窗元件 ===== */
+function absenceDetailModalHtml() {
+  if (!viewingAbsenceModal) return '';
+  const { studentName, studentId, details } = viewingAbsenceModal;
+  return `
+  <div class="absence-modal-overlay" data-act="close-absence-modal-bg">
+    <div class="absence-modal-content">
+      <div class="absence-modal-header">
+        <h3><span>📋</span> 缺席明細 Absence Details</h3>
+        <button class="absence-modal-close-btn" type="button" data-act="close-absence-modal" title="關閉 Close">✕</button>
+      </div>
+      <div class="absence-modal-body">
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+          <div>
+            <strong>${esc(studentName)}</strong>
+            <span style="color:#64748b;font-size:0.85rem;margin-left:0.35rem;">(${esc(studentId)})</span>
+          </div>
+          <span style="font-size:0.85rem;font-weight:700;color:#dc2626;background:#fee2e2;padding:0.15rem 0.5rem;border-radius:999px;">
+            共計缺席 ${details.length} 次
+          </span>
+        </div>
+        ${details.length ? `
+          <div class="absence-detail-list">
+            ${details.map(d => `
+              <div class="absence-detail-item">
+                <span class="absence-detail-date">📅 ${esc(d.date)}</span>
+                <div style="flex:1;">
+                  <div class="absence-detail-name">${esc(d.activityName)}</div>
+                  <div style="margin-top:0.2rem;font-size:0.78rem;color:#64748b;">
+                    ${d.isDaily ? '<span class="absence-detail-tag">日常點名 Daily</span>' : '<span class="absence-detail-tag" style="background:#fef3c7;color:#92400e;">重要集會 Special</span>'}
+                    ${d.markedByName ? `<span style="margin-left:0.4rem;">點名者：${esc(d.markedByName)}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<p class="file-path" style="text-align:center;color:#166534;">✅ 該學生目前無任何缺席紀錄。</p>'}
+      </div>
+      <div class="absence-modal-footer">
+        <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;font-size:0.88rem;margin:0;" data-act="close-absence-modal">
+          關閉 Close
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
 /* ===== Render ===== */
 function render() {
   const isTeacher = state.session && state.session.role === 'teacher';
@@ -2222,7 +2413,7 @@ function render() {
   const showHowto = isStudent || (isTeacher && teacherPreviewMode === 'leader');
 
   document.getElementById('app').innerHTML =
-    nav() + teacherPreviewBanner() + '<div class="container">' + (showHowto ? howto() : '') + body + '</div>';
+    nav() + teacherPreviewBanner() + '<div class="container">' + (showHowto ? howto() : '') + body + '</div>' + absenceDetailModalHtml();
   if (!state.session && loginMode) {
     const first = document.querySelector('#login input');
     if (first) first.focus();
@@ -2469,6 +2660,25 @@ app.addEventListener('click', e => {
   const a = btn.dataset.act, id = btn.dataset.id;
   const c = cur();
 
+  if (a === 'close-absence-modal') {
+    viewingAbsenceModal = null;
+    return render();
+  }
+  if (a === 'close-absence-modal-bg') {
+    if (e.target.classList.contains('absence-modal-overlay')) {
+      viewingAbsenceModal = null;
+      return render();
+    }
+  }
+  if (a === 'view-absence-detail') {
+    if (!c) return;
+    const studentKey = btn.dataset.student;
+    const studentName = btn.dataset.name || studentKey;
+    const studentId = btn.dataset.id || studentKey;
+    const details = getStudentAbsenceList(c, studentKey);
+    viewingAbsenceModal = { studentName, studentId, details };
+    return render();
+  }
   if (a === 'switch-preview') {
     teacherPreviewMode = btn.dataset.mode || 'admin';
     localStorage.setItem(PREVIEW_KEY, teacherPreviewMode);
@@ -2794,6 +3004,8 @@ app.addEventListener('change', e => {
   }
   if (a === 'attendance-stat-date') { attendanceStatDate = t.value; return render(); }
   if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; return render(); }
+  if (a === 'public-attendance-stat-scope') { publicAttendanceStatScope = t.value; return render(); }
+  if (a === 'leader-attendance-stat-scope') { leaderAttendanceStatScope = t.value; return render(); }
   if (a === 'attendance-progress-session') { attendanceProgressSessionId = t.value; return render(); }
   if (a === 'assign-attendance-delegate') {
     const delegateId = t.value;

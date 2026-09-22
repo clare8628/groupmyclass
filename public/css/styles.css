@@ -1590,6 +1590,170 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border-radius: 8px;
 }
 
+/* ===== 缺席排行榜與點選看明細互動樣式 ===== */
+.absence-leaderboard-box {
+  background: #ffffff;
+  border: 1.5px solid #fecaca;
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.05);
+}
+
+.absence-leaderboard-box.public-flow {
+  margin-top: 1.25rem;
+  border-top: 4px solid #ef4444;
+}
+
+.absence-leaderboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.absent-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 2.2rem;
+  padding: 0.15rem 0.5rem;
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.18s ease-in-out;
+}
+
+.absent-count-badge:hover {
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #b91c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.35);
+}
+
+/* 缺席明細 Modal 彈窗 */
+.absence-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.absence-modal-content {
+  background: #ffffff;
+  border-radius: 12px;
+  max-width: 520px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+
+.absence-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.absence-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.absence-modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.absence-modal-close-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.absence-modal-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+}
+
+.absence-modal-footer {
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+  text-align: right;
+}
+
+.absence-detail-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  background: #fff5f5;
+  border: 1px solid #fed7d7;
+  margin-bottom: 0.6rem;
+}
+
+.absence-detail-item:last-child {
+  margin-bottom: 0;
+}
+
+.absence-detail-date {
+  font-family: monospace;
+  font-weight: 700;
+  color: #991b1b;
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.absence-detail-name {
+  color: #1f2937;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.absence-detail-tag {
+  display: inline-block;
+  margin-top: 0.2rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+
 
 
 
