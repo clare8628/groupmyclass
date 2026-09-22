@@ -1,7 +1,7 @@
 # 點名管理系統架構與跨專案移植指南 v2 (Roll Call & Attendance System Blueprint v2)
 
-> **版本**：v2.50（實務驗證版）  
-> **適用場景**：課堂點名、專案分組出勤考核、跨國籍外籍生教學、學生幹部自主管理、防弊與彈性補登  
+> **版本**：v2.50+（最新完整實務驗證版，含缺席排行榜與活動明細彈窗）  
+> **適用場景**：課堂點名、專案分組出勤考核、跨國籍外籍生教學、幹部自主點名、三端缺席排行榜、防弊與彈性補登  
 > **技術相容**：全端通用（Node.js / Express / Next.js / Cloudflare Workers / Python FastAPI / SQLite / D1 / PostgreSQL / MySQL）
 
 ---
@@ -14,31 +14,33 @@
 4. [資料庫綱要設計 (Database Schema & Indexes)](#4-資料庫綱要設計-database-schema--indexes)
 5. [後端 API 規格與核心演算法 (Backend API & Core Logic)](#5-後端-api-規格與核心演算法-backend-api--core-logic)
 6. [前端 UI/UX 設計模式與防呆防弊 (Frontend UI/UX & Anti-Cheat)](#6-前端-uiux-設計模式與防呆防弊-frontend-uiux--anti-cheat)
-7. [教師端全方位點名監控儀表板 (Teacher Dashboard)](#7-教師端全方位點名監控儀表板-teacher-dashboard)
-8. [高併發讀寫防護與快取策略 (Performance & Concurrency Optimization)](#8-高併發讀寫防護與快取策略-performance--concurrency-optimization)
-9. [端到端參考實作代碼 (End-to-End Reference Code)](#9-端到端參考實作代碼-end-to-end-reference-code)
-10. [跨專案逐步移植指南與檢查清單 (Migration Checklist)](#10-跨專案逐步移植指南與檢查清單-migration-checklist)
+7. [三端缺席排行榜與缺席明細彈窗 (Multi-Level Leaderboard & Modal)](#7-三端缺席排行榜與缺席明細彈窗-multi-level-leaderboard--modal)
+8. [教師端全方位點名監控儀表板 (Teacher Dashboard)](#8-教師端全方位點名監控儀表板-teacher-dashboard)
+9. [高併發讀寫防護與快取策略 (Performance & Concurrency Optimization)](#9-高併發讀寫防護與快取策略-performance--concurrency-optimization)
+10. [端到端參考實作代碼 (End-to-End Reference Code)](#10-端到端參考實作代碼-end-to-end-reference-code)
+11. [跨專案逐步移植指南與檢查清單 (Migration Checklist)](#11-跨專案逐步移植指南與檢查清單-migration-checklist)
 
 ---
 
 ## 1. 系統概覽與核心理念 (Overview & Philosophy)
 
-在傳統教學或專案管理系統中，點名往往存在兩難：**「若由老師親自逐一点名，極度耗費課堂時間」**；**「若交由學生幹部自主點名，又常流於形式、虛報全員到齊、或因幹部缺席而停擺」**。
+在傳統教學或專案管理系統中，點名往往存在兩難：**「若由老師親自逐一點名，極度耗費課堂時間」**；**「若交由學生幹部自主點名，又常流於形式、虛報全員到齊、或因幹部缺席而停擺」**。
 
-本點名管理系統歷經多學期大規模課堂與實務驗證，建立了一套兼顧**「極低維護成本」**與**「高信賴度防弊」**的自主點名體系。
+本點名管理系統歷經多學期大規模課堂與實務驗證，建立了一套兼顧**「極低維護成本」**、**「高信賴度防弊」**與**「前中後台透明出勤監控」**的自主點名體系。
 
 ### 1.1 教學與管理現實現況 vs 本系統解決方案
 
 | 現實現況 / 痛點 (Pain Points) | 本系統解決方案 (Solutions) | 實務效益與防弊設計 (Benefits) |
 | :--- | :--- | :--- |
-| **痛點 1：日常點名需老師預先開時段**<br>每次上課老師都要先開電腦建時段，遺忘或手續繁瑣。 | **日常點名零設定（免預建時段）**<br>系統自動以當日日期識別 `daily-YYYY-MM-DD`，幹部登入直接點名，送出時系統自動延遲持久化。 | 老師零負擔，組長開課即點，流暢無阻。 |
+| **痛點 1：日常點名需老師預先開時段**<br>每次上課老師都要先開電腦建時段，遺忘或造成操作負擔。 | **日常點名零設定（免預建時段）**<br>系統自動以當日日期識別 `daily-YYYY-MM-DD`，幹部登入直接點名，送出時系統自動延遲持久化。 | 老師零負擔，組長開課即點，流暢無阻。 |
 | **痛點 2：重要集會／成果展示需額外點名**<br>系週會、專案成果展或多次集會需獨立記錄。 | **重要集會與額外時段手動建立**<br>老師可在後台自訂日期、節次與名稱（如「期末專題評審」），組長於前台專區額外點名。 | 彈性支援單日多時段與特殊考核活動。 |
 | **痛點 3：組長虛報「全員到齊」捷徑**<br>提供一鍵全選按鈕，組長常不看名單隨手按送出。 | **嚴格禁用「一鍵到齊」按鈕**<br>強制逐一為每位組員單獨勾選單選鈕（出席／缺席）。送出前若有任一人漏選，立即阻擋並彈窗告警。 | 杜絕草率勾選，迫使幹部確實清點人數。 |
 | **痛點 4：下課後串通偷改出缺席紀錄**<br>幹部因人情壓力私下將缺席同學改為出席。 | **當日自由修正，跨日強制鎖定**<br>當日課堂內允許彈性修正（支援遲到補改）；一旦午夜過渡至隔日，自動強制鎖定為唯讀。 | 兼顧當天容錯修正與隔日防弊安全性。 |
 | **痛點 5：組長與副組長均缺席癱瘓點名**<br>該組幹部皆未到，導致全組無人有權限點名。 | **跨組代理點名機制 (Delegation)**<br>後台即時警示幹部缺席組別，老師可一鍵指派鄰近組長／副組長跨組代理點名，日誌註記代理人。 | 消除單點故障，避免組別陷入無人點名窘境。 |
 | **痛點 6：公假或正當事後補登需求**<br>學生事後補請假需開放修正，但不能永久開放。 | **時效性精準補登解鎖 (Granular Unlock)**<br>老師可針對「指定組別」或「全班」，開放補登並強制設定「截止時間 Deadline」（逾時自動復鎖）。 | 權限收放精確，無須人工手動關閉。 |
 | **痛點 7：遲到補點名引發爭議**<br>學生宣稱組長記錯時間，無法釐清責任。 | **雙時間戳與細緻稽核日誌**<br>分別記錄首次點名時間 (`createdAt`) 與最後修正時間 (`updatedAt`)，日誌詳細記錄「由缺席改為出席」。 | 責任釐清完全透明，後台懸停即見時間戳。 |
-| **痛點 8：外籍生操作門檻與忘記密碼**<br>介面語文不易理解造成誤按，或幹部忘記密碼。 | **中／英／越三語對照 + 老師協助重設密碼**<br>前台與組長後台三語標記；老師可於後台直接協助組長重設密碼或還原為預設學號。 | 外籍學生無障礙操作，幹部密碼快速救援。 |
+| **痛點 8：缺席次數缺乏透明可視化與明細佐證**<br>僅顯示次數，學生對被記缺席之日期與活動有疑義。 | **三端缺席排行榜 + 缺席活動明細彈窗**<br>一般前台、組長後台、老師後台同步提供排行榜，點擊次數 Badge 立即跳出互動彈窗，清晰羅列每一次缺席日期、活動名稱與點名人。 | 學生自我警惕、幹部掌握組員狀況、老師輔導有據。 |
+| **痛點 9：外籍生操作門檻與忘記密碼**<br>介面語文不易理解造成誤按，或幹部忘記密碼。 | **中／英／越三語對照 + 老師協助重設密碼**<br>前台與組長後台三語標記；老師可於後台直接協助組長重設密碼或還原為預設學號。 | 外籍學生無障礙操作，幹部密碼快速救援。 |
 
 ---
 
@@ -50,11 +52,11 @@
 
 | 角色 (Role) | 識別方式 (Identity) | 點名管理權限 (Permissions) | 密碼機制 (Password) |
 | :--- | :--- | :--- | :--- |
-| **授課教師 (Teacher)** | 角色為 `teacher` | • 建立/編輯/刪除重要集會點名時段<br>• 開放/關閉補登權限（含截止時間）<br>• 指派/撤銷跨組代理點名<br>• 即時檢視未完成點名組別與組員<br>• 查看缺席紀錄與排行榜<br>• 協助組長/副組長修改或重設密碼 | 系統管理員密碼（雜湊儲存） |
-| **組長 (Group Leader)** | `student.is_leader === true` | • 執行本組當日日常點名與重要集會點名<br>• 於老師解鎖時執行歷史時段補登<br>• 若獲指派，可代理他組點名<br>• 自行修改個人登入密碼 | 預設為學號，登入後可自訂新密碼 (SHA-256) |
+| **授課教師 (Teacher)** | 角色為 `teacher` | • 建立/編輯/刪除重要集會點名時段<br>• 開放/關閉補登權限（含截止時間）<br>• 指派/撤銷跨組代理點名<br>• 即時檢視未完成點名組別與組員<br>• 查看缺席紀錄、全班排行榜與缺席明細<br>• 協助組長/副組長修改或重設密碼 | 系統管理員密碼（雜湊儲存） |
+| **組長 (Group Leader)** | `student.is_leader === true` | • 執行本組當日日常點名與重要集會點名<br>• 於老師解鎖時執行歷史時段補登<br>• 檢視本組專屬缺席排行榜與點開明細<br>• 若獲指派，可代理他組點名<br>• 自行修改個人登入密碼 | 預設為學號，登入後可自訂新密碼 (SHA-256) |
 | **副組長 (Vice Leader)** | `student.is_vice === true` | 與組長享有一致之點名權限（互為備援） | 預設為學號，登入後可自訂新密碼 (SHA-256) |
 | **跨組代理人 (Delegate)** | 經由 `attendance_delegates` 表授權 | 於指定時段內代理被指派組別進行點名 | 依原組長/副組長身分登入 |
-| **一般組員 (Member)** | 一般學生 | 僅具檢視個人組別與出缺席歷史狀態之唯讀權限 | 預設為學號（若有開放學生登入） |
+| **一般組員 (Member)** | 一般學生 | • 檢視個人組別與出缺席歷史狀態<br>• 於前台查看公開缺席排行榜與明細（個資遮罩） | 預設為學號（若有開放學生登入） |
 
 ### 2.2 組長與副組長密碼安全機制
 
@@ -138,11 +140,11 @@ CREATE INDEX IF NOT EXISTS idx_students_group ON students(course_id, group_id);
 -- 2. 點名時段表 (attendance_sessions)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS attendance_sessions (
-  id          TEXT NOT NULL,               -- 唯一鍵，例：'daily-2026-09-21' 或自建 ID
+  id          TEXT NOT NULL,               -- 唯一鍵，例：'daily-2026-09-22' 或自建 ID
   course_id   TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
   date        TEXT NOT NULL DEFAULT '',    -- 格式 'YYYY-MM-DD'
   time_slot   TEXT NOT NULL DEFAULT '',    -- 節次文字，例如「第3-4節」、「14:00-16:00」
-  name        TEXT NOT NULL DEFAULT '',    -- 時段名稱，例如「一般日常點名」、「期末專案成果展」
+  name        TEXT NOT NULL DEFAULT '',    -- 時段名稱，例如「一般日常點名」、「期末專題成果展」
   created_at  INTEGER NOT NULL,            -- 建立時間戳 (毫秒)
   PRIMARY KEY (course_id, id)
 );
@@ -422,7 +424,181 @@ app.addEventListener('submit', (e) => {
 
 ---
 
-## 7. 教師端全方位點名監控儀表板 (Teacher Dashboard)
+## 7. 三端缺席排行榜與缺席明細彈窗 (Multi-Level Leaderboard & Modal)
+
+出勤管理若只有冷冰冰的數字，學生往往質疑「我什麼時候缺席過？是不是組長記錯？」。  
+本系統首創**「三端缺席排行榜 (Multi-Level Absence Leaderboard)」**與**「互動式缺席明細彈窗 (Absence Details Modal)」**。
+
+### 7.1 三端呈現架構與權限隔離
+
+```
+                                [三端缺席排行榜架構]
+                                         │
+        ┌────────────────────────────────┼────────────────────────────────┐
+        ▼                                ▼                                ▼
+  【一般學生前台】               【組長/副組長後台】               【教師管理後台】
+  (Public Roster)                 (Leader Panel)                  (Teacher Panel)
+  • 顯示全班前 15 名              • 僅顯示「本組」組員            • 顯示全班排行榜
+  • 學生學號/個資遮罩             • 完整顯示本組組員姓名/學號     • 完整顯示姓名、學號、組別
+  • 促進自律與提醒同儕            • 掌握組員學習投入狀況          • 進行期末扣分或學習預警
+        │                                │                                │
+        └────────────────────────────────┼────────────────────────────────┘
+                                         ▼
+                     【點擊任何缺席次數 Badge (例: ⚠️ 3 次)】
+                                         │
+                                         ▼
+                       【缺席活動明細彈窗 (Modal Dialog)】
+                       • 學生姓名與學號
+                       • 累計缺席總次數
+                       • 每一筆缺席活動清單：
+                         - 📅 缺席日期 (YYYY-MM-DD)
+                         - 📌 點名名稱 (日常點名 / 重要集會名稱)
+                         - 🏷️ 類型標籤 (日常 Daily / 重要 Special)
+                         - 👤 執行點名之幹部姓名
+```
+
+### 7.2 排行榜核心統計邏輯 (`attendanceAbsentCounts`)
+
+```javascript
+/**
+ * 統計組員缺席次數
+ * @param {Object} course 課程物件
+ * @param {string|null} date 指定查詢日期（null 代表整學期）
+ * @param {Array|null} filterStudentIds 限定統計之學生清單（組長後台使用）
+ */
+function attendanceAbsentCounts(course, date = null, filterStudentIds = null) {
+  // 篩選時段
+  const targetSessionIds = (course.attendanceSessions || [])
+    .filter(s => !date || s.date === date)
+    .map(s => s.id);
+  
+  const counts = {};
+  const filterSet = filterStudentIds ? new Set(filterStudentIds) : null;
+
+  (course.attendanceRecords || []).forEach(r => {
+    if (r.status !== 'absent' || !targetSessionIds.includes(r.sessionId)) return;
+    const studentKey = r.studentId;
+    if (!studentKey) return;
+    if (filterSet && !filterSet.has(studentKey)) return;
+
+    counts[studentKey] = (counts[studentKey] || 0) + 1;
+  });
+
+  return counts;
+}
+```
+
+### 7.3 缺席明細萃取邏輯 (`getStudentAbsenceList`)
+
+```javascript
+/**
+ * 萃取特定學生的歷史所有缺席明細，依日期與時間降冪排列
+ */
+function getStudentAbsenceList(course, studentId, date = null) {
+  const sessions = course.attendanceSessions || [];
+  const sessionMap = new Map(sessions.map(s => [s.id, s]));
+
+  const list = [];
+  (course.attendanceRecords || []).forEach(r => {
+    if (r.status !== 'absent' || r.studentId !== studentId) return;
+    const session = sessionMap.get(r.sessionId);
+    if (!session) return;
+    if (date && session.date !== date) return;
+
+    const isDaily = isDailySession(session);
+    const activityName = isDaily
+      ? '一般日常點名 Daily Attendance'
+      : (session.name || '重要集會 Special Session');
+    const timeSlotStr = session.timeSlot ? `（${session.timeSlot}）` : '';
+
+    list.push({
+      sessionId: session.id,
+      date: session.date,
+      activityName: `${activityName}${timeSlotStr}`,
+      isDaily,
+      updatedAt: r.updatedAt || r.createdAt || 0,
+      markedByName: r.markedByName || '',
+    });
+  });
+
+  // 依日期與最後更新時間由新到舊排序
+  return list.sort((a, b) => b.date.localeCompare(a.date) || (b.updatedAt - a.updatedAt));
+}
+```
+
+### 7.4 缺席明細彈窗 HTML 與事件處理
+
+```javascript
+// 渲染彈窗 HTML
+function renderAbsenceModalHtml(modalState) {
+  if (!modalState) return '';
+  const { studentName, studentId, details } = modalState;
+
+  return `
+  <div class="absence-modal-overlay" data-act="close-absence-modal-bg">
+    <div class="absence-modal-content">
+      <div class="absence-modal-header">
+        <h3><span>📋</span> 缺席明細 Absence Details</h3>
+        <button class="absence-modal-close-btn" type="button" data-act="close-absence-modal">✕</button>
+      </div>
+      <div class="absence-modal-body">
+        <div class="absence-modal-summary">
+          <div>
+            <strong>${escapeHtml(studentName)}</strong>
+            <span class="text-muted">(${escapeHtml(studentId)})</span>
+          </div>
+          <span class="absence-total-pill">共計缺席 ${details.length} 次</span>
+        </div>
+        ${details.length ? `
+          <div class="absence-detail-list">
+            ${details.map(d => `
+              <div class="absence-detail-item">
+                <span class="absence-detail-date">📅 ${escapeHtml(d.date)}</span>
+                <div class="absence-detail-info">
+                  <div class="absence-detail-name">${escapeHtml(d.activityName)}</div>
+                  <div class="absence-detail-sub">
+                    <span class="absence-detail-tag ${d.isDaily ? 'daily' : 'special'}">
+                      ${d.isDaily ? '日常點名 Daily' : '重要集會 Special'}
+                    </span>
+                    ${d.markedByName ? `<span class="marked-by">點名幹部：${escapeHtml(d.markedByName)}</span>` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : '<p class="text-success">✅ 該學生目前無任何缺席紀錄。</p>'}
+      </div>
+      <div class="absence-modal-footer">
+        <button class="btn btn-secondary" data-act="close-absence-modal">關閉 Close</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// 點擊事件監聽
+app.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const act = btn.dataset.act;
+
+  if (act === 'view-absence-detail') {
+    const studentId = btn.dataset.id;
+    const studentName = btn.dataset.name;
+    const details = getStudentAbsenceList(currentCourse, studentId);
+    activeAbsenceModal = { studentId, studentName, details };
+    renderApp();
+  }
+
+  if (act === 'close-absence-modal' || act === 'close-absence-modal-bg') {
+    activeAbsenceModal = null;
+    renderApp();
+  }
+});
+```
+
+---
+
+## 8. 教師端全方位點名監控儀表板 (Teacher Dashboard)
 
 教師端點名管理包含五大維度監控面板：
 
@@ -455,29 +631,30 @@ app.addEventListener('submit', (e) => {
 | • 行內直接提供【跨組代理點名】下拉選單：可直接指派他組幹部跨組代理點名。           |
 +-----------------------------------------------------------------------------------+
 | [看板 5] 組員缺席排行榜 (Absence Leaderboard)                                       |
-| • 切換查詢範圍：[依指定日期] 或 [整學期 Whole Semester]。                           |
-| • 自動統計缺席累計最多次數之學生前 15 名，標註組別與缺席次數，方便學習預警輔導。   |
+| • 切換查詢範圍：[整個學期 Whole Semester] 或 [依指定日期]。                          |
+| • 列出全班缺席次數最高之名單，附帶互動式 [⚠️ X 次] 按鈕。                          |
+| • 點擊按鈕直接開啟缺席明細彈窗，核對歷次缺席時段與點名幹部。                         |
 +===================================================================================+
 ```
 
 ---
 
-## 8. 高併發讀寫防護與快取策略 (Performance & Concurrency Optimization)
+## 9. 高併發讀寫防護與快取策略 (Performance & Concurrency Optimization)
 
 在上課前 5 至 10 分鐘，數十位組長同時登入、重新整理與提交點名，若架構於邊緣運算（如 Cloudflare Workers + D1）或小型雲端主機上，瞬態尖峰流量極易突破免費額度或導致資料庫連線池耗盡。
 
 本系統實作了**三重防護體系**：
 
-### 8.1 伺服器短暫記憶體快取 (Worker In-Memory TTL Cache)
+### 9.1 伺服器短暫記憶體快取 (Worker In-Memory TTL Cache)
 - 在後端伺服器記憶體中設定 4 秒的唯讀快取 (`RAW_CACHE_TTL = 4000`)。
 - 在全班數十人併發呼叫 `GET /api/state` 載入介面時，4 秒內僅穿透一次資料庫查詢，其餘直接由記憶體複製（`structuredClone`）返回，收斂 90% 以上的尖峰讀取。
 
-### 8.2 HTTP 條件式請求與 ETag / 304 Not Modified
+### 9.2 HTTP 條件式請求與 ETag / 304 Not Modified
 - 伺服器維護一個全域狀態版本號 `_stateVersion`。
 - 回應標頭附加弱 ETag：`W/"${stateVersion}-${userRole}-${appVersion}"`。
 - 前端輪詢發送 `If-None-Match`。若系統無異動，後端直接回傳 `304 Not Modified`（0 位元組 Body，不產生資料庫解析），極大幅度減少伺服器 CPU 與頻寬開銷。
 
-### 8.3 寫入時主動失效快取 (Active Cache Invalidation)
+### 9.3 寫入時主動失效快取 (Active Cache Invalidation)
 - 一旦任何組長提交點名 (`mark-attendance`) 或老師操作時段/補登/代理，後端在執行批次寫入後，**立即呼叫 `invalidateStateCache()`**：
   ```javascript
   export function invalidateStateCache() {
@@ -488,17 +665,17 @@ app.addEventListener('submit', (e) => {
   ```
 - 確保所有使用者在下一次輪詢或重新整理時，100% 保證看見最新點名狀態，毫無快取滯後問題。
 
-### 8.4 異動日誌按需載入 (On-Demand Log Fetching)
+### 9.4 異動日誌按需載入 (On-Demand Log Fetching)
 - 公開狀態輪詢中只回傳最新 15 筆簡短日誌。
 - 老師點擊「異動日誌」面板時，才透過獨立的 `teacher:get-logs` API 請求完整 500 筆紀錄，避免全班幾十次輪詢每次都對日誌全表執行查詢。
 
 ---
 
-## 9. 端到端參考實作代碼 (End-to-End Reference Code)
+## 10. 端到端參考實作代碼 (End-to-End Reference Code)
 
 以下精選後端核心處理控制器範式，可直接改寫納入 Node.js (Express / Fastify) 或 Cloudflare Workers 中。
 
-### 9.1 後端 Controller 核心實作範例
+### 10.1 後端 Controller 核心實作範例
 
 ```javascript
 /**
@@ -623,7 +800,7 @@ export async function handleMarkAttendance(db, currentUser, payload) {
 
 ---
 
-## 10. 跨專案逐步移植指南與檢查清單 (Migration Checklist)
+## 11. 跨專案逐步移植指南與檢查清單 (Migration Checklist)
 
 若欲將本點名架構複製並移植至其他系統，請依下列清單按部就班實施：
 
@@ -658,14 +835,19 @@ export async function handleMarkAttendance(db, currentUser, payload) {
 - [ ] 若被授權跨組代理，呈現紫色代理卡片。
 - [ ] 介面文字加入三語對照（繁中 / 英文 / 越南文）。
 
-### 階段五：前端教師監控儀表板
+### 階段五：三端排行榜與缺席明細彈窗
+- [ ] 實作 `renderAbsenceLeaderboardCard` 組件，支援前台（個資遮罩）、組長後台（本組過濾）、教師後台（全班）三種場景。
+- [ ] 提供「整個學期」與「依日期」之範圍篩選。
+- [ ] 次數欄位點擊觸發 `view-absence-detail`，開啟「缺席活動明細彈窗 (Modal)」。
+- [ ] 彈窗中詳細列出學生姓名、學號、總缺席次數、歷次缺席日期、活動名稱與點名幹部。
+
+### 階段六：前端教師監控儀表板
 - [ ] 建立點名時段列表，提供編輯、刪除、開放/關閉全部補登與指定組別補登。
 - [ ] 建立當前組長/副組長名冊，並提供密碼修改與重設按鈕。
 - [ ] 建立各組當日出缺席名單，懸停標籤顯示點名與修正時間戳。
 - [ ] 建立「尚未完成點名進度」看板，列出缺席幹部並內嵌「指派代理人」選單。
-- [ ] 建立「缺席排行榜」，支援單日與全期切換。
 
-### 階段六：效能與高併發防護
+### 階段七：效能與高併發防護
 - [ ] 為狀態查詢加入短暫記憶體快取 (TTL ~4 秒)。
 - [ ] 加入 HTTP ETag 與 304 Not Modified 條件式更新機制。
 - [ ] 異動動作發生時，即時調用快取失效 (`invalidateStateCache`)。
@@ -675,4 +857,4 @@ export async function handleMarkAttendance(db, currentUser, payload) {
 
 ## 結語 (Summary)
 
-`rolldesign2.md` 所定義的架構，經由「**日常點名免建時段**」、「**強制逐員勾選**」、「**當日自由更正、隔日強制鎖定**」、「**精準補登解鎖**」、「**跨組代理授權**」以及「**高併發快取防護**」等多層防護機制，徹底解決了課堂與專案出勤管理的痛點。移植時只需遵循本指南之資料庫綱要與 API 規範，即可在任何新專案中迅速重現一套強健、易用且受高度信賴的點名管理系統。
+`rolldesign2.md` 所定義的架構，經由「**日常點名免建時段**」、「**強制逐員勾選**」、「**當日自由更正、隔日強制鎖定**」、「**精準補登解鎖**」、「**跨組代理授權**」、「**三端排行榜與互動明細彈窗**」以及「**高併發快取防護**」等多層防護機制，徹底解決了課堂與專案出勤管理的痛點。移植時只需遵循本指南之資料庫綱要與 API 規範，即可在任何新專案中迅速重現一套強健、易用且受高度信賴的點名管理系統。
