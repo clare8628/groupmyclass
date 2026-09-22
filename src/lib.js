@@ -363,7 +363,58 @@ export function calcAdjustment(c, g, s) {
   }
 }
 
+/* ===== D1 快取防護與狀態版本控制 ===== */
+let _cachedRawCourses = null;
+let _cachedRawTime = 0;
+let _cachedRecentLogs = null;
+let _stateVersion = 1;
+const RAW_CACHE_TTL = 4000; // 4 秒內重複查詢直接由 Worker 記憶體提供，大幅收斂 D1 尖峰併發讀取
+
+export function getStateVersion() {
+  return _stateVersion;
+}
+
+export function invalidateStateCache() {
+  _cachedRawCourses = null;
+  _cachedRawTime = 0;
+  _cachedRecentLogs = null;
+  _stateVersion++;
+}
+
+/* 按需讀取指定課程或全站異動日誌 */
+export async function getCourseLogs(db, courseId = null, limit = 500) {
+  try {
+    const query = courseId
+      ? 'SELECT * FROM activity_logs WHERE course_id = ? ORDER BY created_at DESC LIMIT ?'
+      : 'SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?';
+    const stmt = courseId ? db.prepare(query).bind(courseId, limit) : db.prepare(query).bind(limit);
+    const rows = await stmt.all();
+    return (rows.results || []).map(log => ({
+      id: log.id,
+      courseId: log.course_id,
+      groupId: log.group_id,
+      groupName: log.group_name,
+      operatorRole: log.operator_role,
+      operatorId: log.operator_id,
+      operatorName: log.operator_name,
+      actionType: log.action_type,
+      targetId: log.target_id,
+      targetName: log.target_name,
+      detail: log.detail,
+      createdAt: log.created_at,
+    }));
+  } catch (err) {
+    console.error('Failed to get course logs:', err);
+    return [];
+  }
+}
+
 export async function loadState(db) {
+  const now = Date.now();
+  if (_cachedRawCourses && (now - _cachedRawTime < RAW_CACHE_TTL)) {
+    return structuredClone(_cachedRawCourses);
+  }
+
   await ensureGroupSchema(db);
   await ensureAttendanceSchema(db);
   const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates] = await Promise.all([
@@ -445,6 +496,9 @@ export async function loadState(db) {
 
     return courseObj;
   });
+  _cachedRawCourses = structuredClone(processedCourses);
+  _cachedRawTime = now;
+  return processedCourses;
 }
 
 export const cap = c => Number(c.groupSize) + Number(c.tolerance);
@@ -518,7 +572,10 @@ export async function applyDeadline(db, courses) {
       }));
     }
   }
-  if (stmts.length) await db.batch(stmts);
+  if (stmts.length) {
+    await db.batch(stmts);
+    invalidateStateCache();
+  }
   return courses;
 }
 
@@ -532,11 +589,11 @@ export async function teacherHash(db) {
 
 export const nextSeq = async (db, table, courseId) => {
   const r = await db.prepare(`SELECT COALESCE(MAX(seq), 0) AS m FROM ${table} WHERE course_id = ?`).bind(courseId).first();
-  return ((r && r.m) || 0) + 1;
+  return (r && r.m ? r.m : 0) + 1;
 };
 
-/* ===== 對外遮蔽學號 =====
-   學號同時是學生的登入密碼，因此非老師的回應一律遮蔽；
+/* 學生身分遮罩與不可逆代號推導：
+   學生檢視前台時學號遮罩（前三碼 + 星號），
    組長操作改用 ref（以 session secret 推導的不可逆代號）。 */
 const maskId = id => String(id).slice(0, 3) + '*'.repeat(Math.max(0, String(id).length - 3));
 
@@ -547,12 +604,11 @@ export async function studentRef(db, env, courseId, id, preloadedKey = null) {
 
 export async function publicize(db, env, courses, session) {
   if (session && session.role === 'teacher') {
-    const logsByCourse = {};
-    try {
-      const logRows = await db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 500').all();
-      for (const log of (logRows.results || [])) {
-        if (!logsByCourse[log.course_id]) logsByCourse[log.course_id] = [];
-        logsByCourse[log.course_id].push({
+    let recentLogs = _cachedRecentLogs;
+    if (!recentLogs || (Date.now() - _cachedRawTime >= RAW_CACHE_TTL)) {
+      try {
+        const logRows = await db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 15').all();
+        recentLogs = (logRows.results || []).map(log => ({
           id: log.id,
           courseId: log.course_id,
           groupId: log.group_id,
@@ -565,9 +621,15 @@ export async function publicize(db, env, courses, session) {
           targetName: log.target_name,
           detail: log.detail,
           createdAt: log.created_at,
-        });
-      }
-    } catch (_) {}
+        }));
+        _cachedRecentLogs = recentLogs;
+      } catch (_) {}
+    }
+    const logsByCourse = {};
+    for (const log of (recentLogs || [])) {
+      if (!logsByCourse[log.courseId]) logsByCourse[log.courseId] = [];
+      logsByCourse[log.courseId].push(log);
+    }
     return courses.map(c => {
       const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
       const studentName = sid => (c.students.find(s => s.id === sid) || {}).name || '';

@@ -1,10 +1,15 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.49';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.50';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
-const POLL_MS = 5000;
+const POLL_MS = 15000; // 延長輪詢至 15 秒（操作者自身操作即時響應，15 秒足以同步他人異動）
+let lastEtag = '';
+let lastUserActivity = Date.now();
+let lastPollTime = 0;
+const IDLE_TIMEOUT_MS = 60000; // 1 分鐘未有使用者動作視為閒置
+const IDLE_POLL_MS = 35000;    // 閒置時降低輪詢頻率至 35 秒，節省 D1 消耗
 
 let state = {
   courses: [],
@@ -23,10 +28,36 @@ let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，
 let busy = false;
 let lastSig = '';
 
-/* ===== API ===== */
+/* 日誌按需快取 */
+let fullLogsByCourse = {};
+let logsLoading = false;
+
+async function loadCourseLogs(courseId, force = false) {
+  if (!courseId || (fullLogsByCourse[courseId] && !force) || logsLoading) return;
+  logsLoading = true;
+  render();
+  try {
+    const res = await apiPost('teacher:get-logs', { courseId });
+    if (res && res.logs) {
+      fullLogsByCourse[courseId] = res.logs;
+    }
+  } catch (e) {
+    console.error('載入日誌失敗:', e);
+  } finally {
+    logsLoading = false;
+    render();
+  }
+}
+
+/* ===== API（支援 ETag / 304 快取防護） ===== */
 async function apiGet() {
-  const r = await fetch('/api/state', { credentials: 'same-origin', headers: { 'cache-control': 'no-cache' } });
+  const headers = { 'cache-control': 'no-cache' };
+  if (lastEtag) headers['if-none-match'] = lastEtag;
+  const r = await fetch('/api/state', { credentials: 'same-origin', headers });
+  if (r.status === 304) return { notModified: true };
   if (!r.ok) throw new Error('讀取資料失敗 (' + r.status + ')');
+  const etag = r.headers.get('etag');
+  if (etag) lastEtag = etag;
   return r.json();
 }
 
@@ -61,6 +92,7 @@ async function act(action, payload = {}, opts = {}) {
   busy = true;
   try {
     const data = await apiPost(action, payload);
+    lastEtag = ''; // 資料異動後重設 ETag，確保下一輪讀取最新資料
     apply(data);
     if (opts.after) opts.after(data);
     render();
@@ -73,17 +105,35 @@ async function act(action, payload = {}, opts = {}) {
   }
 }
 
-/* 背景輪詢：其他人的異動會自動出現 */
+/* 背景輪詢：其他人的異動會自動出現（支援 304 略過重繪與閒置降頻） */
 async function poll() {
   if (busy || document.hidden) return;
+  const now = Date.now();
+  const isIdle = (now - lastUserActivity) > IDLE_TIMEOUT_MS;
+  if (isIdle && (now - lastPollTime < IDLE_POLL_MS)) return;
+  lastPollTime = now;
+
   try {
     const data = await apiGet();
+    if (data && data.notModified) return; // 304 狀態無異動，直接返回，不耗費 CPU 與 DOM 重繪
     const sig = JSON.stringify(data.courses || []);
     const sessionChanged = JSON.stringify(data.session || null) !== JSON.stringify(state.session || null);
     const versionChanged = data.version && data.version !== APP_VERSION;
     if (sig !== lastSig || sessionChanged || versionChanged) { apply(data); render(); }
   } catch (e) { /* 網路暫時失敗就略過這輪 */ }
 }
+
+/* 監聽使用者動作，智慧喚醒輪詢 */
+const recordUserActivity = () => {
+  const wasIdle = (Date.now() - lastUserActivity) > IDLE_TIMEOUT_MS;
+  lastUserActivity = Date.now();
+  if (wasIdle && (Date.now() - lastPollTime >= POLL_MS)) {
+    poll();
+  }
+};
+['mousemove', 'keydown', 'touchstart', 'click'].forEach(evt => {
+  window.addEventListener(evt, recordUserActivity, { passive: true });
+});
 
 /* ===== Course helpers ===== */
 const courseById = id => state.courses.find(c => c.id === id) || null;
@@ -1143,7 +1193,12 @@ function teacherLogsBlock(c) {
     </div>`;
   }
 
-  const logs = c.logs || [];
+  // 若尚未按需載入該課程日誌，自動觸發非同步載入
+  if (!fullLogsByCourse[c.id] && !logsLoading) {
+    setTimeout(() => loadCourseLogs(c.id), 0);
+  }
+
+  const logs = fullLogsByCourse[c.id] || c.logs || [];
   const pickCount = logs.filter(l => l.actionType === 'pick').length;
   const dropCount = logs.filter(l => l.actionType === 'drop').length;
   const todayCount = logs.filter(l => isSameDay(l.createdAt, Date.now())).length;
@@ -1177,6 +1232,9 @@ function teacherLogsBlock(c) {
         <button class="btn btn-secondary" data-act="back-to-course" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;">
           🔙 返回分組管理
         </button>
+        <button class="btn btn-secondary" data-act="refresh-course-logs" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logsLoading ? 'disabled' : ''}>
+          ${logsLoading ? '⏳ 載入中...' : '🔄 重新整理日誌'}
+        </button>
         <button class="btn btn-success" data-act="export-logs-csv" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
           📥 匯出異動日誌 CSV
         </button>
@@ -1185,6 +1243,11 @@ function teacherLogsBlock(c) {
         </button>
       </div>
     </div>
+
+    ${logsLoading ? `
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:1.2rem;font-size:0.86rem;">
+        ⏳ 正在向伺服器按需載入本課程完整異動紀錄 Loading logs on demand...
+      </div>` : ''}
 
     <!-- 統計指標卡片 -->
     <div class="stats" style="margin:0 0 1.5rem 0;">
@@ -2197,9 +2260,19 @@ function exportCSV(c) {
   download(csv, `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
 }
 
-function exportLogsCSV(c) {
+async function exportLogsCSV(c) {
+  let logs = fullLogsByCourse[c.id];
+  if (!logs || !logs.length) {
+    try {
+      const res = await apiPost('teacher:get-logs', { courseId: c.id });
+      if (res && res.logs) {
+        fullLogsByCourse[c.id] = res.logs;
+        logs = res.logs;
+      }
+    } catch (_) {}
+  }
+  logs = logs || c.logs || [];
   const rows = [['時間', '動作類別', '操作者身分', '操作者學號', '操作者姓名', '組別', '對象學號', '對象姓名', '詳細說明']];
-  const logs = c.logs || [];
   logs.forEach(l => {
     rows.push([
       formatLogTime(l.createdAt),
@@ -2430,7 +2503,12 @@ app.addEventListener('click', e => {
   if (a === 'close-login') { loginMode = null; return render(); }
   if (a === 'sys-password') { teacherView = 'settings'; return render(); }
   if (a === 'sys-peer-eval') { teacherView = 'eval'; return render(); }
-  if (a === 'sys-logs') { teacherView = 'logs'; return render(); }
+  if (a === 'sys-logs') {
+    teacherView = 'logs';
+    render();
+    if (c) loadCourseLogs(c.id);
+    return;
+  }
   if (a === 'sys-attendance') { teacherView = 'attendance'; attendanceEditingId = null; return render(); }
   if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
   if (a === 'cancel-edit-attendance-session') { attendanceEditingId = null; return render(); }
@@ -2463,7 +2541,14 @@ app.addEventListener('click', e => {
   if (a === 'view-course-logs') {
     if (id) state.currentId = id;
     teacherView = 'logs';
-    return render();
+    render();
+    const curCourse = cur();
+    if (curCourse) loadCourseLogs(curCourse.id);
+    return;
+  }
+  if (a === 'refresh-course-logs') {
+    if (c) loadCourseLogs(c.id, true);
+    return;
   }
   if (a === 'back-to-course') { teacherView = 'course'; return render(); }
   if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; return render(); }
@@ -2471,6 +2556,7 @@ app.addEventListener('click', e => {
   if (a === 'clear-course-logs') {
     if (!c) return;
     if (!confirm(`確定要清空「${courseLabel(c)}」的所有異動日誌紀錄嗎？\n\n此動作將清除所有過往軌跡且無法復原！`)) return;
+    delete fullLogsByCourse[c.id];
     return act('teacher:clear-logs', { courseId: c.id });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {

@@ -3,7 +3,7 @@ import {
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
-  isDailySession, todayDateStr,
+  isDailySession, todayDateStr, getStateVersion, invalidateStateCache, getCourseLogs,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 
@@ -17,11 +17,31 @@ async function ensureSessionInDb(db, courseId, s) {
   `).bind(s.id, courseId, s.date, s.timeSlot || '', s.name || (isDaily ? '一般日常點名' : ''), s.createdAt || Date.now()).run();
 }
 
-/* GET /api/state — 公開讀取全部課程／名單／分組 */
+/* GET /api/state — 公開讀取全部課程／名單／分組（具備 ETag 條件快取與 304 防護） */
 export async function handleState(request, env, db) {
   const session = await readSession(db, env, request);
+  const version = APP_VERSION;
+  const stateVer = getStateVersion();
+  const sessionKey = session ? `${session.role}:${session.id || ''}:${session.courseId || ''}` : 'anon';
+  const etag = `W/"${stateVer}-${sessionKey}-${version}"`;
+
+  const ifNoneMatch = request.headers.get('if-none-match');
+  if (ifNoneMatch && ifNoneMatch === etag) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        'etag': etag,
+        'cache-control': 'private, no-cache',
+      },
+    });
+  }
+
   const courses = await applyDeadline(db, await loadState(db));
-  return json({ courses: await publicize(db, env, courses, session), session, version: APP_VERSION });
+  return json(
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION },
+    200,
+    { 'etag': etag, 'cache-control': 'private, no-cache' }
+  );
 }
 
 /* POST /api/action — 所有異動，依角色驗證 */
@@ -32,6 +52,7 @@ export async function handleAction(request, env, db, body) {
   const courses = await loadState(db);
   const course = id => courses.find(c => c.id === id);
   const ok = async (extra = {}, headers = {}) => {
+    invalidateStateCache();
     const view = extra.session !== undefined ? extra.session : session;
     return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, ...extra }, 200, headers);
   };
@@ -86,6 +107,12 @@ export async function handleAction(request, env, db, body) {
   if (action.startsWith('teacher:')) {
     if (!session || session.role !== 'teacher') return bad('需要老師權限 Teacher only', 403);
     const op = action.slice(8);
+
+    if (op === 'get-logs') {
+      const courseId = body.courseId ? String(body.courseId) : '';
+      const logs = await getCourseLogs(db, courseId, 500);
+      return json({ ok: true, logs });
+    }
 
     if (op === 'change-password') {
       if (await sha256(String(body.current || '')) !== await teacherHash(db)) return bad('目前密碼錯誤', 401);
