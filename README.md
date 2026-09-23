@@ -1,6 +1,6 @@
-# 113入學行銷真班分組系統 Student Grouping
+# 113入學行銷真班分組與點名系統 Student Grouping & Attendance
 
-113入學行銷真班分組系統：老師管理班級課程與名單，學生自行擔任組長並挑選組員，前台即時顯示分組現況。
+113入學行銷真班分組與點名系統：老師管理班級課程與名單，學生自行擔任組長並挑選組員，各組支援日常與特殊演練點名管理，前台即時顯示分組與缺席現況。
 
 - 前端：原生 HTML / CSS / JavaScript（無框架）
 - 後端：Cloudflare Workers（static assets）+ D1（SQLite）

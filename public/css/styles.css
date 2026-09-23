@@ -1753,6 +1753,175 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   font-weight: 600;
 }
 
+/* ===== 老師後台子分頁統一頂部導航列 ===== */
+.teacher-subpage-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #3498db;
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.teacher-subpage-nav .nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.teacher-subpage-nav .nav-breadcrumbs {
+  font-size: 0.88rem;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.teacher-subpage-nav .crumb-sep {
+  color: #cbd5e1;
+}
+.teacher-subpage-nav .crumb-current {
+  color: #1e293b;
+}
+
+/* ===== 分組管理 Grouping 重構樣式 ===== */
+.grouping-admin-section .grouping-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.grouping-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.grouping-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.grouping-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+.grouping-card-header {
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e2e8f0;
+}
+.grouping-card.safe-ops-card .grouping-card-header {
+  background: #f0fdf4;
+  border-bottom-color: #bbf7d0;
+}
+.grouping-card.danger-ops-card .grouping-card-header {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+}
+.grouping-card-header .card-title {
+  font-size: 1.05rem;
+  color: #1e293b;
+}
+.card-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.card-badge.safe {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+.card-badge.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+.grouping-card-body {
+  padding: 1.25rem;
+}
+.card-intro {
+  margin: 0 0 1rem 0;
+  font-size: 0.88rem;
+  color: #475569;
+  line-height: 1.5;
+}
+.grouping-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.grouping-actions-grid.two-cols {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.grouping-action-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: #f8fafc;
+}
+.grouping-action-box .action-meta b {
+  display: block;
+  font-size: 0.95rem;
+  color: #0f172a;
+  margin-bottom: 0.35rem;
+}
+.grouping-action-box .action-meta span {
+  display: block;
+  font-size: 0.84rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+.highlight-box.warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+.highlight-box.danger {
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+.box-badge-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  margin-bottom: 0.3rem;
+}
+.box-badge-tag.tag-warning {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+.box-badge-tag.tag-danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.box-desc {
+  font-size: 0.84rem;
+  color: #334155;
+  line-height: 1.6;
+}
+
 
 
 

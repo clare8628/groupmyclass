@@ -1,6 +1,6 @@
-/* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
-const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.55';   // 顯示於前台標題列，隨後端 API 自動同步更新
+/* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
+const APP_NAME = '113入學行銷真班分組與點名系統';
+let APP_VERSION = 'v2.56.20260923.105907';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -913,17 +913,37 @@ function courseTree() {
   </aside>`;
 }
 
+function teacherSubpageNav(viewTitle, c) {
+  return `
+  <div class="teacher-subpage-nav">
+    <div class="nav-actions">
+      <button class="btn btn-primary btn-sm" data-act="back-to-course" title="返回老師後台分組與課程主頁">
+        ⬅️ 返回老師後台主頁 Dashboard
+      </button>
+      <button class="btn btn-secondary btn-sm" type="button" data-act="history-back" title="回到上一頁">
+        ↩️ 回到上一頁 Back
+      </button>
+    </div>
+    <div class="nav-breadcrumbs">
+      <span class="crumb-root">老師後台</span>
+      <span class="crumb-sep">/</span>
+      ${c ? `<span class="crumb-course">${esc(courseLabel(c))}</span><span class="crumb-sep">/</span>` : ''}
+      <span class="crumb-current"><b>${esc(viewTitle)}</b></span>
+    </div>
+  </div>`;
+}
+
 function teacherScreen() {
   const c = cur();
   let main;
   if (teacherView === 'settings') {
-    main = teacherPasswordBlock(c);
+    main = teacherSubpageNav('密碼與安全性管理', c) + teacherPasswordBlock(c);
   } else if (teacherView === 'eval') {
-    main = teacherPeerEvalBlock(c);
+    main = teacherSubpageNav('學期成績加減分與組長評分控制', c) + teacherPeerEvalBlock(c);
   } else if (teacherView === 'logs') {
-    main = teacherLogsBlock(c);
+    main = teacherSubpageNav('分組異動日誌', c) + teacherLogsBlock(c);
   } else if (teacherView === 'attendance') {
-    main = teacherAttendanceBlock(c);
+    main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -1043,48 +1063,150 @@ function teacherCourse(c) {
   <div class="teacher-section">
     <h2>分組設定 Grouping setup <small>${esc(courseLabel(c))}</small></h2>
     ${courseForm(c)}
-    <div class="btn-row" style="margin-top:1rem">
-      <button class="btn btn-warning" data-act="clear-groups" title="只清除所有組別與學生組別分配，保留修課名單與課程">刪除分組（不刪名單與課程）Delete groups only</button>
-      ${c.hasSnapshot ? `
-        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
-      ` : ''}
-      <button class="btn btn-danger" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">刪除整個科目（含名單與分組）Delete course</button>
+    <div class="btn-row" style="margin-top:1rem;justify-content:flex-end;">
+      <button class="btn btn-danger btn-sm" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">🗑️ 刪除整個科目（含名單與分組）Delete course</button>
     </div>
   </div>
 
-  <div class="teacher-section">
-    <h2>分組管理 Grouping</h2>
+  <div class="teacher-section grouping-admin-section">
+    <div class="grouping-header-row">
+      <h2 style="margin:0;">👥 分組管理與組員分配 <small>Group Management (${esc(courseLabel(c))})</small></h2>
+      <div class="grouping-header-actions">
+        <button class="btn btn-secondary btn-sm" data-act="export-csv" title="匯出分組名單為 CSV 格式">📥 匯出 CSV</button>
+        <button class="btn btn-secondary btn-sm" data-act="export-json" title="匯出完整分組 JSON">📥 匯出 JSON</button>
+        <button class="btn btn-secondary btn-sm" data-act="view-course-logs" title="查看本課程組員異動日誌與操作歷史">📜 異動日誌 (${(c.logs || []).length})</button>
+      </div>
+    </div>
 
-    <!-- 分組截止時間設定 (置於分組管理區塊開頭) -->
-    <form data-act="set-course-deadline" class="grouping-deadline-bar">
-      <label>⏳ 分組截止時間 Deadline：</label>
+    <!-- 1. 分組截止時間設定列 -->
+    <form data-act="set-course-deadline" class="grouping-deadline-bar" style="margin-top:1rem;">
+      <label>⏳ 全體分組截止時間 Deadline：</label>
       <input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}">
       <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">儲存截止時間</button>
       ${c.deadline ? `
         <span class="deadline-status-tag ${deadlinePassed(c) ? 'closed' : 'open'}">
-          ${deadlinePassed(c) ? '🚫 已截止（未選學生已自動分配）Closed' : '🟢 分組進行中 Open'}
+          ${deadlinePassed(c) ? '🚫 已截止（逾時不解散原組，未選學生已自動分配）Closed' : '🟢 分組進行中 Open'}
         </span>
       ` : '<span style="font-size:0.82rem;color:#64748b;">(尚未設定截止時間)</span>'}
     </form>
 
-    <div class="stats">
+    <!-- 2. 四格狀態統計數據 -->
+    <div class="stats" style="margin-top:1rem;">
       <div class="stat"><div class="value">${total}</div><div class="label">總學生數 Students</div></div>
-      <div class="stat"><div class="value">${c.groups.length}</div><div class="label">組別數 Groups</div></div>
-      <div class="stat"><div class="value">${assigned}</div><div class="label">已分組 Assigned</div></div>
-      <div class="stat"><div class="value">${total - assigned}</div><div class="label">未分組 Unassigned</div></div>
+      <div class="stat"><div class="value">${c.groups.length}</div><div class="label">目前組數 Groups</div></div>
+      <div class="stat"><div class="value">${assigned}</div><div class="label">已分組人數 Assigned</div></div>
+      <div class="stat"><div class="value" style="color:${total - assigned > 0 ? '#e67e22' : '#27ae60'};">${total - assigned}</div><div class="label">未分組學生 Unassigned</div></div>
     </div>
-    <div class="btn-row">
-      <button class="btn btn-primary" data-act="make-groups" title="將重設並清空現有所有分組">建立空組別（清空現有）Create groups</button>
-      <button class="btn btn-success" data-act="make-remaining-groups" title="只針對未分組成員依規定人數建立新組別，現有組別與成員不變">針對剩餘組員建立組別 Create for unassigned</button>
-      <button class="btn btn-secondary" data-act="add-group">新增一組 Add group</button>
-      <button class="btn btn-secondary" data-act="auto-assign" title="隨機分配未分組學生，避開已完成編組的組別，不新增或刪減已完成分組的組別成員">隨機分配剩餘 Auto-assign</button>
-      <button class="btn btn-danger" data-act="clear-groups">清除本科目所有分組 Clear all groups</button>
-      ${c.hasSnapshot ? `
-        <button class="btn btn-undo" data-act="restore-snapshot" title="復原至上次清空或建立組別前的分組狀態">↩️ 回到上一步 (復原分組) Undo</button>
-      ` : ''}
-      <button class="btn btn-secondary" data-act="export-json">匯出 JSON</button>
-      <button class="btn btn-secondary" data-act="export-csv">匯出 CSV</button>
-      <button class="btn btn-secondary" data-act="view-course-logs" title="查看本課程組員異動日誌與操作歷史">📜 分組異動日誌 (${(c.logs || []).length})</button>
+
+    <!-- 3. 功能操作卡片群組 (三大模組分類) -->
+    <div class="grouping-cards-container" style="margin-top:1.5rem;">
+
+      <!-- 模組一：日常組別維護與擴展 (安全操作) -->
+      <div class="grouping-card safe-ops-card">
+        <div class="grouping-card-header">
+          <strong class="card-title">🟢 組別常態維護與增設 <small>Group Creation &amp; Expansion</small></strong>
+          <span class="card-badge safe">安全操作</span>
+        </div>
+        <div class="grouping-card-body">
+          <p class="card-intro">此區域操作<b>不會影響或清空</b>現有組別與成員，適合日常維護或截止後補足組別需求。</p>
+          <div class="grouping-actions-grid">
+            
+            <div class="grouping-action-box">
+              <div class="action-meta">
+                <b>➕ 手動新增單一組別</b>
+                <span>為本課程新增 1 個全新組別（第 ${c.groups.length + 1} 組），供學生自行加入或老師手動指派。</span>
+              </div>
+              <button class="btn btn-secondary" data-act="add-group">新增 1 組 Add Group</button>
+            </div>
+
+            <div class="grouping-action-box">
+              <div class="action-meta">
+                <b>👥 為未分組學生擴增組別</b>
+                <span>依每組 ${c.groupSize || 4} 人自動為剩餘 <b>${total - assigned} 位未分組學生</b> 計算並產生新組別模板。已分組之成員與組別完全不受影響。</span>
+              </div>
+              <button class="btn btn-success" data-act="make-remaining-groups" ${total - assigned === 0 ? 'disabled' : ''}>
+                針對剩餘 ${total - assigned} 人擴增組別
+              </button>
+            </div>
+
+            <div class="grouping-action-box">
+              <div class="action-meta">
+                <b>🎲 隨機分配未分組學生</b>
+                <span>將未分組學生隨機分派至未滿門檻（${minCap(c)}人）的組別。若現有組別皆已達上限，將自動開新組收納。已完成編組的組別成員完全不變。</span>
+              </div>
+              <button class="btn btn-primary" data-act="auto-assign" ${total - assigned === 0 ? 'disabled' : ''}>
+                隨機分配未分組學生 Auto-assign
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- 模組二：危險區域：全班分組重置 (清楚區分「重新建立空組」vs「清空所有組別」) -->
+      <div class="grouping-card danger-ops-card">
+        <div class="grouping-card-header">
+          <strong class="card-title">⚠️ 全班分組重設與清空 <small>Full Reset &amp; Clear（重要操作，請詳閱差異）</small></strong>
+          <span class="card-badge danger">高風險操作</span>
+        </div>
+        <div class="grouping-card-body">
+          <p class="card-intro" style="color:#b91c1c;">
+            以下操作將變更全班學生的組別分配狀態。系統於執行前均會<b>自動建立備份快照</b>，若有誤操作可隨時透過「回到上一步」復原。
+          </p>
+
+          <div class="grouping-actions-grid two-cols">
+            
+            <!-- 選項 A：重設並重新產生全班空白組別 -->
+            <div class="grouping-action-box highlight-box warning">
+              <div class="action-meta">
+                <div class="box-badge-tag tag-warning">全班重新分組模板</div>
+                <h4 style="margin:0.25rem 0 0.4rem;color:#b45309;">🔄 重新計算並建立全新空組別</h4>
+                <div class="box-desc">
+                  <b>【適用情境】：</b>學期初或全班推翻重來。<br>
+                  <b>【功能效果】：</b>依全班學生總數（${total}人）與每組規定人數（${c.groupSize || 4}人），<b>自動重新建立 ${Math.max(1, Math.ceil(total / Math.max(1, c.groupSize || 4)))} 個空白組別（第 1 ~ ${Math.max(1, Math.ceil(total / Math.max(1, c.groupSize || 4)))} 組）</b>。<br>
+                  <b>【學生狀態】：</b>現有分組名單全數清除，學生全體退回未分組。<br>
+                  <b>【修課名單】：</b>學生名單與帳號完整保留。
+                </div>
+              </div>
+              <button class="btn btn-warning" data-act="make-groups" style="width:100%;margin-top:0.75rem;">
+                🔄 重新建立全新空組別（清空現有）
+              </button>
+            </div>
+
+            <!-- 選項 B：清空所有組別（組數歸零） -->
+            <div class="grouping-action-box highlight-box danger">
+              <div class="action-meta">
+                <div class="box-badge-tag tag-danger">組別全數刪除歸零</div>
+                <h4 style="margin:0.25rem 0 0.4rem;color:#b91c1c;">🗑️ 清空所有組別（不建立新組，組數歸零）</h4>
+                <div class="box-desc">
+                  <b>【適用情境】：</b>暫時移除所有組別，或改為由學生自創組別。<br>
+                  <b>【功能效果】：</b><b>刪除本科目現存的所有組別，組別總數變為 0 組</b>（不會自動產生任何新組別）。<br>
+                  <b>【學生狀態】：</b>全體學生釋出為未分組。<br>
+                  <b>【修課名單】：</b>學生名單與帳號完整保留。
+                </div>
+              </div>
+              <button class="btn btn-danger" data-act="clear-groups" style="width:100%;margin-top:0.75rem;">
+                🗑️ 清空所有組別（組別數歸 0）
+              </button>
+            </div>
+
+          </div>
+
+          <!-- 快照復原提示列 -->
+          ${c.hasSnapshot ? `
+            <div class="undo-snapshot-banner" style="margin-top:1rem;padding:0.85rem 1.1rem;background:#ecfdf5;border:1.5px solid #10b981;border-radius:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+              <div style="color:#065f46;font-size:0.9rem;">
+                <b>🛡️ 系統已自動備份上次分組快照</b>：如剛剛點擊了清空或重設組別，可立即點擊右側按鈕一鍵還原！
+              </div>
+              <button class="btn btn-undo" data-act="restore-snapshot" style="padding:0.45rem 1.1rem;font-weight:700;margin:0;">
+                ↩️ 回到上一步 (復原分組狀態) Undo
+              </button>
+            </div>
+          ` : ''}
+
+        </div>
+      </div>
+
     </div>
 
     <!-- 勾選要刪除的分組組別 -->
@@ -2738,17 +2860,30 @@ app.addEventListener('click', e => {
     document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
+function setTeacherView(newView, courseId = null, pushHistory = true) {
+  if (courseId !== null && courseId !== undefined) {
+    state.currentId = courseId;
+    localStorage.setItem(CURRENT_KEY, state.currentId);
+  }
+  teacherView = newView;
+  if (pushHistory) {
+    try {
+      window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.href);
+    } catch (_) {}
+  }
+  render();
+  if (teacherView === 'logs') {
+    const curCourse = cur();
+    if (curCourse) loadCourseLogs(curCourse.id);
+  }
+}
+
   if (a === 'show-student-login') { e.preventDefault(); loginMode = loginMode === 'student' ? null : 'student'; return render(); }
   if (a === 'close-login') { loginMode = null; return render(); }
-  if (a === 'sys-password') { teacherView = 'settings'; return render(); }
-  if (a === 'sys-peer-eval') { teacherView = 'eval'; return render(); }
-  if (a === 'sys-logs') {
-    teacherView = 'logs';
-    render();
-    if (c) loadCourseLogs(c.id);
-    return;
-  }
-  if (a === 'sys-attendance') { teacherView = 'attendance'; attendanceEditingId = null; return render(); }
+  if (a === 'sys-password') { return setTeacherView('settings'); }
+  if (a === 'sys-peer-eval') { return setTeacherView('eval'); }
+  if (a === 'sys-logs') { return setTeacherView('logs'); }
+  if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
   if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
   if (a === 'cancel-edit-attendance-session') { attendanceEditingId = null; return render(); }
   if (a === 'del-attendance-session') {
@@ -2778,18 +2913,14 @@ app.addEventListener('click', e => {
     });
   }
   if (a === 'view-course-logs') {
-    if (id) state.currentId = id;
-    teacherView = 'logs';
-    render();
-    const curCourse = cur();
-    if (curCourse) loadCourseLogs(curCourse.id);
-    return;
+    return setTeacherView('logs', id || null);
   }
   if (a === 'refresh-course-logs') {
     if (c) loadCourseLogs(c.id, true);
     return;
   }
-  if (a === 'back-to-course') { teacherView = 'course'; return render(); }
+  if (a === 'back-to-course') { return setTeacherView('course'); }
+  if (a === 'history-back') { window.history.back(); return; }
   if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; return render(); }
   if (a === 'export-logs-csv') { return c && exportLogsCSV(c); }
   if (a === 'clear-course-logs') {
@@ -2799,14 +2930,10 @@ app.addEventListener('click', e => {
     return act('teacher:clear-logs', { courseId: c.id });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    state.currentId = id || btn.value;
-    if (teacherView !== 'eval' && teacherView !== 'logs') {
-      teacherView = 'course';
-    }
-    localStorage.setItem(CURRENT_KEY, state.currentId);
-    return render();
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance') ? teacherView : 'course';
+    return setTeacherView(nextView, id || btn.value);
   }
-  if (a === 'new-course') { state.currentId = null; teacherView = 'course'; return render(); }
+  if (a === 'new-course') { state.currentId = null; return setTeacherView('course', null); }
 
   if (a === 'del-course') {
     const target = state.courses.find(x => x.id === id);
@@ -2820,7 +2947,8 @@ app.addEventListener('click', e => {
   if (a === 'make-groups') {
     if (!c) return;
     if (!c.students.length) return alert('請先匯入學生名單 Import roster first');
-    if (!confirm('將重建組別並清空現有分組，確定？\n\n系統將自動備份當前狀態，稍後如有需要可點擊「回到上一步」復原。')) return;
+    const n = Math.max(1, Math.ceil(c.students.length / Math.max(1, c.groupSize || 4)));
+    if (!confirm(`確定要【重新計算並建立全新空組別】？\n\n📌 動作說明：\n1. 將清除現有所有分組，全班 ${c.students.length} 位學生退回未分組狀態。\n2. 系統將依每組 ${c.groupSize || 4} 人，重新產生 ${n} 個全新的空白組別（第 1 ~ 第 ${n} 組）。\n3. 學生名單與登入帳號完整保留。\n\n系統已自動建立備份快照，稍後如有需要可點擊「回到上一步」復原。確定執行？`)) return;
     return act('teacher:make-groups', { courseId: c.id });
   }
   if (a === 'make-remaining-groups') {
@@ -2840,8 +2968,8 @@ app.addEventListener('click', e => {
   if (a === 'add-group') { if (!c) return; return act('teacher:add-group', { courseId: c.id }); }
   if (a === 'clear-groups') {
     if (!c) return;
-    if (!c.groups.length) return alert('本科目尚無分組 No groups to clear');
-    if (!confirm(`確定刪除「${courseLabel(c)}」的所有分組？\n\n注意：學生名單與分組設定皆會完整保留，僅清空組別與組別分配。\n系統將自動備份，稍後如有需要可點擊「回到上一步」復原。`)) return;
+    if (!c.groups.length) return alert('本科目目前已無任何組別 No groups to clear');
+    if (!confirm(`⚠️ 確定要【清空所有組別（組別數歸 0）】？\n\n📌 動作說明：\n1. 將刪除現有的全部 ${c.groups.length} 個組別，組別數將變為 0 組（不會自動產生任何新組別）。\n2. 全班學生全數退回未分組狀態。\n3. 學生名單與登入帳號完整保留。\n\n系統已自動建立備份快照，稍後如有需要可點擊「回到上一步」復原。確定執行？`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
   }
   if (a === 'select-all-del-groups') {
@@ -3060,8 +3188,35 @@ app.addEventListener('input', e => {
   }
 });
 
+/* ===== 瀏覽器上一頁／下一頁 (popstate) 支援 ===== */
+window.addEventListener('popstate', e => {
+  if (e.state && e.state.teacherView !== undefined) {
+    teacherView = e.state.teacherView;
+    if (e.state.currentId !== undefined && e.state.currentId !== state.currentId) {
+      state.currentId = e.state.currentId;
+      localStorage.setItem(CURRENT_KEY, state.currentId);
+    }
+    render();
+    if (teacherView === 'logs') {
+      const curCourse = cur();
+      if (curCourse) loadCourseLogs(curCourse.id);
+    }
+  } else {
+    if (teacherView !== 'course') {
+      teacherView = 'course';
+      render();
+    }
+  }
+});
+
 /* ===== 啟動 ===== */
 (async function start() {
+  try {
+    if (!window.history.state) {
+      window.history.replaceState({ teacherView, currentId: state.currentId }, '', window.location.href);
+    }
+  } catch (_) {}
+
   try {
     apply(await apiGet());
   } catch (err) {
@@ -3074,3 +3229,4 @@ app.addEventListener('input', e => {
   setInterval(poll, POLL_MS);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 })();
+
