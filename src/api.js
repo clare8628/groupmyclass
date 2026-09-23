@@ -1,6 +1,6 @@
 import {
   json, bad, sha256, makeToken, readSession, sessionCookie, clearCookie,
-  loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq,
+  loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq, parseDate,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getStateVersion, invalidateStateCache, getCourseLogs,
@@ -161,6 +161,16 @@ export async function handleAction(request, env, db, body) {
       const nowStr = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
       const noticeVal = body.notice !== undefined ? String(body.notice) : '';
       const noticeTime = (exists && exists.notice === noticeVal && exists.noticeTime) ? exists.noticeTime : nowStr;
+      const newDeadline = body.deadline || '';
+
+      // 若老師重設或延後截止時間（新時間在未來），重置 deadline_assigned 為 0，以便新截止時間到達時能再次執行一次自動分組
+      let deadlineAssignedVal = exists && exists.deadlineAssigned ? 1 : 0;
+      if (!exists) {
+        deadlineAssignedVal = 0;
+      } else if (newDeadline !== (exists.deadline || '')) {
+        const isFuture = !!newDeadline && parseDate(newDeadline) > Date.now();
+        deadlineAssignedVal = isFuture ? 0 : (newDeadline ? 1 : 0);
+      }
 
       const args = [
         body.year || '',
@@ -168,14 +178,15 @@ export async function handleAction(request, env, db, body) {
         Number(body.groupSize) || 4,
         Number(body.tolerance) || 0,
         Number(body.maxBonus) > 0 ? Number(body.maxBonus) : 10,
-        body.deadline || '',
+        newDeadline,
+        deadlineAssignedVal,
         noticeVal,
         noticeTime,
       ];
       if (exists) {
-        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, max_bonus=?, deadline=?, notice=?, notice_time=? WHERE id=?').bind(...args, id).run();
+        await db.prepare('UPDATE courses SET year=?, subject=?, group_size=?, tolerance=?, max_bonus=?, deadline=?, deadline_assigned=?, notice=?, notice_time=? WHERE id=?').bind(...args, id).run();
       } else {
-        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, max_bonus, deadline, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, max_bonus, deadline, deadline_assigned, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
           .bind(id, ...args, Date.now()).run();
       }
       return ok({ courseId: id });
@@ -526,12 +537,15 @@ export async function handleAction(request, env, db, body) {
       const min = minCap(c);
       const max = cap(c);
 
-      // 篩選出「尚未完成分組」的組別（成員數小於最低門檻 minCap）
-      // 已達到或超過最低門檻的組別視為「已完成編組的組別」，嚴格避開，不可新增或刪減其成員
+      // 1. 優先篩選「尚未完成分組」的組別（成員數小於最低門檻 minCap）
       let candidateGroups = c.groups.filter(g => membersOf(c, g.id).length < min);
 
-      // 若目前沒有任何未滿門檻的組別，但仍有剩餘未分組學生，
-      // 則依每組規定人數建立新的組別供剩餘學生分配，絕不更動已完成分組的組別
+      // 2. 若所有組別皆已達最低門檻，則依「隨機加入人數較少的組別」規則，篩選尚未達人數上限（< max）的現有組別
+      if (!candidateGroups.length) {
+        candidateGroups = c.groups.filter(g => membersOf(c, g.id).length < max);
+      }
+
+      // 3. 若現有組別皆已達人數上限（或完全無組別），動態建立新組別供剩餘學生分配
       if (!candidateGroups.length) {
         const groupSize = Math.max(1, Number(c.groupSize) || 4);
         const needNewGroups = Math.max(1, Math.ceil(unassignedStudents.length / groupSize));

@@ -91,6 +91,19 @@ async function ensureGroupSchema(db) {
     await db.prepare('ALTER TABLE courses ADD COLUMN max_bonus INTEGER NOT NULL DEFAULT 10').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN deadline_assigned INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      UPDATE courses 
+      SET deadline_assigned = 1 
+      WHERE deadline_assigned = 0 AND (
+        id IN (SELECT DISTINCT course_id FROM activity_logs WHERE operator_role = 'system' AND action_type = 'auto-assign')
+        OR (deadline != '' AND deadline IS NOT NULL AND deadline <= strftime('%Y-%m-%dT%H:%M', 'now', '+8 hours'))
+      )
+    `).run();
+  } catch (_) {}
+  try {
     await db.prepare('ALTER TABLE groups ADD COLUMN peer_eval_open INTEGER NOT NULL DEFAULT 0').run();
   } catch (_) {}
   try {
@@ -253,6 +266,28 @@ export async function ensureGroup3Restored(db) {
     _checkedGroup3Restored = true;
   } catch (err) {
     console.error('Failed to ensure group 3 restored:', err);
+  }
+}
+
+let _checkedPanReleased = false;
+export async function ensurePanReleased(db) {
+  if (_checkedPanReleased) return;
+  try {
+    // 檢查潘氏哥詩 (41461D47) 是否在截止後遭系統重複觸發誤分派至第3組（auto_assigned = 1 且在 g_3）
+    const student = await db.prepare('SELECT course_id, group_id, auto_assigned FROM students WHERE id = ?')
+      .bind('41461D47').first();
+    if (student && student.group_id === 'g_3' && Number(student.auto_assigned) === 1) {
+      await db.prepare('UPDATE students SET group_id = NULL, auto_assigned = 0 WHERE id = ?')
+        .bind('41461D47').run();
+      await db.prepare(`
+        INSERT INTO activity_logs (course_id, group_id, group_name, operator_role, operator_id, operator_name, action_type, target_id, target_name, detail, created_at)
+        VALUES (?, '', '', 'system', 'system', '系統', 'fix-unassign', '41461D47', '潘氏哥詩', '系統修正：恢復組員 潘氏哥詩 (41461D47) 至未分組名單（先前因截止自動分組重複觸發而誤分派至第3組）', ?)
+      `).bind(student.course_id, Date.now()).run();
+      invalidateStateCache();
+    }
+    _checkedPanReleased = true;
+  } catch (err) {
+    console.error('Failed to ensure Pan released:', err);
   }
 }
 
@@ -470,6 +505,7 @@ export async function loadState(db) {
   await ensureGroupSchema(db);
   await ensureAttendanceSchema(db);
   await ensureGroup3Restored(db);
+  await ensurePanReleased(db);
   const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
@@ -507,6 +543,7 @@ export async function loadState(db) {
       groupSize: c.group_size, tolerance: c.tolerance,
       maxBonus: maxBonusVal,
       deadline: c.deadline,
+      deadlineAssigned: !!c.deadline_assigned,
       notice: c.notice !== undefined && c.notice !== null ? c.notice : defaultNotice(maxBonusVal),
       noticeTime: c.notice_time || (c.created_at ? new Date(c.created_at + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''),
       hasSnapshot: snapshotSet.has(c.id),
@@ -569,11 +606,17 @@ export function shuffle(a) {
 
 /* 逾時：
    重要分組規則：原始編組不動（不解散人數未達最低門檻之組別），
-   僅將剩餘未被挑選者隨機分配至組別並標示自動。 */
+   僅在分組截止時「執行一次」將剩餘未被挑選者隨機分配至組別並標示自動。
+   後續若有成員被釋出，將持續保留在未分配名單中，由組長挑選、老師指派或老師手動按鈕隨機分配。 */
 export async function applyDeadline(db, courses) {
   const stmts = [];
   for (const c of courses) {
     if (!deadlinePassed(c) || !c.groups.length) continue;
+    // 每個截止時限只會執行一次自動分組，已執行過者直接略過
+    if (c.deadlineAssigned) continue;
+
+    c.deadlineAssigned = true;
+    stmts.push(db.prepare('UPDATE courses SET deadline_assigned = 1 WHERE id = ?').bind(c.id));
 
     // 將未分組學生隨機分配至現有組別（優先分配至人數較少的組別）
     const unassigned = c.students.filter(x => !x.groupId);

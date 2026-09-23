@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS courses (
   group_size  INTEGER NOT NULL DEFAULT 4,
   tolerance   INTEGER NOT NULL DEFAULT 1,
   max_bonus   INTEGER NOT NULL DEFAULT 10,
-  deadline    TEXT NOT NULL DEFAULT '',
-  notice      TEXT NOT NULL DEFAULT '',
-  notice_time TEXT NOT NULL DEFAULT '',
-  created_at  INTEGER NOT NULL
+  deadline          TEXT NOT NULL DEFAULT '',
+  deadline_assigned INTEGER NOT NULL DEFAULT 0,
+  notice            TEXT NOT NULL DEFAULT '',
+  notice_time       TEXT NOT NULL DEFAULT '',
+  created_at        INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS groups (
