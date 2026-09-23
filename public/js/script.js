@@ -1,9 +1,30 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.60.20260923.124556';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.61.20260923.131020';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
+const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目前檢視功能頁面，重新整理不遺失
+
+function parseViewFromHash() {
+  const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
+  if (['attendance', 'logs', 'eval', 'settings', 'course'].includes(h)) return h;
+  return null;
+}
+
+function getInitialTeacherView() {
+  const fromHash = parseViewFromHash();
+  if (fromHash) return fromHash;
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course'].includes(window.history.state.teacherView)) {
+    return window.history.state.teacherView;
+  }
+  const saved = localStorage.getItem(TEACHER_VIEW_KEY);
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course'].includes(saved)) {
+    return saved;
+  }
+  return 'course';
+}
+
 const POLL_MS = 15000; // 延長輪詢至 15 秒（操作者自身操作即時響應，15 秒足以同步他人異動）
 let lastEtag = '';
 let lastUserActivity = Date.now();
@@ -17,7 +38,7 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
-let teacherView = 'course';   // 後台主區：'course' | 'settings' | 'eval' | 'logs'
+let teacherView = getInitialTeacherView();   // 後台主區：'course' | 'settings' | 'eval' | 'logs' | 'attendance'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
 let logSearchText = '';       // 異動日誌搜尋關鍵字
@@ -3352,6 +3373,10 @@ app.addEventListener('click', e => {
         teacherView = 'course';
         teacherPreviewMode = 'admin';
         localStorage.removeItem(PREVIEW_KEY);
+        localStorage.removeItem(TEACHER_VIEW_KEY);
+        try {
+          window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        } catch (_) {}
       }
     });
   }
@@ -3376,9 +3401,18 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
   teacherView = newView;
+  localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
+
+  const targetHash = (teacherView && teacherView !== 'course') ? `#${teacherView}` : '';
+  const targetUrl = window.location.pathname + window.location.search + targetHash;
+
   if (pushHistory) {
     try {
-      window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.href);
+      window.history.pushState({ teacherView, currentId: state.currentId }, '', targetUrl);
+    } catch (_) {}
+  } else {
+    try {
+      window.history.replaceState({ teacherView, currentId: state.currentId }, '', targetUrl);
     } catch (_) {}
   }
   render();
@@ -3440,7 +3474,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return act('teacher:clear-logs', { courseId: c.id });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'settings') ? teacherView : 'course';
     return setTeacherView(nextView, id || btn.value);
   }
   if (a === 'new-course') { state.currentId = null; return setTeacherView('course', null); }
@@ -3698,33 +3732,49 @@ app.addEventListener('input', e => {
   }
 });
 
-/* ===== 瀏覽器上一頁／下一頁 (popstate) 支援 ===== */
+/* ===== 瀏覽器上一頁／下一頁 (popstate) 與 hashchange 支援 ===== */
 window.addEventListener('popstate', e => {
+  let newView = null;
   if (e.state && e.state.teacherView !== undefined) {
-    teacherView = e.state.teacherView;
-    if (e.state.currentId !== undefined && e.state.currentId !== state.currentId) {
-      state.currentId = e.state.currentId;
-      localStorage.setItem(CURRENT_KEY, state.currentId);
-    }
+    newView = e.state.teacherView;
+  } else {
+    newView = parseViewFromHash() || 'course';
+  }
+  if (newView && newView !== teacherView) {
+    teacherView = newView;
+    localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
+  }
+  if (e.state && e.state.currentId !== undefined && e.state.currentId !== state.currentId) {
+    state.currentId = e.state.currentId;
+    localStorage.setItem(CURRENT_KEY, state.currentId);
+  }
+  render();
+  if (teacherView === 'logs') {
+    const curCourse = cur();
+    if (curCourse) loadCourseLogs(curCourse.id);
+  }
+});
+
+window.addEventListener('hashchange', () => {
+  const fromHash = parseViewFromHash();
+  if (fromHash && fromHash !== teacherView) {
+    teacherView = fromHash;
+    localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
     render();
     if (teacherView === 'logs') {
       const curCourse = cur();
       if (curCourse) loadCourseLogs(curCourse.id);
-    }
-  } else {
-    if (teacherView !== 'course') {
-      teacherView = 'course';
-      render();
     }
   }
 });
 
 /* ===== 啟動 ===== */
 (async function start() {
+  teacherView = getInitialTeacherView();
   try {
-    if (!window.history.state) {
-      window.history.replaceState({ teacherView, currentId: state.currentId }, '', window.location.href);
-    }
+    const targetHash = (teacherView && teacherView !== 'course') ? `#${teacherView}` : '';
+    const targetUrl = window.location.pathname + window.location.search + targetHash;
+    window.history.replaceState({ teacherView, currentId: state.currentId }, '', targetUrl);
   } catch (_) {}
 
   try {
@@ -3736,6 +3786,10 @@ window.addEventListener('popstate', e => {
     return;
   }
   render();
+  if (teacherView === 'logs') {
+    const curCourse = cur();
+    if (curCourse) loadCourseLogs(curCourse.id);
+  }
   setInterval(poll, POLL_MS);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 })();
