@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.58.20260923.114550';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.59.20260923.115512';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -27,6 +27,8 @@ let publicAttendanceStatScope = 'all'; // 前台缺席統計範圍：預設 'all
 let leaderAttendanceStatScope = 'all'; // 組長後台缺席統計範圍：預設 'all'（整學期）| 'date'（依日期）
 let attendanceStatDate = '';        // 缺席統計所選日期，預設為今天
 let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
+let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
+let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentName, studentId, details: [] } | null
 let busy = false;
 let lastSig = '';
@@ -883,7 +885,7 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
   const counts = attendanceAbsentCounts(c, currentScope === 'date' ? (attendanceStatDate || todayDateStr()) : null, filterIds);
 
   const listSource = filterMates || c.students;
-  const leaderboard = Object.entries(counts)
+  const leaderboardAll = Object.entries(counts)
     .map(([key, n]) => {
       const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === key || r.ref === key);
       const targetRef = matchingRec ? matchingRec.ref : key;
@@ -902,10 +904,36 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
         count: n,
       };
     })
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
+    .sort((a, b) => b.count - a.count);
+
+  const pageSize = limit || 15;
+  const totalPages = Math.max(1, Math.ceil(leaderboardAll.length / pageSize));
+  if (publicAttendanceLeaderboardPage > totalPages) publicAttendanceLeaderboardPage = totalPages;
+  if (publicAttendanceLeaderboardPage < 1) publicAttendanceLeaderboardPage = 1;
+  const startIndex = (publicAttendanceLeaderboardPage - 1) * pageSize;
+  const leaderboard = leaderboardAll.slice(startIndex, startIndex + pageSize);
 
   const dateStr = attendanceStatDate || todayDateStr();
+
+  const paginationHtml = leaderboardAll.length > pageSize ? `
+    <div class="leaderboard-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.6rem 0.25rem 0.15rem;border-top:1px solid #f1f5f9;margin-top:0.5rem;">
+      <div style="font-size:0.8rem;color:#64748b;">
+        第 <b>${startIndex + 1} - ${Math.min(startIndex + pageSize, leaderboardAll.length)}</b> 名 / 共 <b>${leaderboardAll.length}</b> 名（第 <b>${publicAttendanceLeaderboardPage} / ${totalPages}</b> 頁）
+      </div>
+      <div style="display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;">
+        <button class="pagination-btn" data-act="set-public-leaderboard-page" data-page="${publicAttendanceLeaderboardPage - 1}" ${publicAttendanceLeaderboardPage <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+          ◀ 上一頁
+        </button>
+        ${Array.from({ length: totalPages }, (_, idx) => idx + 1).map(p => `
+          <button class="pagination-page-btn ${p === publicAttendanceLeaderboardPage ? 'active' : ''}" data-act="set-public-leaderboard-page" data-page="${p}" style="${p === publicAttendanceLeaderboardPage ? 'font-weight:750;background:#3b82f6;color:#fff;border-color:#3b82f6;' : ''}">
+            ${p}
+          </button>
+        `).join('')}
+        <button class="pagination-btn" data-act="set-public-leaderboard-page" data-page="${publicAttendanceLeaderboardPage + 1}" ${publicAttendanceLeaderboardPage >= totalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+          下一頁 ▶
+        </button>
+      </div>
+    </div>` : '';
 
   return `
   <div class="absence-leaderboard-box ${isPublicFlow ? 'public-flow' : ''}">
@@ -934,21 +962,26 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
           </tr>
         </thead>
         <tbody>
-          ${leaderboard.map((l, i) => `
-          <tr>
-            <td><span style="font-weight:700;color:${i === 0 ? '#b91c1c' : i === 1 ? '#ea580c' : i === 2 ? '#d97706' : '#64748b'};">${i + 1}</span></td>
-            <td>${esc(l.id)}</td>
-            <td><b>${esc(l.name)}</b></td>
-            <td><span class="group-name-tag" style="font-size:0.75rem;">${esc(l.groupName)}</span></td>
-            <td style="text-align:center;">
-              <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.key)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細 / Click to view absent dates & activities">
-                ⚠️ ${l.count} 次
-              </button>
-            </td>
-          </tr>`).join('')}
+          ${leaderboard.map((l, i) => {
+            const rank = startIndex + i + 1;
+            return `
+            <tr>
+              <td><span style="font-weight:700;color:${rank === 1 ? '#b91c1c' : rank === 2 ? '#ea580c' : rank === 3 ? '#d97706' : '#64748b'};">${rank}</span></td>
+              <td>${esc(l.id)}</td>
+              <td><b>${esc(l.name)}</b></td>
+              <td><span class="group-name-tag" style="font-size:0.75rem;">${esc(l.groupName)}</span></td>
+              <td style="text-align:center;">
+                <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.key)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細 / Click to view absent dates & activities">
+                  ⚠️ ${l.count} 次
+                </button>
+              </td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
-    </div>` : '<p class="file-path" style="margin:0.25rem 0 0;font-size:0.84rem;color:#166534;">✅ 統計範圍內目前無任何組員缺席紀錄 No absence records found.</p>'}
+    </div>
+    ${paginationHtml}
+    ` : '<p class="file-path" style="margin:0.25rem 0 0;font-size:0.84rem;color:#166534;">✅ 統計範圍內目前無任何組員缺席紀錄 No absence records found.</p>'}
   </div>`;
 }
 
@@ -1980,9 +2013,9 @@ function teacherAttendanceBlock(c) {
   /* ---- 4. 點名人員任務執行表現學期排行榜 ---- */
   const markerLeaderboard = calcRollCallPerformance(c);
 
-  /* ---- 5. 組員缺席排行榜 ---- */
+  /* ---- 5. 組員缺席排行榜（支援每頁 15 筆分頁瀏覽） ---- */
   const counts = attendanceAbsentCounts(c, attendanceStatScope === 'date' ? attendanceStatDate : null);
-  const leaderboard = Object.entries(counts)
+  const leaderboardAll = Object.entries(counts)
     .map(([sid, n]) => {
       const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === sid || r.ref === sid);
       const targetRef = matchingRec ? matchingRec.ref : sid;
@@ -1994,8 +2027,15 @@ function teacherAttendanceBlock(c) {
       const displayId = targetSid || (st ? st.id : sid);
       return { id: displayId, name: studentName, groupName: groupName, count: n };
     })
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 15);
+    .sort((a, b) => b.count - a.count);
+
+  const leaderboardPageSize = 15;
+  const leaderboardTotalPages = Math.max(1, Math.ceil(leaderboardAll.length / leaderboardPageSize));
+  if (attendanceLeaderboardPage > leaderboardTotalPages) attendanceLeaderboardPage = leaderboardTotalPages;
+  if (attendanceLeaderboardPage < 1) attendanceLeaderboardPage = 1;
+
+  const leaderboardStartIndex = (attendanceLeaderboardPage - 1) * leaderboardPageSize;
+  const leaderboard = leaderboardAll.slice(leaderboardStartIndex, leaderboardStartIndex + leaderboardPageSize);
 
   return `
   <div class="teacher-section">
@@ -2252,21 +2292,43 @@ function teacherAttendanceBlock(c) {
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
         <thead><tr><th>排名</th><th>學號</th><th>姓名</th><th>組別</th><th style="text-align:center;">缺席次數</th></tr></thead>
-        <tbody>${leaderboard.map((l, i) => `
+        <tbody>${leaderboard.map((l, i) => {
+          const rank = leaderboardStartIndex + i + 1;
+          return `
           <tr>
-            <td>${i + 1}</td>
+            <td><span style="font-weight:700;color:${rank === 1 ? '#b91c1c' : rank === 2 ? '#ea580c' : rank === 3 ? '#d97706' : '#64748b'};">${rank}</span></td>
             <td>${esc(l.id)}</td>
-            <td>${esc(l.name)}</td>
+            <td><b>${esc(l.name)}</b></td>
             <td>${esc(l.groupName)}</td>
             <td style="text-align:center;">
               <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.id)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細">
                 ⚠️ ${l.count} 次
               </button>
             </td>
-          </tr>
-        `).join('')}</tbody>
+          </tr>`;
+        }).join('')}</tbody>
       </table>
-    </div>` : '<p class="file-path">目前無缺席紀錄。</p>'}
+    </div>
+    ${leaderboardAll.length > leaderboardPageSize ? `
+    <div class="leaderboard-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;padding:0.75rem 0.25rem 0.25rem;border-top:1px solid #f1f5f9;margin-top:0.75rem;">
+      <div style="font-size:0.85rem;color:#64748b;">
+        顯示第 <b>${leaderboardStartIndex + 1} - ${Math.min(leaderboardStartIndex + leaderboardPageSize, leaderboardAll.length)}</b> 名（共 <b>${leaderboardAll.length}</b> 名缺席組員，頁次 <b>${attendanceLeaderboardPage} / ${leaderboardTotalPages}</b>）
+      </div>
+      <div style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap;">
+        <button class="pagination-btn" data-act="set-attendance-leaderboard-page" data-page="${attendanceLeaderboardPage - 1}" ${attendanceLeaderboardPage <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+          ◀ 上一頁
+        </button>
+        ${Array.from({ length: leaderboardTotalPages }, (_, idx) => idx + 1).map(p => `
+          <button class="pagination-page-btn ${p === attendanceLeaderboardPage ? 'active' : ''}" data-act="set-attendance-leaderboard-page" data-page="${p}" style="${p === attendanceLeaderboardPage ? 'font-weight:750;background:#3b82f6;color:#fff;border-color:#3b82f6;' : ''}">
+            ${p}
+          </button>
+        `).join('')}
+        <button class="pagination-btn" data-act="set-attendance-leaderboard-page" data-page="${attendanceLeaderboardPage + 1}" ${attendanceLeaderboardPage >= leaderboardTotalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+          下一頁 ▶
+        </button>
+      </div>
+    </div>` : ''}
+    ` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
 }
 
@@ -3245,6 +3307,22 @@ app.addEventListener('click', e => {
     exportMarkerLeaderboardCSV(c);
     return;
   }
+  if (a === 'set-attendance-leaderboard-page') {
+    const page = parseInt(btn.dataset.page, 10);
+    if (page && page > 0) {
+      attendanceLeaderboardPage = page;
+      return render();
+    }
+    return;
+  }
+  if (a === 'set-public-leaderboard-page') {
+    const page = parseInt(btn.dataset.page, 10);
+    if (page && page > 0) {
+      publicAttendanceLeaderboardPage = page;
+      return render();
+    }
+    return;
+  }
   if (a === 'view-absence-detail') {
     if (!c) return;
     const studentKey = btn.dataset.student;
@@ -3591,10 +3669,10 @@ app.addEventListener('change', e => {
     if (deadline === null) return;
     return act('teacher:set-attendance-unlock', { courseId: c.id, sessionId: id, groupId, allow: true, deadline: deadline.trim() });
   }
-  if (a === 'attendance-stat-date') { attendanceStatDate = t.value; return render(); }
-  if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; return render(); }
-  if (a === 'public-attendance-stat-scope') { publicAttendanceStatScope = t.value; return render(); }
-  if (a === 'leader-attendance-stat-scope') { leaderAttendanceStatScope = t.value; return render(); }
+  if (a === 'attendance-stat-date') { attendanceStatDate = t.value; attendanceLeaderboardPage = 1; return render(); }
+  if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; attendanceLeaderboardPage = 1; return render(); }
+  if (a === 'public-attendance-stat-scope') { publicAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
+  if (a === 'leader-attendance-stat-scope') { leaderAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
   if (a === 'attendance-progress-session') { attendanceProgressSessionId = t.value; return render(); }
   if (a === 'assign-attendance-delegate') {
     const delegateId = t.value;
