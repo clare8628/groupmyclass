@@ -534,11 +534,14 @@ export async function loadState(db) {
         createdAt: 0,
       });
     }
-    courseObj.attendanceRecords = (attRecords.results || []).filter(x => x.course_id === c.id).map(x => ({
-      sessionId: x.session_id, studentId: x.student_id, groupId: x.group_id || '', status: x.status,
-      markedById: x.marked_by_id || '', markedByName: x.marked_by_name || '',
-      createdAt: x.created_at || x.updated_at, updatedAt: x.updated_at,
-    }));
+    courseObj.attendanceRecords = (attRecords.results || []).filter(x => x.course_id === c.id).map(x => {
+      const matchedSt = !x.marked_by_id && x.marked_by_name ? courseObj.students.find(s => s.name === x.marked_by_name) : null;
+      return {
+        sessionId: x.session_id, studentId: x.student_id, groupId: x.group_id || '', status: x.status,
+        markedById: x.marked_by_id || (matchedSt ? matchedSt.id : ''), markedByName: x.marked_by_name || (matchedSt ? matchedSt.name : ''),
+        createdAt: x.created_at || x.updated_at, updatedAt: x.updated_at,
+      };
+    });
     courseObj.attendanceUnlocks = (attUnlocks.results || []).filter(x => x.course_id === c.id).map(x => ({
       sessionId: x.session_id, groupId: x.group_id || '', deadline: x.deadline || '', createdAt: x.created_at,
     }));
@@ -718,6 +721,7 @@ export async function publicize(db, env, courses, session) {
           sessionId: r.sessionId,
           groupId: r.groupId,
           status: r.status,
+          markedById: r.markedById || '',
           markedByName: r.markedByName,
           updatedAt: r.updatedAt,
           studentId: r.studentId,

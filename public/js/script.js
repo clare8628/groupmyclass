@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.56.20260923.105907';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.57.20260923.111726';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -258,17 +258,290 @@ const attendanceSessionLabel = s => {
   const namePart = isDaily ? '一般日常點名 Daily（Điểm danh hàng ngày）' : s.name;
   return [s.date, s.timeSlot, namePart].filter(Boolean).join(' · ');
 };
-/* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄），並列出尚未被點名的組員（含組長／副組長） */
+/* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄），並列出尚未被點名的組員（含組長／副組長）與點名執行者 */
 function attendanceGroupProgress(c, sessionId) {
   const recs = attendanceRecordsFor(c, sessionId).filter(r => r.status === 'present' || r.status === 'absent');
   return c.groups.map(g => {
     const mates = members(c, g.id);
-    const recordedIds = new Set(recs.filter(r => r.groupId === g.id).map(r => r.studentId));
+    const groupRecs = recs.filter(r => r.groupId === g.id);
+    const recordedIds = new Set(groupRecs.map(r => r.studentId));
     const missing = mates.filter(m => !recordedIds.has(m.id));
     const total = mates.length;
     const done = total - missing.length;
-    return { group: g, total, done, missing, complete: total > 0 && missing.length === 0 };
+    const complete = total > 0 && missing.length === 0;
+
+    const leader = leaderOf(c, g.id);
+    const vice = mates.find(m => m.isVice);
+
+    let marker = null;
+    let completedAt = null;
+
+    if (groupRecs.length > 0) {
+      const sorted = [...groupRecs].sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+      const latest = sorted[0];
+      completedAt = latest.updatedAt || latest.createdAt || null;
+
+      const recWithMarker = sorted.find(r => r.markedById || r.markedByName) || latest;
+      let markedId = recWithMarker.markedById || '';
+      let markedName = recWithMarker.markedByName || '';
+
+      if (markedId === 'teacher' || markedName === '老師' || markedName.includes('老師')) {
+        marker = {
+          id: markedId || 'teacher',
+          name: markedName || '任課老師',
+          role: '老師',
+          roleBadge: '👨‍🏫 老師',
+        };
+      } else {
+        const st = (markedId && c.students.find(s => s.id === markedId || s.ref === markedId))
+          || (markedName && c.students.find(s => s.name === markedName));
+        
+        const finalId = (st && st.id) ? st.id : markedId;
+        const finalName = (st && st.name) ? st.name : markedName;
+
+        let role = '組員';
+        let roleBadge = '組員';
+        if (st) {
+          if (leader && st.id === leader.id) {
+            role = '組長';
+            roleBadge = '👑 組長';
+          } else if (vice && st.id === vice.id) {
+            role = '副組長';
+            roleBadge = '⭐ 副組長';
+          } else if (st.groupId !== g.id) {
+            role = '代理';
+            roleBadge = '🔁 代理';
+          } else if (st.isLeader) {
+            role = '組長';
+            roleBadge = '👑 組長';
+          } else if (st.isVice) {
+            role = '副組長';
+            roleBadge = '⭐ 副組長';
+          }
+        } else {
+          const isDel = (c.attendanceDelegates || []).some(d => d.sessionId === sessionId && d.groupId === g.id && (d.delegateId === markedId || d.delegateName === markedName));
+          if (isDel) {
+            role = '代理';
+            roleBadge = '🔁 代理';
+          }
+        }
+
+        if (finalId || finalName) {
+          marker = {
+            id: finalId,
+            name: finalName,
+            role: role,
+            roleBadge: roleBadge,
+            student: st || null,
+          };
+        }
+      }
+    }
+
+    return {
+      group: g,
+      total,
+      done,
+      missing,
+      complete,
+      leader,
+      vice,
+      marker,
+      completedAt,
+    };
   });
+}
+
+/* 統計各組點名人員的任務執行表現排行（以學期為單位） */
+function calcRollCallPerformance(c) {
+  if (!c || !c.attendanceRecords || !c.attendanceRecords.length) return [];
+
+  // 1. 依 sessionId 與 groupId 歸納各組每次點名紀錄
+  const sessionGroupMap = {};
+  (c.attendanceRecords || []).forEach(r => {
+    if (!r.sessionId || !r.groupId) return;
+    const key = r.sessionId + '__' + r.groupId;
+    if (!sessionGroupMap[key]) sessionGroupMap[key] = [];
+    sessionGroupMap[key].push(r);
+  });
+
+  // 2. 統計各場次中全班最早完成點名的組別與操作者
+  const sessionEarliest = {};
+  const markerStats = {};
+
+  Object.entries(sessionGroupMap).forEach(([sgKey, recs]) => {
+    const [sessionId, groupId] = sgKey.split('__');
+    const sorted = [...recs].sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    const latest = sorted[0];
+    const compTime = latest.updatedAt || latest.createdAt || 0;
+
+    const recWithMarker = sorted.find(r => r.markedById || r.markedByName) || latest;
+    let markedId = recWithMarker.markedById || '';
+    let markedName = recWithMarker.markedByName || '';
+
+    if (markedId === 'teacher' || markedName === '老師' || markedName.includes('老師')) {
+      markedId = 'teacher';
+      markedName = markedName || '任課老師';
+    }
+
+    if (!markedId && !markedName) return;
+
+    // 記錄該場次最速完成者（不含老師）
+    if (compTime > 0 && markedId !== 'teacher') {
+      if (!sessionEarliest[sessionId] || compTime < sessionEarliest[sessionId].time) {
+        sessionEarliest[sessionId] = { time: compTime, markerKey: markedId || markedName, groupId };
+      }
+    }
+
+    const key = markedId || markedName;
+    if (!markerStats[key]) {
+      const st = (markedId && markedId !== 'teacher' && c.students.find(s => s.id === markedId || s.ref === markedId))
+        || (markedName && c.students.find(s => s.name === markedName));
+      markerStats[key] = {
+        id: (st && st.id) ? st.id : markedId,
+        name: (st && st.name) ? st.name : markedName,
+        student: st,
+        sessionsCount: 0,
+        recordsCount: 0,
+        timestamps: [],
+        groupsMarked: new Set(),
+      };
+    }
+    markerStats[key].sessionsCount += 1;
+    markerStats[key].recordsCount += recs.length;
+    markerStats[key].groupsMarked.add(groupId);
+    if (compTime > 0) markerStats[key].timestamps.push(compTime);
+  });
+
+  // 累積全班最速次數
+  Object.values(sessionEarliest).forEach(se => {
+    if (markerStats[se.markerKey]) {
+      markerStats[se.markerKey].fastestCount = (markerStats[se.markerKey].fastestCount || 0) + 1;
+    }
+  });
+
+  const results = Object.values(markerStats).map(m => {
+    let avgMinutes = 0;
+    if (m.timestamps.length > 0) {
+      const minutesList = m.timestamps.map(t => {
+        const d = new Date(t);
+        const utcHours = d.getUTCHours();
+        const localHours = (utcHours + 8) % 24;
+        return localHours * 60 + d.getUTCMinutes();
+      });
+      avgMinutes = Math.round(minutesList.reduce((a, b) => a + b, 0) / minutesList.length);
+    }
+    const h = String(Math.floor(avgMinutes / 60)).padStart(2, '0');
+    const min = String(avgMinutes % 60).padStart(2, '0');
+    const avgTimeStr = avgMinutes > 0 ? `${h}:${min}` : '--:--';
+
+    const latestTs = m.timestamps.length ? Math.max(...m.timestamps) : null;
+    const latestTimeFormatted = latestTs ? formatLogTime(latestTs) : '';
+
+    const st = m.student;
+    const groupName = st ? ((c.groups.find(g => g.id === st.groupId) || {}).name || '未分組') : (m.id === 'teacher' ? '任課老師' : '跨組代理');
+    let role = '組員';
+    if (m.id === 'teacher') {
+      role = '老師';
+    } else if (st) {
+      role = st.isLeader ? '組長' : st.isVice ? '副組長' : '組員';
+    } else {
+      role = '代理';
+    }
+
+    return {
+      id: m.id,
+      name: m.name,
+      student: st,
+      group: groupName,
+      role: role,
+      sessionsCount: m.sessionsCount,
+      recordsCount: m.recordsCount,
+      fastestCount: m.fastestCount || 0,
+      avgMinutes,
+      avgTimeStr,
+      latestTime: latestTs,
+      latestTimeFormatted,
+    };
+  });
+
+  // 排序：點名次數最多者優先 (sessionsCount DESC) -> 最速次數最多者 (fastestCount DESC) -> 平均時刻最早者 (avgMinutes ASC)
+  results.sort((a, b) => {
+    if (b.sessionsCount !== a.sessionsCount) return b.sessionsCount - a.sessionsCount;
+    if (b.fastestCount !== a.fastestCount) return b.fastestCount - a.fastestCount;
+    if (a.avgMinutes > 0 && b.avgMinutes > 0 && a.avgMinutes !== b.avgMinutes) return a.avgMinutes - b.avgMinutes;
+    return (b.latestTime || 0) - (a.latestTime || 0);
+  });
+
+  // 賦予名次、獎牌與稱號
+  results.forEach((item, idx) => {
+    item.rank = idx + 1;
+    if (idx === 0) item.medal = '🥇';
+    else if (idx === 1) item.medal = '🥈';
+    else if (idx === 2) item.medal = '🥉';
+    else item.medal = '';
+
+    const titles = [];
+    if (item.fastestCount >= 2) titles.push('⚡ 最速先鋒');
+    else if (item.fastestCount === 1) titles.push('⚡ 敏捷代表');
+
+    if (item.sessionsCount >= 4) titles.push('🌟 全勤模範');
+    else if (item.sessionsCount >= 3) titles.push('🎖️ 積極盡責');
+
+    if (item.role === '組長') titles.push('👑 領袖風範');
+    else if (item.role === '副組長') titles.push('⭐ 得力助手');
+    else if (item.role === '代理') titles.push('🤝 義氣相挺');
+
+    item.titleBadge = titles.join(' · ') || '點名達人';
+  });
+
+  return results;
+}
+
+/* 匯出點名人員表現排行榜為 CSV 檔案 */
+function exportMarkerLeaderboardCSV(c) {
+  if (!c) return;
+  const board = calcRollCallPerformance(c);
+  if (!board.length) {
+    alert('目前尚無點名執行紀錄可供匯出。');
+    return;
+  }
+  const headers = ['名次', '姓名', '學號', '所屬組別', '身分角色', '累計點名完成組次', '累計標記組員人次', '全班最速完成次數', '平均點名完成時刻', '最近點名時間', '表現稱號'];
+  const rows = board.map(item => [
+    item.rank,
+    item.name,
+    item.id,
+    item.group,
+    item.role,
+    item.sessionsCount,
+    item.recordsCount,
+    item.fastestCount,
+    item.avgTimeStr,
+    item.latestTimeFormatted || '',
+    item.titleBadge
+  ]);
+
+  const escapeCSV = val => {
+    const s = String(val == null ? '' : val).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+
+  const csvContent = '\uFEFF' + [
+    headers.map(escapeCSV).join(','),
+    ...rows.map(r => r.map(escapeCSV).join(','))
+  ].join('\r\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const courseName = (c.name || '課程').replace(/[^\w\u4e00-\u9fa5]/g, '_');
+  const today = todayDateStr();
+  a.href = url;
+  a.download = `點名人員任務執行表現學期排行_${courseName}_${today}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 /* 統計各組員缺席次數（支援整學期或特定日期，相容 studentId 與 ref 標識） */
 function attendanceAbsentCounts(c, date, filterStudentIds = null) {
@@ -1696,14 +1969,18 @@ function teacherAttendanceBlock(c) {
     </tr>`;
   }).join('');
 
-  /* ---- 3. 尚未完成點名的組別 ---- */
+  /* ---- 3. 各組點名完成進度即時看板（含未完成組別與已完成組別） ---- */
   const progressSession = attendanceProgressSessionId
     ? sessions.find(s => s.id === attendanceProgressSessionId)
     : (sessions.find(s => s.date === today) || sessions[0] || null);
   const progress = progressSession ? attendanceGroupProgress(c, progressSession.id) : [];
   const incomplete = progress.filter(p => !p.complete && p.total > 0);
+  const completed = progress.filter(p => p.complete && p.total > 0);
 
-  /* ---- 4. 組員缺席排行榜 ---- */
+  /* ---- 4. 點名人員任務執行表現學期排行榜 ---- */
+  const markerLeaderboard = calcRollCallPerformance(c);
+
+  /* ---- 5. 組員缺席排行榜 ---- */
   const counts = attendanceAbsentCounts(c, attendanceStatScope === 'date' ? attendanceStatDate : null);
   const leaderboard = Object.entries(counts)
     .map(([sid, n]) => {
@@ -1761,56 +2038,206 @@ function teacherAttendanceBlock(c) {
     </div>` : '<p class="file-path">尚未建立組別。</p>'}
   </div>
 
-  <div class="teacher-section">
-    <h2>各組當日缺席紀錄 <small>Daily absence</small></h2>
-    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
-      <label style="font-weight:600;font-size:0.85rem;">查詢日期：</label>
-      <input type="date" data-act="attendance-stat-date" value="${esc(attendanceStatDate)}">
+  <div class="teacher-section attendance-progress-dashboard">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+      <h2 style="margin:0;">📊 各組點名完成進度即時看板 <small>Group Roll Call Completion Progress</small></h2>
+      <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+        <label style="font-weight:600;font-size:0.85rem;color:#334155;">選擇點名時段：</label>
+        <select data-act="attendance-progress-session" style="font-weight:600;padding:0.35rem 0.6rem;border-radius:6px;border:1px solid #cbd5e1;">
+          ${sessions.map(s => `<option value="${s.id}" ${progressSession && progressSession.id === s.id ? 'selected' : ''}>${esc(attendanceSessionLabel(s))}</option>`).join('') || '<option value="">尚無時段</option>'}
+        </select>
+      </div>
     </div>
-    ${c.groups.length ? `
-    <div class="table-wrap">
-      <table class="roster" style="background:#fff;">
-        <thead><tr><th>組別</th><th>人數</th><th>缺席標記</th></tr></thead>
-        <tbody>${dailyRows}</tbody>
-      </table>
-    </div>` : '<p class="file-path">尚未建立組別。</p>'}
+
+    ${!progressSession ? '<p class="file-path" style="margin-top:1rem;">尚無點名時段。</p>' : `
+      <!-- 進度統計總覽條 Progress Summary Bar -->
+      <div class="progress-summary-bar">
+        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+          <span style="font-size:0.92rem;font-weight:750;color:#1e293b;">時段：${esc(attendanceSessionLabel(progressSession))}</span>
+          <span class="progress-badge badge-info">總組數：${c.groups.length} 組</span>
+          <span class="progress-badge badge-success">🟢 已完成：${completed.length} 組 (${Math.round((completed.length / (c.groups.length || 1)) * 100)}%)</span>
+          <span class="progress-badge ${incomplete.length ? 'badge-danger' : 'badge-neutral'}">🔴 未完成：${incomplete.length} 組</span>
+        </div>
+        <div class="progress-meter-container">
+          <div class="progress-meter-fill" style="width:${Math.round((completed.length / (c.groups.length || 1)) * 100)}%;"></div>
+        </div>
+      </div>
+
+      <!-- 1. 尚未完成點名之組別 -->
+      <div class="progress-subpanel" style="margin-top:1.25rem;">
+        <h3 style="font-size:1.05rem;color:#b91c1c;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.6rem;">
+          <span>🔴 尚未完成點名之組別（含組長與副組長姓名）</span>
+          <small style="font-size:0.8rem;color:#64748b;font-weight:normal;">Incomplete Groups</small>
+        </h3>
+        ${incomplete.length ? `
+        <div class="table-wrap">
+          <table class="roster" style="background:#fff;">
+            <thead>
+              <tr>
+                <th style="min-width:80px;">組別</th>
+                <th style="min-width:95px;">完成進度</th>
+                <th style="min-width:140px;">組長姓名</th>
+                <th style="min-width:140px;">副組長姓名</th>
+                <th>尚未被點名的組員名單</th>
+                <th style="min-width:210px;">跨組代理點名管理</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${incomplete.map(p => {
+                const delegates = (c.attendanceDelegates || []).filter(d => d.sessionId === progressSession.id && d.groupId === p.group.id);
+                const candidates = c.students.filter(st => (st.isLeader || st.isVice) && st.groupId !== p.group.id);
+                const leadStr = p.leader 
+                  ? `<b>👑 ${esc(p.leader.name)}</b> <small style="color:#64748b;">(${esc(p.leader.id)})</small>`
+                  : `<span style="color:#dc2626;">（無組長）</span>`;
+                const viceStr = p.vice 
+                  ? `<b>⭐ ${esc(p.vice.name)}</b> <small style="color:#64748b;">(${esc(p.vice.id)})</small>`
+                  : `<span style="color:#94a3b8;">（無副組長）</span>`;
+                return `
+                <tr>
+                  <td><b>${esc(p.group.name)}</b></td>
+                  <td><span class="status-badge under-threshold">${p.done} / ${p.total} 人</span></td>
+                  <td>${leadStr}</td>
+                  <td>${viceStr}</td>
+                  <td>
+                    <div style="display:flex;flex-wrap:wrap;gap:0.35rem;">
+                      ${p.missing.map(m => `<span class="attendance-absent-tag">${esc(m.name)} <small>(${esc(m.id)})</small>${m.isLeader ? ' <b style="color:#b91c1c;">組長</b>' : m.isVice ? ' <b style="color:#d97706;">副組長</b>' : ''}</span>`).join('')}
+                    </div>
+                  </td>
+                  <td>
+                    ${delegates.map(d => `
+                      <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.3rem;font-size:0.82rem;">
+                        <span class="group-name-tag">🔁 ${esc(d.delegateName || d.delegateId)}</span>
+                        <button class="tab-btn" data-act="remove-attendance-delegate" data-session="${progressSession.id}" data-group="${p.group.id}" data-delegate="${esc(d.delegateId)}">移除</button>
+                      </div>`).join('')}
+                    <select data-act="assign-attendance-delegate" data-session="${progressSession.id}" data-group="${p.group.id}" style="font-size:0.8rem;padding:0.3rem 0.4rem;width:100%;">
+                      <option value="">指派代理組長/副組長跨組點名…</option>
+                      ${candidates.map(st => `<option value="${esc(st.id)}">${esc(st.name)} (${esc(st.id)}) － ${esc((c.groups.find(gg => gg.id === st.groupId) || {}).name || '')}</option>`).join('')}
+                    </select>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>` : '<div class="alert-box success-alert" style="padding:0.85rem 1rem;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;color:#166534;font-weight:600;">🎉 該時段所有組別之全部組員皆已完成點名！</div>'}
+      </div>
+
+      <!-- 2. 已完成點名之組別 -->
+      <div class="progress-subpanel" style="margin-top:1.5rem;">
+        <h3 style="font-size:1.05rem;color:#166534;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.6rem;">
+          <span>🟢 已完成點名之組別（含點名人員姓名、學號、身分與完成時間）</span>
+          <small style="font-size:0.8rem;color:#64748b;font-weight:normal;">Completed Groups</small>
+        </h3>
+        ${completed.length ? `
+        <div class="table-wrap">
+          <table class="roster" style="background:#fff;">
+            <thead>
+              <tr>
+                <th style="min-width:80px;">組別</th>
+                <th style="min-width:95px;">點名進度</th>
+                <th style="min-width:180px;">執行點名人員（姓名／學號）</th>
+                <th style="min-width:110px;">執行身分角色</th>
+                <th style="min-width:160px;">點名完成時間</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${completed.map(p => {
+                const marker = p.marker;
+                const markerDisplay = marker
+                  ? `<b>${esc(marker.name)}</b> <small style="color:#64748b;">(${esc(marker.id || '未知學號')})</small>`
+                  : (p.leader ? `<b>${esc(p.leader.name)}</b> <small style="color:#64748b;">(${esc(p.leader.id)})</small>` : '<span style="color:#94a3b8;">（未記錄執行者）</span>');
+                const roleDisplay = marker
+                  ? `<span class="role-badge role-${marker.role === '組長' ? 'leader' : marker.role === '副組長' ? 'vice' : marker.role === '老師' ? 'teacher' : 'delegate'}">${esc(marker.roleBadge || marker.role)}</span>`
+                  : (p.leader ? `<span class="role-badge role-leader">👑 組長</span>` : '<span style="color:#94a3b8;">—</span>');
+                const timeDisplay = p.completedAt
+                  ? `<span style="font-size:0.85rem;color:#334155;font-weight:600;">🕒 ${esc(formatLogTime(p.completedAt))}</span>`
+                  : '<span style="color:#94a3b8;">—</span>';
+                return `
+                <tr>
+                  <td><b>${esc(p.group.name)}</b></td>
+                  <td><span class="status-badge" style="background:#dcfce7;color:#15803d;font-weight:700;">✅ ${p.done} / ${p.total} 全員完成</span></td>
+                  <td>${markerDisplay}</td>
+                  <td>${roleDisplay}</td>
+                  <td>${timeDisplay}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>` : '<div class="alert-box neutral-alert" style="padding:0.85rem 1rem;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;">該時段尚無組別完成點名。</div>'}
+      </div>
+    `}
   </div>
 
-  <div class="teacher-section">
-    <h2>尚未完成點名的組別與組員 <small>Incomplete groups &amp; members</small></h2>
-    <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
-      <label style="font-weight:600;font-size:0.85rem;">選擇時段：</label>
-      <select data-act="attendance-progress-session">
-        ${sessions.map(s => `<option value="${s.id}" ${progressSession && progressSession.id === s.id ? 'selected' : ''}>${esc(attendanceSessionLabel(s))}</option>`).join('') || '<option value="">尚無時段</option>'}
-      </select>
+  <div class="teacher-section marker-leaderboard-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+      <div>
+        <h2 style="margin:0;">🏆 各組點名人員任務執行表現學期排行榜 <small>Semester Roll Call Marker Leaderboard</small></h2>
+        <p style="margin:0.25rem 0 0;font-size:0.83rem;color:#64748b;">
+          統計整學期各組負責點名幹部（組長、副組長、代理人）的任務執行表現。評比指標：<b>點名完成次數</b>（越多次越好）、<b>搶先第一完成次數</b>、以及<b>平均點名時刻</b>（越早完成越好）。
+        </p>
+      </div>
+      <div>
+        <button class="primary-btn" data-act="export-marker-leaderboard-csv" style="display:flex;align-items:center;gap:0.35rem;padding:0.45rem 0.85rem;font-size:0.85rem;font-weight:600;">
+          📥 匯出表現排行榜 CSV
+        </button>
+      </div>
     </div>
-    ${!progressSession ? '<p class="file-path">尚無點名時段。</p>' : incomplete.length ? `
+
+    ${markerLeaderboard.length ? `
     <div class="table-wrap">
-      <table class="roster" style="background:#fff;">
-        <thead><tr><th>組別</th><th>完成進度</th><th>尚未被點名的組員（含組長／副組長）</th><th>跨組代理點名 Cross-group delegate</th></tr></thead>
-        <tbody>${incomplete.map(p => {
-          const delegates = (c.attendanceDelegates || []).filter(d => d.sessionId === progressSession.id && d.groupId === p.group.id);
-          const candidates = c.students.filter(st => (st.isLeader || st.isVice) && st.groupId !== p.group.id);
-          return `
+      <table class="roster marker-leaderboard-table" style="background:#fff;">
+        <thead>
           <tr>
-            <td><b>${esc(p.group.name)}</b></td>
-            <td><span class="status-badge under-threshold">${p.done} / ${p.total} 人</span></td>
-            <td>${p.missing.map(m => `<span class="attendance-absent-tag">${esc(m.name)} (${esc(m.id)})${m.isLeader ? ' 組長' : m.isVice ? ' 副組長' : ''}</span>`).join(' ')}</td>
-            <td style="min-width:220px;">
-              ${delegates.map(d => `
-                <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:0.3rem;font-size:0.82rem;">
-                  <span class="group-name-tag">🔁 ${esc(d.delegateName || d.delegateId)}</span>
-                  <button class="tab-btn" data-act="remove-attendance-delegate" data-session="${progressSession.id}" data-group="${p.group.id}" data-delegate="${esc(d.delegateId)}">移除</button>
-                </div>`).join('')}
-              <select data-act="assign-attendance-delegate" data-session="${progressSession.id}" data-group="${p.group.id}" style="font-size:0.8rem;padding:0.3rem 0.4rem;">
-                <option value="">指派代理組長/副組長跨組點名…</option>
-                ${candidates.map(st => `<option value="${esc(st.id)}">${esc(st.name)} (${esc(st.id)}) － ${esc((c.groups.find(gg => gg.id === st.groupId) || {}).name || '')}</option>`).join('')}
-              </select>
+            <th style="min-width:65px;text-align:center;">名次</th>
+            <th style="min-width:140px;">執行點名人員</th>
+            <th style="min-width:90px;">所屬組別</th>
+            <th style="min-width:90px;">身分角色</th>
+            <th style="min-width:130px;text-align:center;">累計點名完成組次</th>
+            <th style="min-width:110px;text-align:center;">最速完成次數</th>
+            <th style="min-width:120px;text-align:center;">平均點名時刻</th>
+            <th style="min-width:150px;">最近點名時間</th>
+            <th style="min-width:150px;">表現稱號</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${markerLeaderboard.map(item => `
+          <tr class="${item.rank <= 3 ? `top-rank-row rank-${item.rank}` : ''}">
+            <td style="text-align:center;font-weight:700;font-size:1rem;">
+              ${item.medal ? `<span class="medal-badge">${item.medal} 第${item.rank}名</span>` : `<span style="color:#64748b;">第 ${item.rank} 名</span>`}
             </td>
-          </tr>`;
-        }).join('')}</tbody>
+            <td>
+              <b>${esc(item.name)}</b>
+              <div style="font-size:0.75rem;color:#64748b;">學號：${esc(item.id || '—')}</div>
+            </td>
+            <td><b>${esc(item.group)}</b></td>
+            <td>
+              <span class="role-badge role-${item.role === '組長' ? 'leader' : item.role === '副組長' ? 'vice' : item.role === '老師' ? 'teacher' : 'delegate'}">
+                ${item.role === '組長' ? '👑 組長' : item.role === '副組長' ? '⭐ 副組長' : item.role === '老師' ? '👨‍🏫 老師' : '🔁 代理'}
+              </span>
+            </td>
+            <td style="text-align:center;">
+              <span class="marker-count-pill" title="累計為組員留下 ${item.recordsCount} 筆點名紀錄">
+                🎯 <b>${item.sessionsCount}</b> 場次
+              </span>
+              <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">(${item.recordsCount} 人次)</div>
+            </td>
+            <td style="text-align:center;">
+              ${item.fastestCount > 0 ? `<span class="fastest-pill">⚡ ${item.fastestCount} 次第一</span>` : `<span style="color:#94a3b8;">—</span>`}
+            </td>
+            <td style="text-align:center;">
+              ${item.avgTimeStr !== '--:--' ? `<span class="avg-time-pill" title="換算台灣時間 UTC+8 之平均完成時刻">🕒 <b>${item.avgTimeStr}</b></span>` : `<span style="color:#94a3b8;">—</span>`}
+            </td>
+            <td style="font-size:0.8rem;color:#475569;">
+              ${item.latestTimeFormatted ? esc(item.latestTimeFormatted) : '—'}
+            </td>
+            <td>
+              <span class="title-badge">${esc(item.titleBadge)}</span>
+            </td>
+          </tr>
+          `).join('')}
+        </tbody>
       </table>
-    </div>` : '<p class="file-path">✅ 該時段所有組別的全部組員皆已完成點名。</p>'}
+    </div>
+    ` : '<p class="file-path">目前整學期尚無點名執行紀錄。</p>'}
   </div>
 
   <div class="teacher-section">
@@ -2812,6 +3239,11 @@ app.addEventListener('click', e => {
       viewingAbsenceModal = null;
       return render();
     }
+  }
+  if (a === 'export-marker-leaderboard-csv') {
+    if (!c) return;
+    exportMarkerLeaderboardCSV(c);
+    return;
   }
   if (a === 'view-absence-detail') {
     if (!c) return;

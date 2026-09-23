@@ -1922,6 +1922,187 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   line-height: 1.6;
 }
 
+/* ===== 各組點名進度看板與點名人員學期排行榜樣式 ===== */
+.attendance-progress-dashboard {
+  border-left: 4px solid #3b82f6;
+}
+
+.progress-summary-bar {
+  margin: 1rem 0;
+  padding: 0.85rem 1.15rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.progress-badge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.progress-badge.badge-info {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.progress-badge.badge-success {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.progress-badge.badge-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.progress-badge.badge-neutral {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.progress-meter-container {
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.progress-meter-fill {
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  line-height: 1.3;
+}
+
+.role-badge.role-leader {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.role-badge.role-vice {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.role-badge.role-delegate {
+  background: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #e9d5ff;
+}
+
+.role-badge.role-teacher {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.marker-leaderboard-section {
+  border-left: 4px solid #f59e0b;
+}
+
+.marker-leaderboard-table th {
+  background: #f8fafc;
+  color: #1e293b;
+  font-weight: 750;
+  font-size: 0.85rem;
+}
+
+.top-rank-row.rank-1 {
+  background: #fffdf0 !important;
+}
+
+.top-rank-row.rank-2 {
+  background: #f8fafc !important;
+}
+
+.top-rank-row.rank-3 {
+  background: #fffaf5 !important;
+}
+
+.medal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.marker-count-pill {
+  display: inline-block;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-weight: 600;
+  font-size: 0.84rem;
+  border: 1px solid #bfdbfe;
+}
+
+.fastest-pill {
+  display: inline-block;
+  background: #fef9c3;
+  color: #854d0e;
+  border: 1px solid #fde047;
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.avg-time-pill {
+  display: inline-block;
+  background: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0.18rem 0.55rem;
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+
+.title-badge {
+  display: inline-block;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 0.76rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  line-height: 1.3;
+}
+
+
 
 
 
