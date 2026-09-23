@@ -683,17 +683,23 @@ export async function publicize(db, env, courses, session) {
     const delegatedGroupIds = new Set(myDelegates.map(d => d.groupId));
     const visibleGroupIds = new Set([selfGroupId, ...delegatedGroupIds].filter(Boolean));
     const attendanceSessions = c.attendanceSessions || [];
+    const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
     const attendanceRecords = (c.attendanceRecords || [])
       .filter(r => (isMine && visibleGroupIds.has(r.groupId)) || r.status === 'absent')
-      .map(r => ({
-        sessionId: r.sessionId,
-        groupId: r.groupId,
-        status: r.status,
-        markedByName: r.markedByName,
-        updatedAt: r.updatedAt,
-        studentId: r.studentId,
-        ref: refById[r.studentId] || '',
-      }));
+      .map(r => {
+        const st = c.students.find(s => s.id === r.studentId);
+        return {
+          sessionId: r.sessionId,
+          groupId: r.groupId,
+          status: r.status,
+          markedByName: r.markedByName,
+          updatedAt: r.updatedAt,
+          studentId: r.studentId,
+          studentName: st ? st.name : '',
+          groupName: groupName(r.groupId),
+          ref: refById[r.studentId] || '',
+        };
+      });
     const attendanceUnlocks = isMine
       ? (c.attendanceUnlocks || []).filter(u => !u.groupId || visibleGroupIds.has(u.groupId))
       : [];

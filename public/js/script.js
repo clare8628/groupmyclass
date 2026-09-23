@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.50';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.54';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -277,13 +277,11 @@ function attendanceAbsentCounts(c, date, filterStudentIds = null) {
   const filterSet = filterStudentIds ? new Set(filterStudentIds) : null;
   (c.attendanceRecords || []).forEach(r => {
     if (r.status !== 'absent' || !ids.includes(r.sessionId)) return;
-    const key = r.studentId || r.ref;
+    const st = c.students.find(s => (s.id && r.studentId && s.id === r.studentId) || (s.ref && r.ref && s.ref === r.ref) || (s.id && s.id === r.ref) || (s.ref && s.ref === r.studentId));
+    const key = r.studentId || (st ? (st.id || st.ref) : r.ref);
     if (!key) return;
-    // 若該生有真實學號，比對是否在學生名單中，優先歸一化到學生真實/顯示識別
-    const st = c.students.find(s => s.id === key || s.ref === key);
-    const targetKey = st ? (st.id || st.ref) : key;
-    if (filterSet && !filterSet.has(targetKey) && !filterSet.has(st?.ref) && !filterSet.has(st?.id)) return;
-    counts[targetKey] = (counts[targetKey] || 0) + 1;
+    if (filterSet && !filterSet.has(key) && !filterSet.has(r.studentId) && !filterSet.has(r.ref) && !filterSet.has(st?.ref) && !filterSet.has(st?.id)) return;
+    counts[key] = (counts[key] || 0) + 1;
   });
   return counts;
 }
@@ -294,14 +292,17 @@ function getStudentAbsenceList(c, studentKey, date = null) {
   const sessionMap = {};
   sessions.forEach(s => { sessionMap[s.id] = s; });
 
-  const st = c.students.find(s => s.id === studentKey || s.ref === studentKey);
-  const validKeys = new Set([studentKey, st?.id, st?.ref].filter(Boolean));
+  const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === studentKey || r.ref === studentKey);
+  const targetRef = matchingRec ? matchingRec.ref : studentKey;
+  const targetSid = matchingRec ? matchingRec.studentId : studentKey;
+  const st = c.students.find(s => s.id === targetSid || (targetRef && s.ref === targetRef) || s.id === studentKey || s.ref === studentKey);
+  const validKeys = new Set([studentKey, targetSid, targetRef, st?.id, st?.ref].filter(Boolean));
 
   const list = [];
   (c.attendanceRecords || []).forEach(r => {
     if (r.status !== 'absent') return;
     const recKey = r.studentId || r.ref;
-    if (!validKeys.has(recKey)) return;
+    if (!validKeys.has(recKey) && !validKeys.has(r.studentId) && !validKeys.has(r.ref)) return;
     const session = sessionMap[r.sessionId];
     if (!session) return;
     if (date && session.date !== date) return;
@@ -611,13 +612,20 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
   const listSource = filterMates || c.students;
   const leaderboard = Object.entries(counts)
     .map(([key, n]) => {
-      const st = listSource.find(x => x.id === key || x.ref === key) || c.students.find(x => x.id === key || x.ref === key);
-      const g = st ? c.groups.find(x => x.id === st.groupId) : null;
+      const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === key || r.ref === key);
+      const targetRef = matchingRec ? matchingRec.ref : key;
+      const targetSid = matchingRec ? matchingRec.studentId : key;
+      const st = listSource.find(x => x.id === targetSid || (targetRef && x.ref === targetRef) || x.id === key || x.ref === key)
+        || c.students.find(x => x.id === targetSid || (targetRef && x.ref === targetRef) || x.id === key || x.ref === key);
+      const g = st ? c.groups.find(x => x.id === st.groupId) : (matchingRec && matchingRec.groupId ? c.groups.find(x => x.id === matchingRec.groupId) : null);
+      const studentName = (st && st.name) ? st.name : ((matchingRec && matchingRec.studentName) ? matchingRec.studentName : key);
+      const groupName = g ? g.name : ((matchingRec && matchingRec.groupName) ? matchingRec.groupName : '未分組');
+      const displayId = targetSid || (st ? st.id : key);
       return {
         key,
-        id: st ? st.id : key,
-        name: st ? st.name : key,
-        groupName: g ? g.name : '未分組',
+        id: displayId,
+        name: studentName,
+        groupName: groupName,
         count: n,
       };
     })
@@ -1574,9 +1582,15 @@ function teacherAttendanceBlock(c) {
   const counts = attendanceAbsentCounts(c, attendanceStatScope === 'date' ? attendanceStatDate : null);
   const leaderboard = Object.entries(counts)
     .map(([sid, n]) => {
-      const st = c.students.find(x => x.id === sid);
-      const g = st ? c.groups.find(x => x.id === st.groupId) : null;
-      return { id: sid, name: st ? st.name : sid, groupName: g ? g.name : '未分組', count: n };
+      const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === sid || r.ref === sid);
+      const targetRef = matchingRec ? matchingRec.ref : sid;
+      const targetSid = matchingRec ? matchingRec.studentId : sid;
+      const st = c.students.find(x => x.id === targetSid || (targetRef && x.ref === targetRef) || x.id === sid || x.ref === sid);
+      const g = st ? c.groups.find(x => x.id === st.groupId) : (matchingRec && matchingRec.groupId ? c.groups.find(x => x.id === matchingRec.groupId) : null);
+      const studentName = (st && st.name) ? st.name : ((matchingRec && matchingRec.studentName) ? matchingRec.studentName : sid);
+      const groupName = g ? g.name : ((matchingRec && matchingRec.groupName) ? matchingRec.groupName : '未分組');
+      const displayId = targetSid || (st ? st.id : sid);
+      return { id: displayId, name: studentName, groupName: groupName, count: n };
     })
     .sort((a, b) => b.count - a.count)
     .slice(0, 15);
@@ -2496,8 +2510,12 @@ function parseRoster(text) {
   let skipped = 0;
   text.replace(/^\ufeff/, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(line => {
     if (isHeaderLine(line)) { skipped++; return; }
-    const [id, name] = line.split(/\s*[,\t|]\s*|\s+/).filter(Boolean);
-    if (id && name) rows.push({ id, name });
+    const tokens = line.split(/\s*[,\t|]\s*|\s+/).filter(Boolean);
+    if (tokens.length >= 3 && /^\d{1,3}$/.test(tokens[0]) && /^[a-zA-Z0-9_-]{4,}$/.test(tokens[1])) {
+      rows.push({ id: tokens[1], name: tokens.slice(2).join(' ') });
+    } else if (tokens.length >= 2) {
+      rows.push({ id: tokens[0], name: tokens.slice(1).join(' ') });
+    }
   });
   return { rows, skipped };
 }
@@ -2673,8 +2691,16 @@ app.addEventListener('click', e => {
   if (a === 'view-absence-detail') {
     if (!c) return;
     const studentKey = btn.dataset.student;
-    const studentName = btn.dataset.name || studentKey;
+    let studentName = btn.dataset.name || studentKey;
     const studentId = btn.dataset.id || studentKey;
+    if (!studentName || studentName === studentId) {
+      const matchingRec = (c.attendanceRecords || []).find(r => r.studentId === studentKey || r.ref === studentKey);
+      const targetRef = matchingRec ? matchingRec.ref : studentKey;
+      const targetSid = matchingRec ? matchingRec.studentId : studentKey;
+      const st = c.students.find(s => s.id === targetSid || (targetRef && s.ref === targetRef) || s.id === studentKey || s.ref === studentKey);
+      if (st && st.name) studentName = st.name;
+      else if (matchingRec && matchingRec.studentName) studentName = matchingRec.studentName;
+    }
     const details = getStudentAbsenceList(c, studentKey);
     viewingAbsenceModal = { studentName, studentId, details };
     return render();
