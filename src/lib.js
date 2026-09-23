@@ -204,6 +204,58 @@ async function ensureAttendanceSchema(db) {
   _ensuredAttendanceSchema = true;
 }
 
+let _checkedGroup3Restored = false;
+export async function ensureGroup3Restored(db) {
+  if (_checkedGroup3Restored) return;
+  try {
+    const existingG3 = await db.prepare('SELECT id FROM groups WHERE course_id = ? AND id = ?')
+      .bind('cmu1evo6kq451', 'g_3').first();
+    const studentsInG3 = await db.prepare('SELECT COUNT(*) as cnt FROM students WHERE course_id = ? AND group_id = ?')
+      .bind('cmu1evo6kq451', 'g_3').first();
+
+    if (!existingG3 || !studentsInG3 || studentsInG3.cnt === 0) {
+      const g3Members = [
+        { id: '41461D20', name: '宋阮芳草', isLeader: 1 },
+        { id: '41461D16', name: '阮秒玲', isLeader: 0 },
+        { id: '41461D39', name: '鄧葉英', isLeader: 0 },
+        { id: '41461D60', name: '范黎薇', isLeader: 0 },
+        { id: '41461D41', name: '李氏玉', isLeader: 0 },
+      ];
+      const stmts = [
+        db.prepare(`
+          INSERT OR REPLACE INTO groups (id, course_id, name, seq, allow_edit, edit_deadline, peer_eval_open, peer_eval_deadline, peer_eval_submitted)
+          VALUES ('g_3', 'cmu1evo6kq451', '第3組', 3, 0, '', 0, '', 0)
+        `),
+      ];
+      for (const m of g3Members) {
+        stmts.push(
+          db.prepare('UPDATE students SET group_id = "g_3", is_leader = ?, is_vice = 0, auto_assigned = 0 WHERE course_id = "cmu1evo6kq451" AND id = ?')
+            .bind(m.isLeader, m.id)
+        );
+        stmts.push(
+          db.prepare('UPDATE attendance_records SET group_id = "g_3" WHERE course_id = "cmu1evo6kq451" AND student_id = ?')
+            .bind(m.id)
+        );
+      }
+      stmts.push(makeLogStmt(db, {
+        courseId: 'cmu1evo6kq451',
+        groupId: 'g_3',
+        groupName: '第3組',
+        operatorRole: 'system',
+        operatorId: 'system',
+        operatorName: '系統管理',
+        actionType: 'restore-group',
+        detail: '依「原始編組不動」最高分組規則恢復原始第3組，並將原第三組成員（組長：宋阮芳草，組員：阮秒玲、鄧葉英、范黎薇、李氏玉）加回第3組',
+      }));
+      await db.batch(stmts);
+      invalidateStateCache();
+    }
+    _checkedGroup3Restored = true;
+  } catch (err) {
+    console.error('Failed to ensure group 3 restored:', err);
+  }
+}
+
 export function makeLogStmt(db, {
   courseId,
   groupId = '',
@@ -417,6 +469,7 @@ export async function loadState(db) {
 
   await ensureGroupSchema(db);
   await ensureAttendanceSchema(db);
+  await ensureGroup3Restored(db);
   const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
@@ -512,47 +565,19 @@ export function shuffle(a) {
 }
 
 /* 逾時：
-   1. 學生組長建立之組別若人數未達最低門檻 minCap，則視為未完成建立並予以解散，成員釋出為未分組；
-   2. 剩餘未被挑選者隨機分配至組別並標示自動。 */
+   重要分組規則：原始編組不動（不解散人數未達最低門檻之組別），
+   僅將剩餘未被挑選者隨機分配至組別並標示自動。 */
 export async function applyDeadline(db, courses) {
   const stmts = [];
   for (const c of courses) {
     if (!deadlinePassed(c) || !c.groups.length) continue;
 
-    // 步驟 1：檢查並解散未達最低門檻之組別
-    const min = minCap(c);
-    const validGroups = [];
-    for (const g of c.groups) {
-      const gMembers = membersOf(c, g.id);
-      if (gMembers.length < min) {
-        // 未達門檻：清空該組成員並刪除該組別
-        for (const m of gMembers) {
-          m.groupId = null;
-          m.isLeader = false;
-          m.isVice = false;
-        }
-        stmts.push(db.prepare('UPDATE students SET group_id = NULL, is_leader = 0, is_vice = 0 WHERE course_id = ? AND group_id = ?').bind(c.id, g.id));
-        stmts.push(db.prepare('DELETE FROM groups WHERE course_id = ? AND id = ?').bind(c.id, g.id));
-        stmts.push(makeLogStmt(db, {
-          courseId: c.id,
-          groupId: g.id,
-          groupName: g.name,
-          operatorRole: 'system',
-          operatorId: 'system',
-          operatorName: '系統',
-          actionType: 'deadline-dissolve',
-          detail: `系統於分組截止後，自動解散人數未達門檻之「${g.name}」（共 ${gMembers.length} 人釋出為未分組）`,
-        }));
-      } else {
-        validGroups.push(g);
-      }
-    }
-    c.groups = validGroups;
+    // 將未分組學生隨機分配至現有組別（優先分配至人數較少的組別）
+    const unassigned = c.students.filter(x => !x.groupId);
+    if (!unassigned.length) continue;
 
-    // 步驟 2：將未分組學生隨機分配至現有組別（系統隨機分組不限最低門檻）
-    if (!validGroups.length) continue;
-    for (const s of shuffle(c.students.filter(x => !x.groupId))) {
-      const target = validGroups.slice().sort((a, b) => membersOf(c, a.id).length - membersOf(c, b.id).length)[0];
+    for (const s of shuffle(unassigned)) {
+      const target = c.groups.slice().sort((a, b) => membersOf(c, a.id).length - membersOf(c, b.id).length)[0];
       if (!target || membersOf(c, target.id).length >= cap(c)) continue;
       s.groupId = target.id;
       s.autoAssigned = true;
@@ -578,6 +603,7 @@ export async function applyDeadline(db, courses) {
   }
   return courses;
 }
+
 
 export async function teacherHash(db) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('teacher_password').first();

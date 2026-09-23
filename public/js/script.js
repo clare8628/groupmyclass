@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組系統';
-let APP_VERSION = 'v2.54';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.55';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1271,6 +1271,7 @@ function formatActionTypeLabel(type) {
     case 'add-group': return '老師新增組別';
     case 'toggle-group-edit': return '老師開放/關閉挑選權限';
     case 'deadline-dissolve': return '系統解散不足額組別';
+    case 'restore-group': return '恢復原始組別';
     case 'auto-assign': return '系統自動分配未分組';
     case 'attendance-mark': return '組長/副組長點名標記';
     case 'attendance-correct': return '組長/副組長修正點名';
@@ -1296,6 +1297,8 @@ function renderLogBadge(type) {
       return '<span class="log-badge tag-vice">⭐ 副組長變更</span>';
     case 'peer-eval':
       return '<span class="log-badge tag-eval">📝 期末評分</span>';
+    case 'restore-group':
+      return '<span class="log-badge tag-teacher">🔄 恢復組別</span>';
     case 'auto-assign':
     case 'deadline-dissolve':
       return '<span class="log-badge tag-system">🤖 系統處理</span>';
@@ -1309,7 +1312,7 @@ function renderLogBadge(type) {
     case 'attendance-delegate':
       return '<span class="log-badge tag-teacher">📋 點名管理</span>';
     default:
-      if (type.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(type)) {
+      if (type.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit', 'restore-group'].includes(type)) {
         return '<span class="log-badge tag-teacher">🛠️ 老師操作</span>';
       }
       return `<span class="log-badge">${esc(type)}</span>`;
@@ -1340,8 +1343,8 @@ function teacherLogsBlock(c) {
     if (logActionFilter === 'pick' && l.actionType !== 'pick') return false;
     if (logActionFilter === 'drop' && l.actionType !== 'drop') return false;
     if (logActionFilter === 'leader' && !['claim-leader', 'unclaim-leader', 'toggle-vice', 'peer-eval'].includes(l.actionType)) return false;
-    if (logActionFilter === 'teacher' && !(l.actionType.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit'].includes(l.actionType))) return false;
-    if (logActionFilter === 'system' && !['auto-assign', 'deadline-dissolve'].includes(l.actionType)) return false;
+    if (logActionFilter === 'teacher' && !(l.actionType.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit', 'restore-group'].includes(l.actionType))) return false;
+    if (logActionFilter === 'system' && !['auto-assign', 'deadline-dissolve', 'restore-group'].includes(l.actionType)) return false;
     if (logActionFilter === 'attendance' && !l.actionType.startsWith('attendance')) return false;
 
     if (kw) {

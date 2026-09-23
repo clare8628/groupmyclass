@@ -215,6 +215,47 @@ export async function handleAction(request, env, db, body) {
       await db.batch(stmts);
       return ok();
     }
+    if (op === 'restore-group-3') {
+      const courseId = body.courseId || 'cmu1evo6kq451';
+      const c = course(courseId);
+      if (!c) return bad('課程不存在', 404);
+      const g3Members = [
+        { id: '41461D20', name: '宋阮芳草', isLeader: 1 },
+        { id: '41461D16', name: '阮秒玲', isLeader: 0 },
+        { id: '41461D39', name: '鄧葉英', isLeader: 0 },
+        { id: '41461D60', name: '范黎薇', isLeader: 0 },
+        { id: '41461D41', name: '李氏玉', isLeader: 0 },
+      ];
+      const stmts = [
+        db.prepare(`
+          INSERT OR REPLACE INTO groups (id, course_id, name, seq, allow_edit, edit_deadline, peer_eval_open, peer_eval_deadline, peer_eval_submitted)
+          VALUES ('g_3', ?, '第3組', 3, 0, '', 0, '', 0)
+        `).bind(courseId),
+      ];
+      for (const m of g3Members) {
+        stmts.push(
+          db.prepare('UPDATE students SET group_id = "g_3", is_leader = ?, is_vice = 0, auto_assigned = 0 WHERE course_id = ? AND id = ?')
+            .bind(m.isLeader, courseId, m.id)
+        );
+        stmts.push(
+          db.prepare('UPDATE attendance_records SET group_id = "g_3" WHERE course_id = ? AND student_id = ?')
+            .bind(courseId, m.id)
+        );
+      }
+      stmts.push(makeLogStmt(db, {
+        courseId,
+        groupId: 'g_3',
+        groupName: '第3組',
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'restore-group',
+        detail: '老師依「原始編組不動」最高分組規則恢復原始第3組，並將原第三組成員（組長：宋阮芳草，組員：阮秒玲、鄧葉英、范黎薇、李氏玉）加回第3組',
+      }));
+      await db.batch(stmts);
+      invalidateStateCache();
+      return ok();
+    }
     if (op === 'add-students') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
