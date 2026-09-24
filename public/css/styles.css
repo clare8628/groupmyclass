@@ -1585,6 +1585,23 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border-top: 4px solid #ef4444;
 }
 
+/* 取消 table.roster 640px 最小寬度限制：這兩張卡片位於雙欄
+   dashboard-monitoring-grid（每欄最小僅 350px），卡片本身經常窄於
+   640px，若沿用全站表格的最小寬度，最右側「缺席次數」／「填寫問卷」
+   欄位會被橫向捲動吃掉、需要額外滑動才看得到，容易誤以為欄位消失了 */
+.absence-leaderboard-box table.roster,
+.uncompleted-surveys-box table.roster {
+  min-width: 0;
+  font-size: 0.8rem;
+}
+
+.absence-leaderboard-box table.roster th,
+.absence-leaderboard-box table.roster td,
+.uncompleted-surveys-box table.roster th,
+.uncompleted-surveys-box table.roster td {
+  padding: 0.4rem 0.35rem;
+}
+
 .absence-leaderboard-header {
   display: flex;
   align-items: center;
