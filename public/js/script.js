@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.61.20260923.131020';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.62.20260924.104542';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -8,18 +8,18 @@ const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目�
 
 function parseViewFromHash() {
   const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
-  if (['attendance', 'logs', 'eval', 'settings', 'course'].includes(h)) return h;
+  if (['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(h)) return h;
   return null;
 }
 
 function getInitialTeacherView() {
   const fromHash = parseViewFromHash();
   if (fromHash) return fromHash;
-  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course'].includes(window.history.state.teacherView)) {
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(window.history.state.teacherView)) {
     return window.history.state.teacherView;
   }
   const saved = localStorage.getItem(TEACHER_VIEW_KEY);
-  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course'].includes(saved)) {
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(saved)) {
     return saved;
   }
   return 'course';
@@ -51,6 +51,48 @@ let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentName, studentId, details: [] } | null
+let surveyActiveTab = 'uncompleted'; // 後台問卷子分頁：'uncompleted' | 'submissions' | 'logs'
+let surveyCategoryFilter = 'all';
+let surveyGroupFilter = 'all';
+let surveySearchText = '';
+let viewingSurveyModal = null;      // 查看問卷詳情彈窗
+let editingSurveyModal = null;      // 老師修改學生問卷彈窗
+let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
+let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
+
+/* 生活關懷問卷常數 */
+const SURVEY_CATEGORIES = [
+  '課程內容 (Nội dung khóa học)',
+  '作業問題 (Vấn đề bài tập)',
+  '考試問題 (Vấn đề thi cử)',
+  '學習困難 (Khó khăn trong học tập)',
+  '選修課問題 (Vấn đề môn tự chọn)',
+  '出缺席(曠課)、遲到問題 (Vấn đề vắng mặt (bỏ học), đi muộn)',
+  '休退學問題 (Vấn đề nghỉ học/thôi học)',
+  '家庭關係 (Mối quan hệ gia đình)',
+  '健康問題 (Vấn đề sức khỏe)',
+  '經濟問題 (Vấn đề kinh tế)',
+  '校外租屋 (Thuê nhà ngoài trường)',
+  '工讀 (Làm thêm)',
+  '其他 (Khác)',
+];
+
+const SURVEY_CATEGORY_META = {
+  '課程內容 (Nội dung khóa học)': { icon: '📖', group: '課業與學習', color: '#2563eb' },
+  '作業問題 (Vấn đề bài tập)': { icon: '📝', group: '課業與學習', color: '#0284c7' },
+  '考試問題 (Vấn đề thi cử)': { icon: '✏️', group: '課業與學習', color: '#0891b2' },
+  '學習困難 (Khó khăn trong học tập)': { icon: '💡', group: '課業與學習', color: '#4f46e5' },
+  '選修課問題 (Vấn đề môn tự chọn)': { icon: '🎯', group: '課業與學習', color: '#7c3aed' },
+  '出缺席(曠課)、遲到問題 (Vấn đề vắng mặt (bỏ học), đi muộn)': { icon: '⏰', group: '就學與出缺勤', color: '#d97706' },
+  '休退學問題 (Vấn đề nghỉ học/thôi học)': { icon: '🚪', group: '就學與出缺勤', color: '#ea580c' },
+  '家庭關係 (Mối quan hệ gia đình)': { icon: '👨‍👩‍👧', group: '身心與家庭', color: '#e11d48' },
+  '健康問題 (Vấn đề sức khỏe)': { icon: '🏥', group: '身心與家庭', color: '#dc2626' },
+  '經濟問題 (Vấn đề kinh tế)': { icon: '💰', group: '生活與經濟', color: '#059669' },
+  '校外租屋 (Thuê nhà ngoài trường)': { icon: '🏠', group: '生活與經濟', color: '#0d9488' },
+  '工讀 (Làm thêm)': { icon: '💼', group: '生活與經濟', color: '#16a34a' },
+  '其他 (Khác)': { icon: '💬', group: '其他', color: '#64748b' },
+};
+
 let busy = false;
 let lastSig = '';
 
@@ -752,6 +794,9 @@ function publicBoard({ withUnassigned = true } = {}) {
     <!-- 學生登入區塊嵌入於此 -->
     ${loginMode === 'student' ? loginCard() : ''}
 
+    <!-- 生活關懷問卷進度看板 -->
+    ${c ? publicSurveyProgressCard(c) : ''}
+
     ${!c ? `<p class="file-path empty-notice">請先於左側「學年度分組清單」中點選欲查看分組的學年度與項目。Please select a course from the left list. (Vui lòng chọn môn học từ danh sách bên trái.)</p>` : ''}
 
     ${c ? (c.groups.length ? `<div class="group-grid">${c.groups.map(g => {
@@ -1235,6 +1280,9 @@ function courseTree() {
         <li class="${teacherView === 'attendance' ? 'active' : ''}">
           <button data-act="sys-attendance">📋 點名管理（Điểm danh）<span class="count">Attendance</span></button>
         </li>
+        <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
+          <button data-act="sys-wellbeing">❤️ 生活關懷問卷管理<span class="count">Wellbeing survey</span></button>
+        </li>
       </ul>
     </div>
   </aside>`;
@@ -1271,6 +1319,8 @@ function teacherScreen() {
     main = teacherSubpageNav('分組異動日誌', c) + teacherLogsBlock(c);
   } else if (teacherView === 'attendance') {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c);
+  } else if (teacherView === 'wellbeing') {
+    main = teacherSubpageNav('生活關懷問卷管理', c) + teacherWellbeingBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -2450,6 +2500,929 @@ function rosterTable(c) {
     </tbody></table></div>`;
 }
 
+/* ===== 生活關懷問卷模組 Student Wellbeing Survey Module ===== */
+
+function copyTextToClipboard(text, successMsg) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      alert(successMsg);
+    }).catch(() => {
+      fallbackCopy(text, successMsg);
+    });
+  } else {
+    fallbackCopy(text, successMsg);
+  }
+}
+
+function fallbackCopy(text, successMsg) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+    alert(successMsg);
+  } catch (err) {
+    prompt('請手動複製以下名單：', text);
+  }
+  document.body.removeChild(ta);
+}
+
+function getSurveyStatus(c) {
+  if (!c) return { status: 'not_set', label: '尚未開放 Not Set', badgeClass: 'is-locked', timeDesc: '尚未設定時段', isOpen: false };
+  const start = c.surveyStart || '';
+  const end = c.surveyEnd || '';
+  const now = Date.now();
+  if (start && now < parseDate(start)) {
+    return {
+      status: 'not_started',
+      label: '⏳ 尚未開始 Not Started（Chưa mở）',
+      badgeClass: 'under-threshold',
+      timeDesc: `開放時間：${start.replace('T', ' ')}`,
+      isOpen: false,
+    };
+  }
+  if (end && now > parseDate(end)) {
+    return {
+      status: 'ended',
+      label: '🔒 已截止 Closed（Đã đóng）',
+      badgeClass: 'is-locked',
+      timeDesc: `截止時間：${end.replace('T', ' ')}`,
+      isOpen: false,
+    };
+  }
+  let desc = '不限期開放（永久開放）';
+  if (start && end) desc = `${start.replace('T', ' ')} ~ ${end.replace('T', ' ')}`;
+  else if (end) desc = `至 ${end.replace('T', ' ')} 截止`;
+  else if (start) desc = `自 ${start.replace('T', ' ')} 起開放`;
+
+  return {
+    status: 'open',
+    label: '🟢 開放填寫中 Open（Đang mở）',
+    badgeClass: 'can-edit',
+    timeDesc: desc,
+    isOpen: true,
+  };
+}
+
+function getSurveyStats(c) {
+  if (!c || !c.students) return { total: 0, completed: 0, uncompleted: 0, percent: 0, uncompletedList: [], submissions: [], categoryCounts: {} };
+  const total = c.students.length;
+  const isTeacher = state.session && state.session.role === 'teacher';
+  const uncompletedList = [];
+  let completed = 0;
+  const categoryCounts = {};
+
+  const subMap = new Map();
+  if (isTeacher && c.surveySubmissions) {
+    c.surveySubmissions.forEach(sub => {
+      subMap.set(sub.studentId, sub);
+      const cat = sub.category || '其他 (Khác)';
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    });
+  }
+
+  c.students.forEach(s => {
+    const isComp = isTeacher
+      ? subMap.has(s.id)
+      : !!s.surveyCompleted;
+
+    if (isComp) {
+      completed++;
+    } else {
+      const g = s.groupId ? c.groups.find(x => x.id === s.groupId) : null;
+      const leader = g ? c.students.find(x => x.groupId === g.id && x.isLeader) : null;
+      uncompletedList.push({
+        id: s.id,
+        ref: s.ref || '',
+        name: s.name,
+        groupId: s.groupId || '',
+        groupName: g ? g.name : '未分組',
+        leaderName: leader ? `${leader.name} (${leader.id})` : '（無組長）',
+        rawLeaderName: leader ? leader.name : '',
+      });
+    }
+  });
+
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+  return {
+    total,
+    completed,
+    uncompleted: total - completed,
+    percent,
+    uncompletedList,
+    submissions: c.surveySubmissions || [],
+    categoryCounts,
+  };
+}
+
+function renderCategoryBadge(category) {
+  if (!category) return '<span class="status-badge" style="background:#f1f5f9;color:#64748b;">未填寫</span>';
+  const meta = SURVEY_CATEGORY_META[category] || { icon: '💬', color: '#64748b' };
+  return `<span class="survey-cat-badge" style="border-left: 3px solid ${meta.color};">
+    <span class="cat-icon">${meta.icon}</span>
+    <span class="cat-text">${esc(category)}</span>
+  </span>`;
+}
+
+function publicSurveyProgressCard(c) {
+  if (!c) return '';
+  const stats = getSurveyStats(c);
+  const status = getSurveyStatus(c);
+  const isStudent = state.session && state.session.role === 'student';
+
+  return `
+  <div class="public-survey-progress-card">
+    <div class="progress-card-top">
+      <div class="progress-card-header">
+        <span class="header-icon">💌</span>
+        <div>
+          <h3 class="header-title">生活關懷問卷填寫進度 <small style="font-weight:normal;color:#64748b;">Wellbeing Survey Progress（Tiến độ khảo sát cuộc sống）</small></h3>
+          <div class="header-sub">
+            <span class="status-badge ${status.badgeClass}">${status.label}</span>
+            <span class="schedule-text">📅 ${status.timeDesc}</span>
+          </div>
+        </div>
+      </div>
+      <div class="progress-actions">
+        <button class="btn btn-secondary btn-sm" type="button" data-act="show-public-uncompleted-modal">
+          👥 查看尚未完成名單 (${stats.uncompleted} 人)
+        </button>
+        ${!isStudent ? `
+          <button class="btn btn-primary btn-sm" type="button" data-act="show-student-login">
+            🎓 學生登入填寫問卷 Sign In to Fill
+          </button>
+        ` : `
+          <button class="btn btn-primary btn-sm" type="button" data-act="jump-to-my-survey">
+            ✍️ 前往填寫／修改我的問卷 My Survey
+          </button>
+        `}
+      </div>
+    </div>
+
+    <!-- 進度條 -->
+    <div class="progress-bar-wrap">
+      <div class="bar-labels">
+        <span class="bar-title">全班完成率 Class Completion: <b>${stats.completed}</b> / ${stats.total} 人</span>
+        <span class="bar-percent"><b>${stats.percent}%</b></span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${stats.percent}%;"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function studentSurveyPanel(c, s) {
+  if (!c || !s) return '';
+  const mySub = c.mySurvey;
+  const isSubmitted = !!mySub;
+  const status = getSurveyStatus(c);
+  const isEditable = status.isOpen;
+  const currentCategory = mySub ? mySub.category : '';
+  const currentContent = mySub ? mySub.content : '';
+
+  // 依照主題分組面向
+  const groups = {
+    '課業與學習 (Học tập & Bài vở)': [
+      '課程內容 (Nội dung khóa học)',
+      '作業問題 (Vấn đề bài tập)',
+      '考試問題 (Vấn đề thi cử)',
+      '學習困難 (Khó khăn trong học tập)',
+      '選修課問題 (Vấn đề môn tự chọn)',
+    ],
+    '就學與出缺勤 (Điểm danh & Thôi học)': [
+      '出缺席(曠課)、遲到問題 (Vấn đề vắng mặt (bỏ học), đi muộn)',
+      '休退學問題 (Vấn đề nghỉ học/thôi học)',
+    ],
+    '身心與家庭 (Gia đình & Sức khỏe)': [
+      '家庭關係 (Mối quan hệ gia đình)',
+      '健康問題 (Vấn đề sức khỏe)',
+    ],
+    '生活與經濟 (Kinh tế & Làm thêm)': [
+      '經濟問題 (Vấn đề kinh tế)',
+      '校外租屋 (Thuê nhà ngoài trường)',
+      '工讀 (Làm thêm)',
+    ],
+    '其他 (Khác)': [
+      '其他 (Khác)',
+    ],
+  };
+
+  return `
+  <div class="student-survey-panel" id="student-survey-section">
+    <div class="survey-panel-header">
+      <div class="survey-panel-title">
+        <span class="survey-icon">💌</span>
+        <div>
+          <h3 style="margin:0;font-size:1.15rem;color:#1e293b;">生活關懷問卷 <small style="font-weight:normal;color:#64748b;">Life Care Survey（Phiếu khảo sát Chăm sóc Cuộc sống）</small></h3>
+          <div class="survey-time-tag">
+            <span class="status-badge ${status.badgeClass}">${status.label}</span>
+            <span class="survey-schedule-desc">📅 ${status.timeDesc}</span>
+          </div>
+        </div>
+      </div>
+      <div class="survey-header-status">
+        ${isSubmitted
+          ? '<span class="status-badge meets-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">✅ 您已完成填寫 Submitted（Đã nộp）</span>'
+          : '<span class="status-badge under-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">⏳ 尚未填寫 Not Submitted（Chưa nộp）</span>'}
+      </div>
+    </div>
+
+    ${isSubmitted ? `
+      <div class="survey-submitted-notice">
+        <div class="notice-main">
+          <strong>ℹ️ 您已完成此問卷填寫 You have submitted this survey（Bạn đã hoàn thành phiếu này）</strong>
+          <p>填寫紀錄已附帶時間戳記儲存。若後續個人情況有任何變動，您可以<b>隨時在此重新修改並再次送出</b>。每次修改的歷程內容均會完整記錄於異動日誌中。<br>
+          <small style="color:#64748b;">(You can modify your responses at any time. Modification history is logged. / Bạn có thể chỉnh sửa bất cứ lúc nào. Lịch sử sửa đổi sẽ được ghi lại.)</small></p>
+        </div>
+        <div class="notice-meta">
+          <span>🕒 首次送出 First Submitted（Nộp lần đầu）：<b>${formatLogTime(mySub.createdAt)}</b></span>
+          <span>🔄 最後修改 Last Updated（Cập nhật cuối）：<b>${formatLogTime(mySub.updatedAt)}</b></span>
+        </div>
+      </div>
+    ` : `
+      <div class="survey-guide-notice">
+        💡 <b>填寫說明 Guide（Hướng dẫn）：</b>本表單旨在了解同學們於就學、課程、生活、健康及打工租屋各方面的實際情況與需求，以提供即時輔導與關懷協助。學號與姓名已由系統自動帶入，請選擇符合現況的面向並簡述狀況。<br>
+        <small style="color:#64748b;">(Biểu mẫu này nhằm nắm bắt tình hình học tập và cuộc sống của sinh viên để nhà trường kịp thời hỗ trợ.)</small>
+      </div>
+    `}
+
+    <form data-act="submit-survey" class="student-survey-form">
+      <!-- 1 & 2: 學號與姓名（自動帶入） -->
+      <div class="form-row survey-autofill-row">
+        <div class="form-group">
+          <label>學號 (Mã số sinh viên) <span class="badge-autofill">🔒 自動帶入 Auto-filled</span></label>
+          <input type="text" value="${esc(s.id)}" readonly disabled class="input-locked">
+        </div>
+        <div class="form-group">
+          <label>姓名 (Họ và tên) <span class="badge-autofill">🔒 自動帶入 Auto-filled</span></label>
+          <input type="text" value="${esc(s.name)}" readonly disabled class="input-locked">
+        </div>
+      </div>
+
+      <!-- 3: 輔導面向(擇一) -->
+      <div class="form-group survey-cat-group">
+        <label style="font-size:0.95rem;font-weight:700;color:#1e293b;margin-bottom:0.6rem;">
+          輔導面向(擇一) Guidance category（Hướng tư vấn - chọn một） <span style="color:#dc2626;">*</span>
+        </label>
+        <div class="survey-category-picker">
+          ${Object.entries(groups).map(([grpName, cats]) => `
+            <div class="survey-cat-theme">
+              <div class="theme-title">${esc(grpName)}</div>
+              <div class="theme-options">
+                ${cats.map(cat => {
+                  const meta = SURVEY_CATEGORY_META[cat] || { icon: '💬', color: '#64748b' };
+                  const checked = currentCategory === cat;
+                  return `
+                  <label class="survey-cat-chip ${checked ? 'active' : ''} ${!isEditable ? 'disabled' : ''}">
+                    <input type="radio" name="category" value="${esc(cat)}" ${checked ? 'checked' : ''} ${!isEditable ? 'disabled' : ''} required>
+                    <span class="chip-icon">${meta.icon}</span>
+                    <span class="chip-label">${esc(cat)}</span>
+                  </label>`;
+                }).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- 4: 自述目前狀況或反映問題 -->
+      <div class="form-group" style="margin-top:1.25rem;">
+        <label style="font-size:0.95rem;font-weight:700;color:#1e293b;margin-bottom:0.4rem;">
+          自述目前狀況或反映問題 Description / Issues（Tự thuật tình hình hiện tại hoặc phản ánh vấn đề） <span style="color:#dc2626;">*</span>
+        </label>
+        <textarea name="content" rows="4" style="width:100%;padding:0.75rem 0.9rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;font-size:0.92rem;line-height:1.5;" placeholder="請簡要描述您目前的學習、生活、健康狀況，或需要老師協助處理的問題... (Vui lòng mô tả ngắn gọn tình hình hiện tại hoặc những khó khăn bạn đang gặp phải cần hỗ trợ...)" ${!isEditable ? 'disabled' : ''} required>${esc(currentContent)}</textarea>
+      </div>
+
+      <!-- 送出按鈕與歷程檢視 -->
+      <div class="survey-form-actions">
+        ${isEditable ? `
+          <button class="btn btn-primary" type="submit" style="padding:0.6rem 1.6rem;font-size:0.95rem;font-weight:600;">
+            ${isSubmitted ? '🔄 儲存修改問卷 Update Survey（Cập nhật lại khảo sát）' : '📤 送出生活關懷問卷 Submit Survey（Gửi phiếu khảo sát）'}
+          </button>
+        ` : `
+          <button class="btn btn-secondary" type="button" disabled style="opacity:0.65;cursor:not-allowed;">
+            🔒 目前非開放時段，無法送出問卷 Not in open period
+          </button>
+        `}
+        ${(c.mySurveyLogs && c.mySurveyLogs.length) ? `
+          <button class="btn btn-secondary" type="button" data-act="view-my-survey-logs" data-id="${esc(s.id)}" style="margin-left:0.5rem;padding:0.6rem 1.1rem;font-size:0.9rem;">
+            📜 我的修改紀錄 History (${c.mySurveyLogs.length} 筆)
+          </button>
+        ` : ''}
+      </div>
+    </form>
+  </div>`;
+}
+
+function leaderSurveyStatusPanel(c, g, s, mates) {
+  if (!c || !g || !mates.length) return '';
+  const completedMates = mates.filter(m => m.surveyCompleted);
+  const uncompletedMates = mates.filter(m => !m.surveyCompleted);
+  const percent = mates.length > 0 ? Math.round((completedMates.length / mates.length) * 100) : 0;
+  const allDone = uncompletedMates.length === 0;
+
+  return `
+  <div class="leader-survey-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f0fdfa;border:2px solid #99f6e4;border-radius:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.75rem;">
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <span style="font-size:1.3rem;">💌</span>
+        <h3 style="margin:0;color:#0f766e;font-size:1.05rem;">
+          本組生活關懷問卷填寫狀況 <small style="font-weight:normal;color:#0d9488;">Group Survey Status（Tiến độ khảo sát nhóm）</small>
+        </h3>
+      </div>
+      <div>
+        ${allDone
+          ? '<span class="status-badge meets-threshold" style="font-size:0.85rem;">✅ 全員已完成 All Completed（Cả nhóm đã hoàn thành）</span>'
+          : `<span class="status-badge under-threshold" style="font-size:0.85rem;">⚠️ 尚有 ${uncompletedMates.length} 人未完成 Pending (${uncompletedMates.length} người chưa nộp)</span>`}
+      </div>
+    </div>
+
+    <!-- 進度條 -->
+    <div style="margin-bottom:1rem;background:#fff;padding:0.75rem 1rem;border-radius:8px;border:1px solid #ccfbf1;">
+      <div style="display:flex;justify-content:space-between;font-size:0.85rem;color:#0f766e;font-weight:600;margin-bottom:0.35rem;">
+        <span>完成度 Completion Rate: ${completedMates.length} / ${mates.length} 人</span>
+        <span>${percent}%</span>
+      </div>
+      <div style="height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">
+        <div style="width:${percent}%;height:100%;background:#0d9488;border-radius:999px;transition:width 0.3s;"></div>
+      </div>
+    </div>
+
+    <!-- 組員名單列表 -->
+    <div class="table-wrap" style="background:#fff;border-radius:8px;border:1px solid #ccfbf1;">
+      <table class="roster" style="margin:0;font-size:0.88rem;">
+        <thead>
+          <tr style="background:#f0fdfa;">
+            <th>姓名 (學號) Name &amp; ID（Họ tên &amp; Mã SV）</th>
+            <th>角色 Role</th>
+            <th>問卷狀態 Survey Status（Tình trạng khảo sát）</th>
+            <th>最後更新 Last Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${mates.map(m => {
+            const isDone = !!m.surveyCompleted;
+            return `
+            <tr>
+              <td><b>${esc(m.name)}</b> (${esc(m.id)})</td>
+              <td>${m.isLeader ? '<span class="tag-inline leader">組長</span>' : m.isVice ? '<span class="tag-inline">副組長</span>' : '組員'}</td>
+              <td>
+                ${isDone
+                  ? '<span class="status-badge meets-threshold">✅ 已完成 Submitted（Đã nộp）</span>'
+                  : '<span class="status-badge under-threshold">⏳ 尚未填寫 Pending（Chưa nộp）</span>'}
+              </td>
+              <td>${m.surveyUpdatedAt ? formatLogTime(m.surveyUpdatedAt) : '<span style="color:#94a3b8;">-</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 催繳輔助按鈕 -->
+    <div style="margin-top:0.85rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+      <span style="font-size:0.82rem;color:#0f766e;">
+        💡 提示：組長／副組長可隨時掌握本組成員填寫進度，點選右方按鈕可直接複製提醒文字至通訊群組催繳。
+      </span>
+      <button class="btn btn-secondary btn-sm" type="button" data-act="copy-leader-uncompleted-survey" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">
+        📋 一鍵複製本組未填寫催繳名單 (Sao chép nhắc nhở)
+      </button>
+    </div>
+  </div>`;
+}
+
+function teacherWellbeingBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section">
+      <h2>💌 生活關懷問卷管理 <small>Wellbeing Survey</small></h2>
+      <p class="file-path">請先從左側點選或建立課程，即可管理該課程的生活關懷問卷。</p>
+    </div>`;
+  }
+
+  const stats = getSurveyStats(c);
+  const status = getSurveyStatus(c);
+  const submissions = c.surveySubmissions || [];
+  const logs = c.surveyLogs || [];
+
+  // 篩選已填寫名單
+  let filteredSubmissions = submissions.slice();
+  if (surveyGroupFilter !== 'all') {
+    filteredSubmissions = filteredSubmissions.filter(s => s.groupId === surveyGroupFilter);
+  }
+  if (surveyCategoryFilter !== 'all') {
+    filteredSubmissions = filteredSubmissions.filter(s => s.category === surveyCategoryFilter);
+  }
+  if (surveySearchText.trim()) {
+    const q = surveySearchText.trim().toLowerCase();
+    filteredSubmissions = filteredSubmissions.filter(s =>
+      (s.studentId && s.studentId.toLowerCase().includes(q)) ||
+      (s.studentName && s.studentName.toLowerCase().includes(q)) ||
+      (s.content && s.content.toLowerCase().includes(q)) ||
+      (s.category && s.category.toLowerCase().includes(q))
+    );
+  }
+
+  return `
+  <div class="teacher-section wellbeing-admin-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+      <div>
+        <h2 style="margin:0 0 0.35rem 0;">💌 生活關懷問卷管理 <small>${esc(courseLabel(c))}</small></h2>
+        <p class="file-path" style="margin:0;">查閱全班生活關懷問卷回覆、追蹤尚未填寫名單、管理問卷開放時限與匯出完整紀錄。</p>
+      </div>
+      <div style="display:flex;gap:0.5rem;align-items:center;">
+        <button class="btn btn-success btn-sm" type="button" data-act="export-survey-csv">
+          📥 匯出問卷紀錄 (Excel/CSV) Export
+        </button>
+      </div>
+    </div>
+
+    <!-- 1. 問卷開放時限設定 -->
+    <div class="survey-period-box" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
+      <form data-act="save-survey-period" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.85rem;">
+        <label style="font-weight:700;font-size:0.9rem;color:#1e293b;">📅 問卷開放時段設定：</label>
+        <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem;">
+          <span>開始：</span>
+          <input type="datetime-local" name="surveyStart" value="${esc(c.surveyStart || '')}" style="padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
+        </div>
+        <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem;">
+          <span>結束：</span>
+          <input type="datetime-local" name="surveyEnd" value="${esc(c.surveyEnd || '')}" style="padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">💾 儲存時限 Save</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="clear-survey-period" style="padding:0.4rem 0.85rem;font-size:0.85rem;margin:0;">♾️ 清空 (永久開放)</button>
+        <span class="status-badge ${status.badgeClass}" style="margin-left:auto;">${status.label} (${status.timeDesc})</span>
+      </form>
+    </div>
+
+    <!-- 2. KPI 統計概覽卡片 -->
+    <div class="stats" style="margin-bottom:1.5rem;">
+      <div class="stat">
+        <div class="value">${stats.total}</div>
+        <div class="label">修課學生總數 Total</div>
+      </div>
+      <div class="stat" style="border-left: 4px solid #16a34a;">
+        <div class="value" style="color:#16a34a;">${stats.completed} <small style="font-size:0.9rem;color:#64748b;">(${stats.percent}%)</small></div>
+        <div class="label">已完成填寫 Completed</div>
+      </div>
+      <div class="stat" style="border-left: 4px solid ${stats.uncompleted > 0 ? '#ea580c' : '#cbd5e1'};">
+        <div class="value" style="color:${stats.uncompleted > 0 ? '#ea580c' : '#64748b'};">${stats.uncompleted}</div>
+        <div class="label">尚未完成填寫 Pending</div>
+      </div>
+    </div>
+
+    <!-- 3. 輔導面向分布快速過濾 -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem;">
+        <span style="font-weight:700;font-size:0.9rem;color:#1e293b;">📊 輔導面向回覆分佈（點選可快速篩選查看）：</span>
+        ${surveyCategoryFilter !== 'all' ? `
+          <button class="tab-btn" data-act="filter-cat-chip" data-cat="all" style="font-size:0.8rem;padding:0.2rem 0.6rem;">清除篩選 Show All</button>
+        ` : ''}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45rem;">
+        ${SURVEY_CATEGORIES.map(cat => {
+          const count = stats.categoryCounts[cat] || 0;
+          const meta = SURVEY_CATEGORY_META[cat] || { icon: '💬', color: '#64748b' };
+          const active = surveyCategoryFilter === cat;
+          return `
+          <button class="survey-stat-chip ${active ? 'active' : ''} ${count === 0 ? 'empty' : ''}" data-act="filter-cat-chip" data-cat="${esc(cat)}" style="border-color:${active ? meta.color : '#e2e8f0'};${active ? `background:${meta.color};color:#fff;` : ''}">
+            <span class="chip-icon">${meta.icon}</span>
+            <span class="chip-name">${esc(cat.split(' (')[0])}</span>
+            <span class="chip-count" style="${active ? 'background:rgba(255,255,255,0.25);color:#fff;' : ''}">${count}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- 4. 子分頁切換按鈕 -->
+    <div class="tab-btns" style="margin-bottom:1.25rem;">
+      <button class="tab-btn ${surveyActiveTab === 'uncompleted' ? 'active' : ''}" data-act="set-survey-tab" data-tab="uncompleted">
+        📋 尚未完成名單 (${stats.uncompleted} 人)
+      </button>
+      <button class="tab-btn ${surveyActiveTab === 'submissions' ? 'active' : ''}" data-act="set-survey-tab" data-tab="submissions">
+        📝 問卷填寫資料 (${submissions.length} 筆)
+      </button>
+      <button class="tab-btn ${surveyActiveTab === 'logs' ? 'active' : ''}" data-act="set-survey-tab" data-tab="logs">
+        📜 問卷異動日誌 (${logs.length} 筆)
+      </button>
+    </div>
+
+    <!-- 分頁 1: 尚未完成名單 -->
+    ${surveyActiveTab === 'uncompleted' ? `
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <div style="font-size:0.9rem;color:#475569;">
+            全班共有 <b>${stats.uncompleted}</b> 位學生尚未完成填寫問卷。
+          </div>
+          <button class="btn btn-primary btn-sm" type="button" data-act="copy-teacher-uncompleted-survey" style="padding:0.4rem 1.1rem;font-size:0.85rem;margin:0;">
+            📋 一鍵複製未完成催繳名單 (含組別與組長)
+          </button>
+        </div>
+        ${stats.uncompletedList.length ? `
+          <div class="table-wrap">
+            <table class="roster">
+              <thead>
+                <tr>
+                  <th>所屬組別 Group</th>
+                  <th>該組組長 Group Leader</th>
+                  <th>學號 Student ID</th>
+                  <th>姓名 Name</th>
+                  <th>問卷填寫狀態 Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${stats.uncompletedList.map(st => `
+                <tr>
+                  <td><b>${esc(st.groupName)}</b></td>
+                  <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
+                  <td><code>${esc(st.id)}</code></td>
+                  <td><b>${esc(st.name)}</b></td>
+                  <td><span class="status-badge under-threshold">⏳ 尚未填寫 Pending</span></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <div style="padding:2rem;text-align:center;background:#f0fdf4;border:1px dashed #86efac;border-radius:8px;color:#166534;">
+            🎉 太棒了！本課程全體學生皆已完成生活關懷問卷填寫！
+          </div>
+        `}
+      </div>
+    ` : ''}
+
+    <!-- 分頁 2: 已填寫問卷清單 -->
+    ${surveyActiveTab === 'submissions' ? `
+      <div>
+        <!-- 搜尋與過濾列 -->
+        <div class="survey-filter-toolbar" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;background:#f8fafc;padding:0.85rem 1rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:1rem;">
+          <div style="flex:1;min-width:200px;">
+            <input type="text" data-act="survey-search-input" value="${esc(surveySearchText)}" placeholder="🔍 搜尋學號、姓名或問題自述內容..." style="width:100%;padding:0.4rem 0.75rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
+          </div>
+          <div style="display:flex;align-items:center;gap:0.4rem;">
+            <label style="font-size:0.85rem;color:#64748b;">組別：</label>
+            <select data-act="survey-group-filter" style="padding:0.35rem 0.6rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
+              <option value="all" ${surveyGroupFilter === 'all' ? 'selected' : ''}>全部組別 All Groups</option>
+              ${c.groups.map(g => `<option value="${esc(g.id)}" ${surveyGroupFilter === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:0.4rem;">
+            <label style="font-size:0.85rem;color:#64748b;">面向：</label>
+            <select data-act="survey-cat-filter" style="padding:0.35rem 0.6rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
+              <option value="all" ${surveyCategoryFilter === 'all' ? 'selected' : ''}>全部面向 All Categories</option>
+              ${SURVEY_CATEGORIES.map(cat => `<option value="${esc(cat)}" ${surveyCategoryFilter === cat ? 'selected' : ''}>${esc(cat)}</option>`).join('')}
+            </select>
+          </div>
+          ${(surveyGroupFilter !== 'all' || surveyCategoryFilter !== 'all' || surveySearchText) ? `
+            <button class="tab-btn" data-act="reset-survey-filters" style="padding:0.35rem 0.7rem;font-size:0.85rem;">重設條件 Reset</button>
+          ` : ''}
+        </div>
+
+        ${filteredSubmissions.length ? `
+          <div class="table-wrap">
+            <table class="roster">
+              <thead>
+                <tr>
+                  <th>學號 ID</th>
+                  <th>姓名 Name</th>
+                  <th>所屬組別 Group</th>
+                  <th>輔導面向 Category</th>
+                  <th>自述狀況與反映問題 Summary</th>
+                  <th>首次送出時間</th>
+                  <th>最後更新時間</th>
+                  <th>操作 Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredSubmissions.map(sub => `
+                <tr>
+                  <td><code>${esc(sub.studentId)}</code></td>
+                  <td><b>${esc(sub.studentName)}</b></td>
+                  <td>${esc(sub.groupName)}</td>
+                  <td>${renderCategoryBadge(sub.category)}</td>
+                  <td style="max-width:280px;">
+                    <div class="survey-content-snippet" data-act="view-survey-detail" data-id="${esc(sub.studentId)}" title="點選查看完整內容">
+                      ${esc(sub.content || '')}
+                    </div>
+                  </td>
+                  <td>${formatLogTime(sub.createdAt)}</td>
+                  <td>${formatLogTime(sub.updatedAt)}</td>
+                  <td style="white-space:nowrap;">
+                    <div style="display:flex;gap:0.3rem;">
+                      <button class="tab-btn" data-act="view-survey-detail" data-id="${esc(sub.studentId)}" title="查閱完整內容與歷程">🔍 查閱</button>
+                      <button class="tab-btn" data-act="teacher-edit-survey-modal" data-id="${esc(sub.studentId)}" title="修改此筆問卷資料">✏️ 修改</button>
+                      <button class="tab-btn" data-act="delete-survey-submission" data-id="${esc(sub.studentId)}" data-name="${esc(sub.studentName)}" title="刪除此筆問卷資料" style="color:#dc2626;">🗑️ 刪除</button>
+                      <button class="tab-btn" data-act="view-survey-logs-modal" data-id="${esc(sub.studentId)}" title="查看異動日誌">📜 歷程</button>
+                    </div>
+                  </td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <p class="file-path" style="text-align:center;padding:2rem;">查無符合條件的問卷資料 No matching submissions found.</p>
+        `}
+      </div>
+    ` : ''}
+
+    <!-- 分頁 3: 問卷異動日誌 -->
+    ${surveyActiveTab === 'logs' ? `
+      <div>
+        <p class="file-path" style="margin-bottom:0.75rem;">完整記錄學生填寫、重新修改以及老師編輯／刪除之所有問卷異動歷程。</p>
+        ${logs.length ? `
+          <div class="table-wrap">
+            <table class="roster">
+              <thead>
+                <tr>
+                  <th>時間 Time</th>
+                  <th>動作 Action</th>
+                  <th>操作者 Operator</th>
+                  <th>對象學生 Student</th>
+                  <th>異動歷程說明 Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs.map(l => {
+                  const isTeacherOp = l.operatorRole === 'teacher';
+                  const actionBadge = l.actionType === 'create'
+                    ? '<span class="status-badge meets-threshold">首次送出 Create</span>'
+                    : l.actionType === 'delete'
+                    ? '<span class="status-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">刪除 Delete</span>'
+                    : '<span class="status-badge can-edit">修改更新 Update</span>';
+                  return `
+                  <tr>
+                    <td>${formatLogTime(l.createdAt)}</td>
+                    <td>${actionBadge}</td>
+                    <td>${isTeacherOp ? '<span style="color:#7c3aed;font-weight:600;">👨‍🏫 老師</span>' : `<span>學生 ${esc(l.operatorName)} (${esc(l.operatorId)})</span>`}</td>
+                    <td><b>${esc(l.studentName)}</b> (${esc(l.studentId)})</td>
+                    <td>
+                      <div>${esc(l.diffSummary || '-')}</div>
+                      ${(l.prevCategory || l.newCategory) && l.prevCategory !== l.newCategory ? `
+                        <div style="font-size:0.78rem;color:#64748b;margin-top:0.2rem;">
+                          面向變更：${esc(l.prevCategory || '無')} ➔ ${esc(l.newCategory)}
+                        </div>
+                      ` : ''}
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : `
+          <p class="file-path" style="text-align:center;padding:2rem;">目前尚無任何問卷異動日誌 No survey activity logs.</p>
+        `}
+      </div>
+    ` : ''}
+  </div>`;
+}
+
+function exportSurveyCSV(c) {
+  if (!c) return;
+  const submissions = c.surveySubmissions || [];
+  const subMap = new Map();
+  submissions.forEach(s => subMap.set(s.studentId, s));
+
+  const rows = [['學號', '姓名', '組別', '組長', '填寫狀態', '輔導面向', '自述目前狀況或反映問題', '首次填寫時間', '最後修改時間']];
+
+  // 依學號自然排序
+  const sortedStudents = c.students.slice().sort((a, b) =>
+    String(a.id).localeCompare(String(b.id), undefined, { numeric: true, sensitivity: 'base' })
+  );
+
+  sortedStudents.forEach(s => {
+    const g = c.groups.find(x => x.id === s.groupId);
+    const lead = g ? c.students.find(x => x.groupId === g.id && x.isLeader) : null;
+    const sub = subMap.get(s.id);
+    rows.push([
+      s.id,
+      s.name,
+      g ? g.name : '未分組',
+      lead ? `${lead.name} (${lead.id})` : '（無組長）',
+      sub ? '已完成填寫' : '尚未填寫',
+      sub ? sub.category : '',
+      sub ? sub.content : '',
+      sub && sub.createdAt ? formatLogTime(sub.createdAt) : '',
+      sub && sub.updatedAt ? formatLogTime(sub.updatedAt) : '',
+    ]);
+  });
+
+  const csv = '\ufeff' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_生活關懷問卷填寫紀錄.csv`);
+}
+
+function surveyModalsHtml() {
+  const c = cur();
+  let html = '';
+
+  // 1. 查閱問卷詳情 Modal
+  if (viewingSurveyModal && c) {
+    const stId = viewingSurveyModal;
+    const isTeacher = state.session && state.session.role === 'teacher';
+    const sub = isTeacher
+      ? (c.surveySubmissions || []).find(s => s.studentId === stId)
+      : (c.mySurvey && me() && me().id === stId ? c.mySurvey : null);
+    const st = c.students.find(s => s.id === stId);
+    const grp = st && st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+    const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
+    const logs = (isTeacher ? (c.surveyLogs || []) : (c.mySurveyLogs || [])).filter(l => l.studentId === stId);
+
+    html += `
+    <div class="absence-modal-overlay" data-act="close-survey-detail-modal-bg">
+      <div class="absence-modal-content" style="max-width:680px;">
+        <div class="absence-modal-header">
+          <h3><span>💌</span> 生活關懷問卷明細 Survey Details</h3>
+          <button class="absence-modal-close-btn" type="button" data-act="close-survey-detail-modal">✕</button>
+        </div>
+        <div class="absence-modal-body">
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
+            <div>
+              <strong style="font-size:1.05rem;">${esc(st ? st.name : stId)}</strong>
+              <span style="color:#64748b;font-size:0.85rem;margin-left:0.35rem;">(${esc(stId)})</span>
+              <div style="font-size:0.82rem;color:#475569;margin-top:0.25rem;">
+                組別：<b>${esc(grp ? grp.name : '未分組')}</b> · 組長：${leader ? `${esc(leader.name)} (${esc(leader.id)})` : '（無組長）'}
+              </div>
+            </div>
+            ${sub ? '<span class="status-badge meets-threshold">✅ 已完成填寫</span>' : '<span class="status-badge under-threshold">⏳ 尚未填寫</span>'}
+          </div>
+
+          ${sub ? `
+            <div style="margin-bottom:1rem;">
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">輔導面向 Guidance Category：</label>
+              <div>${renderCategoryBadge(sub.category)}</div>
+            </div>
+
+            <div style="margin-bottom:1.25rem;">
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">自述目前狀況或反映問題 Content：</label>
+              <div class="survey-modal-content-box">
+                ${esc(sub.content || '')}
+              </div>
+            </div>
+
+            <div style="display:flex;gap:1.5rem;font-size:0.82rem;color:#64748b;margin-bottom:1.25rem;border-top:1px dashed #e2e8f0;padding-top:0.75rem;">
+              <span>🕒 首次送出：<b>${formatLogTime(sub.createdAt)}</b></span>
+              <span>🔄 最後更新：<b>${formatLogTime(sub.updatedAt)}</b></span>
+            </div>
+
+            <!-- 修改歷程日誌時間軸 -->
+            <div>
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.5rem;">📜 歷程異動日誌 Modification History：</label>
+              ${logs.length ? `
+                <div class="survey-logs-timeline">
+                  ${logs.map(l => `
+                    <div class="timeline-item">
+                      <div class="timeline-date">${formatLogTime(l.createdAt)}</div>
+                      <div class="timeline-operator">操作者：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師</b>' : `<b>學生本人 (${esc(l.operatorName)})</b>`}</div>
+                      <div class="timeline-summary">${esc(l.diffSummary || '')}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : '<p class="file-path">尚無額外修改紀錄。</p>'}
+            </div>
+          ` : '<p class="file-path" style="text-align:center;padding:1.5rem;">該學生目前尚未填寫問卷。</p>'}
+        </div>
+        <div class="absence-modal-footer">
+          ${isTeacher && sub ? `
+            <button class="btn btn-primary" type="button" data-act="teacher-edit-survey-modal" data-id="${esc(stId)}" style="margin:0;margin-right:auto;padding:0.4rem 1rem;font-size:0.85rem;">
+              ✏️ 修改內容 Edit
+            </button>
+          ` : ''}
+          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;font-size:0.88rem;margin:0;" data-act="close-survey-detail-modal">
+            關閉 Close
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // 2. 老師修改問卷 Modal
+  if (editingSurveyModal && c) {
+    const { studentId, studentName, category, content } = editingSurveyModal;
+    html += `
+    <div class="absence-modal-overlay" data-act="close-edit-survey-modal-bg">
+      <div class="absence-modal-content" style="max-width:600px;">
+        <div class="absence-modal-header">
+          <h3><span>✏️</span> 修改學生問卷資料 Edit Survey</h3>
+          <button class="absence-modal-close-btn" type="button" data-act="close-edit-survey-modal">✕</button>
+        </div>
+        <form data-act="teacher-edit-survey-submit">
+          <input type="hidden" name="studentId" value="${esc(studentId)}">
+          <div class="absence-modal-body">
+            <div style="background:#f8fafc;padding:0.6rem 0.85rem;border-radius:6px;margin-bottom:1rem;font-size:0.9rem;">
+              學生：<b>${esc(studentName)}</b> (學號: ${esc(studentId)})
+            </div>
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">輔導面向 Category：</label>
+              <select name="category" style="width:100%;padding:0.5rem;border:1px solid #cbd5e1;border-radius:6px;font:inherit;" required>
+                ${SURVEY_CATEGORIES.map(cat => `<option value="${esc(cat)}" ${category === cat ? 'selected' : ''}>${esc(cat)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">自述目前狀況或反映問題 Content：</label>
+              <textarea name="content" rows="6" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:6px;font:inherit;" required>${esc(content)}</textarea>
+            </div>
+          </div>
+          <div class="absence-modal-footer">
+            <button class="btn btn-secondary" type="button" data-act="close-edit-survey-modal" style="margin:0;padding:0.4rem 1rem;">取消 Cancel</button>
+            <button class="btn btn-primary" type="submit" style="margin:0;padding:0.4rem 1.4rem;">💾 儲存修改 Save</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  }
+
+  // 3. 歷程日誌 Modal
+  if (viewingSurveyLogsModal && c) {
+    const { studentId, studentName, logs } = viewingSurveyLogsModal;
+    html += `
+    <div class="absence-modal-overlay" data-act="close-survey-logs-modal-bg">
+      <div class="absence-modal-content" style="max-width:620px;">
+        <div class="absence-modal-header">
+          <h3><span>📜</span> 問卷異動日誌歷程 Survey History</h3>
+          <button class="absence-modal-close-btn" type="button" data-act="close-survey-logs-modal">✕</button>
+        </div>
+        <div class="absence-modal-body">
+          <div style="background:#f8fafc;padding:0.6rem 0.85rem;border-radius:6px;margin-bottom:1rem;font-size:0.9rem;">
+            學生：<b>${esc(studentName)}</b> (${esc(studentId)})
+          </div>
+          ${logs && logs.length ? `
+            <div class="survey-logs-timeline">
+              ${logs.map(l => `
+                <div class="timeline-item">
+                  <div class="timeline-date">${formatLogTime(l.createdAt)}</div>
+                  <div class="timeline-operator">操作者：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師</b>' : `<b>學生本人 (${esc(l.operatorName)})</b>`}</div>
+                  <div class="timeline-summary">${esc(l.diffSummary || '')}</div>
+                  ${l.prevCategory !== l.newCategory && (l.prevCategory || l.newCategory) ? `
+                    <div style="font-size:0.8rem;color:#475569;margin-top:0.25rem;">
+                      面向異動：${esc(l.prevCategory || '無')} ➔ ${esc(l.newCategory)}
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : '<p class="file-path">尚無異動紀錄。</p>'}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-survey-logs-modal">關閉 Close</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // 4. 前台尚未完成名單 Modal
+  if (showPublicUncompletedModal && c) {
+    const stats = getSurveyStats(c);
+    html += `
+    <div class="absence-modal-overlay" data-act="close-public-uncompleted-modal-bg">
+      <div class="absence-modal-content" style="max-width:640px;">
+        <div class="absence-modal-header">
+          <h3><span>📋</span> 尚未完成生活關懷問卷名單 Uncompleted List</h3>
+          <button class="absence-modal-close-btn" type="button" data-act="close-public-uncompleted-modal">✕</button>
+        </div>
+        <div class="absence-modal-body">
+          <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:1rem;color:#92400e;font-size:0.88rem;">
+            全班共有 <b>${stats.uncompleted}</b> 位同學尚未完成生活關懷問卷，請組長與同組同學互相協助提醒催繳！
+          </div>
+          ${stats.uncompletedList.length ? `
+            <div class="table-wrap">
+              <table class="roster">
+                <thead>
+                  <tr>
+                    <th>所屬組別 Group</th>
+                    <th>組長 Leader</th>
+                    <th>姓名 Name</th>
+                    <th>狀態 Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${stats.uncompletedList.map(st => `
+                  <tr>
+                    <td><b>${esc(st.groupName)}</b></td>
+                    <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
+                    <td><b>${esc(st.name)}</b></td>
+                    <td><span class="status-badge under-threshold">⏳ 尚未填寫</span></td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div style="text-align:center;padding:1.5rem;color:#166534;background:#f0fdf4;border-radius:8px;">
+              🎉 全班同學皆已完成問卷填寫！
+            </div>
+          `}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="btn btn-primary btn-sm" type="button" data-act="copy-public-uncompleted-survey" style="margin:0;margin-right:auto;padding:0.4rem 1rem;">
+            📋 一鍵複製未完成名單 (Sao chép danh sách)
+          </button>
+          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-public-uncompleted-modal">關閉 Close</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  return html;
+}
+
 function studentScreen() {
   const c = cur(), s = me();
   if (!c || !s) { state.session = null; return authScreen(); }
@@ -2468,6 +3441,9 @@ function studentScreen() {
       <strong>角色 Role（Vai trò）:</strong> ${s.isLeader ? '組長 Leader（Trưởng nhóm）' : s.isVice ? '副組長 Vice leader（Phó nhóm）' : '組員 Member（Thành viên）'}<br>
       <strong>組別 Group（Nhóm）:</strong> ${g ? esc(g.name) : '未分組 Unassigned（Chưa có nhóm）'}${s.autoAssigned ? '（自動分配 Auto-assigned／Tự động phân）' : ''}
     </div>`;
+
+  /* 生活關懷問卷區塊（全體學生登入均可填寫與修改） */
+  html += studentSurveyPanel(c, s);
 
   if (s.isLeader) {
     if (closed && !canEdit) {
@@ -2579,6 +3555,7 @@ function studentScreen() {
   /* 組長／副組長皆可執行：點名 Attendance（Điểm danh）—— 置於期末評分之上 */
   if ((s.isLeader || s.isVice) && g) {
     html += attendanceLeaderPanel(c, g, s, mates);
+    html += leaderSurveyStatusPanel(c, g, s, mates);
   }
 
   /* 老師授權之跨組代理點名（防範某組組長／副組長皆未到） */
@@ -3062,7 +4039,7 @@ function render() {
   const showHowto = isStudent || (isTeacher && teacherPreviewMode === 'leader');
 
   document.getElementById('app').innerHTML =
-    nav() + teacherPreviewBanner() + '<div class="container">' + (showHowto ? howto() : '') + body + '</div>' + absenceDetailModalHtml();
+    nav() + teacherPreviewBanner() + '<div class="container">' + (showHowto ? howto() : '') + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml();
   if (!state.session && loginMode) {
     const first = document.querySelector('#login input');
     if (first) first.focus();
@@ -3305,6 +4282,57 @@ app.addEventListener('submit', e => {
     return act('mark-attendance', { sessionId, groupId, records },
       { after: () => alert('點名已送出 Attendance submitted（Đã gửi điểm danh thành công）') });
   }
+  if (a === 'submit-survey') {
+    const c = cur(), s = me();
+    if (!c || !s) return;
+    const catEl = f.querySelector('input[name="category"]:checked');
+    if (!catEl || !catEl.value) {
+      return alert('請選擇一個輔導面向！\nPlease select a guidance category.\nVui lòng chọn một hướng tư vấn!');
+    }
+    const content = (f.content ? f.content.value : '').trim();
+    if (!content) {
+      return alert('請填寫自述狀況或反映問題！\nPlease fill in your status or feedback.\nVui lòng nhập nội dung tự thuật hoặc phản ánh!');
+    }
+    const isEdit = !!c.mySurvey;
+    const confirmMsg = isEdit
+      ? '確定要送出修改的生活關懷問卷嗎？\n您的修改紀錄將會記錄於日誌中。\n\nConfirm update survey?\nYour modification will be logged.\n\nXác nhận cập nhật khảo sát?'
+      : '確定送出生活關懷問卷？\n\nConfirm submit survey?\n\nXác nhận gửi khảo sát?';
+    if (!confirm(confirmMsg)) return;
+
+    return act('submit-survey', { category: catEl.value, content }, {
+      after: () => {
+        alert(isEdit
+          ? '🎉 生活關懷問卷已成功更新！感謝您的反映。\nSurvey updated successfully!\nCập nhật khảo sát thành công!'
+          : '🎉 生活關懷問卷已成功送出！感謝您的填寫。\nSurvey submitted successfully!\nGửi khảo sát thành công!');
+      }
+    });
+  }
+  if (a === 'save-survey-period') {
+    const c = cur();
+    if (!c) return;
+    const surveyStart = (f.surveyStart ? f.surveyStart.value : '').trim();
+    const surveyEnd = (f.surveyEnd ? f.surveyEnd.value : '').trim();
+    if (surveyStart && surveyEnd && surveyStart > surveyEnd) {
+      return alert('開始日期時間不得晚於結束日期時間！');
+    }
+    return act('teacher:save-survey-period', { courseId: c.id, surveyStart, surveyEnd }, {
+      after: () => alert('✅ 問卷開放日期段已成功儲存！'),
+    });
+  }
+  if (a === 'teacher-edit-survey-submit') {
+    const c = cur();
+    if (!c) return;
+    const studentId = f.studentId.value;
+    const category = f.category.value;
+    const content = f.content.value.trim();
+    if (!content) return alert('請填寫自述內容！');
+    return act('teacher:update-survey-submission', { courseId: c.id, studentId, category, content }, {
+      after: () => {
+        editingSurveyModal = null;
+        alert('✅ 已成功修改學生問卷內容並記錄異動日誌！');
+      }
+    });
+  }
 });
 
 app.addEventListener('click', e => {
@@ -3428,6 +4456,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-peer-eval') { return setTeacherView('eval'); }
   if (a === 'sys-logs') { return setTeacherView('logs'); }
   if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
+  if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
   if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
   if (a === 'cancel-edit-attendance-session') { attendanceEditingId = null; return render(); }
   if (a === 'del-attendance-session') {
@@ -3474,7 +4503,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return act('teacher:clear-logs', { courseId: c.id });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'settings') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings') ? teacherView : 'course';
     return setTeacherView(nextView, id || btn.value);
   }
   if (a === 'new-course') { state.currentId = null; return setTeacherView('course', null); }
@@ -3663,14 +4692,192 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       alert('輸入無效，請輸入 1 或 2。');
     }
   }
+
+  /* ===== 生活關懷問卷點擊互動 ===== */
+  if (a === 'set-survey-tab') {
+    surveyActiveTab = btn.dataset.tab || 'uncompleted';
+    return render();
+  }
+  if (a === 'filter-cat-chip') {
+    const cat = btn.dataset.cat;
+    surveyCategoryFilter = (surveyCategoryFilter === cat) ? 'all' : cat;
+    return render();
+  }
+  if (a === 'reset-survey-filters') {
+    surveyCategoryFilter = 'all';
+    surveyGroupFilter = 'all';
+    surveySearchText = '';
+    return render();
+  }
+  if (a === 'view-survey-detail') {
+    viewingSurveyModal = btn.dataset.id;
+    return render();
+  }
+  if (a === 'close-survey-detail-modal') {
+    viewingSurveyModal = null;
+    return render();
+  }
+  if (a === 'close-survey-detail-modal-bg') {
+    if (e.target.classList.contains('absence-modal-overlay')) {
+      viewingSurveyModal = null;
+      return render();
+    }
+  }
+  if (a === 'teacher-edit-survey-modal') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const sub = (c.surveySubmissions || []).find(x => x.studentId === sid);
+    if (!sub) return;
+    const st = c.students.find(x => x.id === sid);
+    viewingSurveyModal = null;
+    editingSurveyModal = {
+      studentId: sid,
+      studentName: st ? st.name : sub.studentName || sid,
+      category: sub.category || '',
+      content: sub.content || '',
+    };
+    return render();
+  }
+  if (a === 'close-edit-survey-modal') {
+    editingSurveyModal = null;
+    return render();
+  }
+  if (a === 'close-edit-survey-modal-bg') {
+    if (e.target.classList.contains('absence-modal-overlay')) {
+      editingSurveyModal = null;
+      return render();
+    }
+  }
+  if (a === 'delete-survey-submission') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const sname = btn.dataset.name || sid;
+    if (!confirm(`確定要刪除學生「${sname} (${sid})」的生活關懷問卷紀錄嗎？\n\n刪除後該學生可重新填寫問卷，此刪除動作亦將記錄於異動日誌。`)) return;
+    return act('teacher:delete-survey-submission', { courseId: c.id, studentId: sid });
+  }
+  if (a === 'view-survey-logs-modal') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const st = c.students.find(x => x.id === sid);
+    const logs = (c.surveyLogs || []).filter(l => l.studentId === sid);
+    viewingSurveyLogsModal = {
+      studentId: sid,
+      studentName: st ? st.name : sid,
+      logs,
+    };
+    return render();
+  }
+  if (a === 'view-my-survey-logs') {
+    if (!c) return;
+    const s = me();
+    if (!s) return;
+    viewingSurveyLogsModal = {
+      studentId: s.id,
+      studentName: s.name,
+      logs: c.mySurveyLogs || [],
+    };
+    return render();
+  }
+  if (a === 'close-survey-logs-modal') {
+    viewingSurveyLogsModal = null;
+    return render();
+  }
+  if (a === 'close-survey-logs-modal-bg') {
+    if (e.target.classList.contains('absence-modal-overlay')) {
+      viewingSurveyLogsModal = null;
+      return render();
+    }
+  }
+  if (a === 'export-survey-csv') {
+    if (!c) return;
+    exportSurveyCSV(c);
+    return;
+  }
+  if (a === 'clear-survey-period') {
+    if (!c) return;
+    if (!confirm('確定要清除日期限制，改為隨時開放填寫嗎？')) return;
+    return act('teacher:save-survey-period', { courseId: c.id, surveyStart: '', surveyEnd: '' }, {
+      after: () => alert('已更新為隨時開放填寫！'),
+    });
+  }
+  if (a === 'show-public-uncompleted-modal') {
+    showPublicUncompletedModal = true;
+    return render();
+  }
+  if (a === 'close-public-uncompleted-modal') {
+    showPublicUncompletedModal = false;
+    return render();
+  }
+  if (a === 'close-public-uncompleted-modal-bg') {
+    if (e.target.classList.contains('absence-modal-overlay')) {
+      showPublicUncompletedModal = false;
+      return render();
+    }
+  }
+  if (a === 'copy-leader-uncompleted-survey') {
+    if (!c) return;
+    const s = me();
+    const g = s && s.groupId ? c.groups.find(x => x.id === s.groupId) : null;
+    const mates = g ? members(c, g.id) : [];
+    const uncompletedMates = mates.filter(m => !m.surveyCompleted);
+    if (!uncompletedMates.length) {
+      return alert('🎉 本組所有組員皆已完成問卷填寫！\nAll members in this group have completed the survey.\nCả nhóm đã hoàn thành!');
+    }
+    const text = `📢【生活關懷問卷填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n組別：${g.name}\n\n目前本組尚有以下同學尚未填寫生活關懷問卷，請撥空儘速登入系統完成填寫：\n${uncompletedMates.map((m, i) => `${i + 1}. ${m.name} (${m.id})`).join('\n')}\n\n👉 請至分組系統登入填寫，謝謝大家配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
+    copyTextToClipboard(text, '已複製本組未填寫名單提醒文字！可直接貼至 LINE / Zalo 群組催繳。\nĐã sao chép nội dung nhắc nhở!');
+    return;
+  }
+  if (a === 'copy-teacher-uncompleted-survey') {
+    if (!c) return;
+    const stats = getSurveyStats(c);
+    if (!stats.uncompletedCount) {
+      return alert('🎉 本科目所有修課學生皆已完成問卷填寫！');
+    }
+    const text = `📢【生活關懷問卷未填寫催繳提醒名單】\n課程：${courseLabel(c)}\n應填人數：${stats.total} 人 | 未完成：${stats.uncompletedCount} 人\n\n尚未填寫名單如下：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] 組長:${st.leaderName} ➔ ${st.name} (${st.id})`).join('\n')}\n\n請各組組長協助提醒組員至分組平台登入填寫生活關懷問卷，謝謝！`;
+    copyTextToClipboard(text, '已複製全班未完成名單提醒文字！可直接貼至班級群組或寄信通知。');
+    return;
+  }
+  if (a === 'copy-public-uncompleted-survey') {
+    if (!c) return;
+    const stats = getSurveyStats(c);
+    if (!stats.uncompletedCount) {
+      return alert('🎉 本課程全班同學皆已完成問卷填寫！\nAll students have completed the survey.');
+    }
+    const text = `📢【生活關懷問卷未填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n未完成人數：${stats.uncompletedCount} 人\n\n尚未填寫同學名單：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] ${st.name}`).join('\n')}\n\n請尚未填寫的同學撥空登入完成問卷，謝謝配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
+    copyTextToClipboard(text, '已複製未完成名單！可貼至群組提醒。\nĐã sao chép danh sách!');
+    return;
+  }
+  if (a === 'jump-to-my-survey') {
+    const el = document.querySelector('.student-survey-panel');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.style.boxShadow = '0 0 0 4px #0d9488';
+      setTimeout(() => { el.style.boxShadow = ''; }, 2000);
+    }
+    return;
+  }
 });
 
 app.addEventListener('change', e => {
   const t = e.target;
+  if (t.name === 'category' && t.type === 'radio') {
+    document.querySelectorAll('.survey-cat-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.querySelector('input[type="radio"]:checked') !== null);
+    });
+  }
   const a = t.dataset.act;
   if (!a) return;
   const id = t.dataset.id;
   const c = cur();
+
+  if (a === 'survey-cat-filter') {
+    surveyCategoryFilter = t.value;
+    return render();
+  }
+  if (a === 'survey-group-filter') {
+    surveyGroupFilter = t.value;
+    return render();
+  }
 
   if (a === 'pick-course') {
     state.currentId = t.value;
@@ -3725,6 +4932,15 @@ app.addEventListener('input', e => {
     logSearchText = t.value;
     render();
     const input = document.querySelector('input[data-act="search-logs"]');
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  }
+  if (a === 'survey-search-input') {
+    surveySearchText = t.value;
+    render();
+    const input = document.querySelector('input[data-act="survey-search-input"]');
     if (input) {
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);

@@ -217,6 +217,57 @@ async function ensureAttendanceSchema(db) {
   _ensuredAttendanceSchema = true;
 }
 
+let _ensuredSurveySchema = false;
+async function ensureSurveySchema(db) {
+  if (_ensuredSurveySchema) return;
+  try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN survey_start TEXT NOT NULL DEFAULT ""').run();
+  } catch (_) {}
+  try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN survey_end TEXT NOT NULL DEFAULT ""').run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS survey_submissions (
+        course_id   TEXT NOT NULL,
+        student_id  TEXT NOT NULL,
+        category    TEXT NOT NULL DEFAULT '',
+        content     TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (course_id, student_id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_survey_submissions_course ON survey_submissions(course_id)').run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS survey_logs (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id     TEXT NOT NULL,
+        student_id    TEXT NOT NULL,
+        student_name  TEXT NOT NULL DEFAULT '',
+        operator_role TEXT NOT NULL DEFAULT '',
+        operator_id   TEXT NOT NULL DEFAULT '',
+        operator_name TEXT NOT NULL DEFAULT '',
+        action_type   TEXT NOT NULL DEFAULT '',
+        prev_category TEXT NOT NULL DEFAULT '',
+        new_category  TEXT NOT NULL DEFAULT '',
+        prev_content  TEXT NOT NULL DEFAULT '',
+        new_content   TEXT NOT NULL DEFAULT '',
+        diff_summary  TEXT NOT NULL DEFAULT '',
+        created_at    INTEGER NOT NULL
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, student_id, created_at DESC)').run();
+  } catch (_) {}
+  _ensuredSurveySchema = true;
+}
+
 let _checkedGroup3Restored = false;
 export async function ensureGroup3Restored(db) {
   if (_checkedGroup3Restored) return;
@@ -504,9 +555,10 @@ export async function loadState(db) {
 
   await ensureGroupSchema(db);
   await ensureAttendanceSchema(db);
+  await ensureSurveySchema(db);
   await ensureGroup3Restored(db);
   await ensurePanReleased(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates] = await Promise.all([
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs] = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
@@ -515,9 +567,11 @@ export async function loadState(db) {
     db.prepare('SELECT * FROM attendance_records').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_unlocks').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_delegates').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM survey_submissions').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC').all().catch(() => ({ results: [] })),
   ]);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
-  return courses.results.map(c => {
+  const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
       id: g.id,
       name: g.name,
@@ -549,6 +603,8 @@ export async function loadState(db) {
       hasSnapshot: snapshotSet.has(c.id),
       groups: courseGroups,
       students: courseStudents,
+      surveyStart: c.survey_start || '',
+      surveyEnd: c.survey_end || '',
     };
 
     courseStudents.forEach(s => {
@@ -585,6 +641,31 @@ export async function loadState(db) {
     courseObj.attendanceDelegates = (attDelegates.results || []).filter(x => x.course_id === c.id).map(x => ({
       sessionId: x.session_id, groupId: x.group_id, delegateId: x.delegate_id,
       delegateName: x.delegate_name || '', createdAt: x.created_at,
+    }));
+
+    courseObj.surveySubmissions = (surveySubs.results || []).filter(x => x.course_id === c.id).map(x => ({
+      courseId: x.course_id,
+      studentId: x.student_id,
+      category: x.category || '',
+      content: x.content || '',
+      createdAt: x.created_at,
+      updatedAt: x.updated_at,
+    }));
+    courseObj.surveyLogs = (surveyLogs.results || []).filter(x => x.course_id === c.id).map(x => ({
+      id: x.id,
+      courseId: x.course_id,
+      studentId: x.student_id,
+      studentName: x.student_name || '',
+      operatorRole: x.operator_role,
+      operatorId: x.operator_id,
+      operatorName: x.operator_name,
+      actionType: x.action_type,
+      prevCategory: x.prev_category || '',
+      newCategory: x.new_category || '',
+      prevContent: x.prev_content || '',
+      newContent: x.new_content || '',
+      diffSummary: x.diff_summary || '',
+      createdAt: x.created_at,
     }));
 
     return courseObj;
@@ -705,11 +786,18 @@ export async function publicize(db, env, courses, session) {
     return courses.map(c => {
       const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
       const studentName = sid => (c.students.find(s => s.id === sid) || {}).name || '';
+      const subMap = new Map();
+      (c.surveySubmissions || []).forEach(sub => { subMap.set(sub.studentId, sub); });
       return {
         ...c,
         students: c.students.map(s => {
           const { password_hash, ...rest } = s;
-          return { ...rest, hasCustomPassword: !!password_hash };
+          return {
+            ...rest,
+            hasCustomPassword: !!password_hash,
+            surveyCompleted: subMap.has(s.id),
+            surveyUpdatedAt: subMap.has(s.id) ? subMap.get(s.id).updatedAt : 0,
+          };
         }),
         logs: logsByCourse[c.id] || [],
         attendanceSessions: c.attendanceSessions || [],
@@ -724,6 +812,21 @@ export async function publicize(db, env, courses, session) {
           delegateGroupName: groupName((c.students.find(s => s.id === d.delegateId) || {}).groupId),
           groupName: groupName(d.groupId),
         })),
+        surveyStart: c.surveyStart || '',
+        surveyEnd: c.surveyEnd || '',
+        surveySubmissions: (c.surveySubmissions || []).map(sub => {
+          const st = c.students.find(s => s.id === sub.studentId);
+          const grp = st && st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+          const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
+          return {
+            ...sub,
+            studentName: st ? st.name : '',
+            groupId: grp ? grp.id : '',
+            groupName: grp ? grp.name : '未分組',
+            leaderName: leader ? `${leader.name} (${leader.id})` : '（無組長）',
+          };
+        }),
+        surveyLogs: c.surveyLogs || [],
       };
     });
   }
@@ -734,6 +837,8 @@ export async function publicize(db, env, courses, session) {
   for (const c of courses) {
     const students = [];
     const refById = {};
+    const subMap = new Map();
+    (c.surveySubmissions || []).forEach(sub => { subMap.set(sub.studentId, sub); });
     for (const s of c.students) {
       const mine = selfId && s.id === selfId && c.id === selfCourse;
       const ref = await studentRef(db, env, c.id, s.id, hmacKey);
@@ -747,9 +852,22 @@ export async function publicize(db, env, courses, session) {
         peerComment: '',
         adjustment: null,
         hasCustomPassword: !!password_hash,
+        surveyCompleted: subMap.has(s.id),
+        surveyUpdatedAt: subMap.has(s.id) ? subMap.get(s.id).updatedAt : 0,
       });
     }
     const isMine = !!selfId && c.id === selfCourse;
+    const mySub = isMine && selfId ? subMap.get(selfId) : null;
+    const mySurvey = mySub ? {
+      category: mySub.category,
+      content: mySub.content,
+      createdAt: mySub.createdAt,
+      updatedAt: mySub.updatedAt,
+    } : null;
+    const mySurveyLogs = isMine && selfId
+      ? (c.surveyLogs || []).filter(l => l.studentId === selfId)
+      : [];
+
     const selfGroupId = isMine ? (c.students.find(s => s.id === selfId) || {}).groupId : null;
     const myDelegates = isMine ? (c.attendanceDelegates || []).filter(d => d.delegateId === selfId) : [];
     const delegatedGroupIds = new Set(myDelegates.map(d => d.groupId));
@@ -782,7 +900,19 @@ export async function publicize(db, env, courses, session) {
           groupName: (c.groups.find(g => g.id === d.groupId) || {}).name || '',
         }))
       : [];
-    out.push({ ...c, students, attendanceSessions, attendanceRecords, attendanceUnlocks, attendanceDelegates });
+    const { surveySubmissions: _subs, surveyLogs: _logs, ...safeCourse } = c;
+    out.push({
+      ...safeCourse,
+      students,
+      attendanceSessions,
+      attendanceRecords,
+      attendanceUnlocks,
+      attendanceDelegates,
+      surveyStart: c.surveyStart || '',
+      surveyEnd: c.surveyEnd || '',
+      mySurvey,
+      mySurveyLogs,
+    });
   }
   return out;
 }

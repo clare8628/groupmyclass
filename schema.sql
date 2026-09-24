@@ -121,3 +121,37 @@ CREATE TABLE IF NOT EXISTS attendance_delegates (
   PRIMARY KEY (course_id, session_id, group_id, delegate_id)
 );
 
+-- 生活關懷問卷：學生填寫之問卷紀錄
+CREATE TABLE IF NOT EXISTS survey_submissions (
+  course_id   TEXT NOT NULL,
+  student_id  TEXT NOT NULL,
+  category    TEXT NOT NULL DEFAULT '',      -- 輔導面向(擇一)
+  content     TEXT NOT NULL DEFAULT '',      -- 自述目前狀況或反映問題
+  created_at  INTEGER NOT NULL,             -- 首次填寫時間戳記
+  updated_at  INTEGER NOT NULL,             -- 最後修改時間戳記
+  PRIMARY KEY (course_id, student_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_survey_submissions_course ON survey_submissions(course_id);
+
+-- 生活關懷問卷：填寫與修改歷程日誌
+CREATE TABLE IF NOT EXISTS survey_logs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id     TEXT NOT NULL,
+  student_id    TEXT NOT NULL,
+  student_name  TEXT NOT NULL DEFAULT '',
+  operator_role TEXT NOT NULL DEFAULT '',    -- 'student' | 'teacher'
+  operator_id   TEXT NOT NULL DEFAULT '',    -- 學號或 'teacher'
+  operator_name TEXT NOT NULL DEFAULT '',
+  action_type   TEXT NOT NULL DEFAULT '',    -- 'create' | 'update' | 'delete'
+  prev_category TEXT NOT NULL DEFAULT '',
+  new_category  TEXT NOT NULL DEFAULT '',
+  prev_content  TEXT NOT NULL DEFAULT '',
+  new_content   TEXT NOT NULL DEFAULT '',
+  diff_summary  TEXT NOT NULL DEFAULT '',
+  created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, student_id, created_at DESC);
+
+

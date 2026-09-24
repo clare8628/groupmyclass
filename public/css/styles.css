@@ -2166,6 +2166,367 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   box-shadow: 0 1px 3px rgba(59, 130, 246, 0.3);
 }
 
+/* ===== 生活關懷問卷 (Student Wellbeing Survey) 專業設計 ===== */
+
+/* 1. 學生前台填寫面板 */
+.student-survey-panel {
+  background: #ffffff;
+  border: 2px solid #99f6e4;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 16px rgba(13, 148, 136, 0.08);
+  position: relative;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.student-survey-panel:focus-within {
+  border-color: #14b8a6;
+}
+
+.survey-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #ccfbf1;
+  margin-bottom: 1.25rem;
+}
+
+.survey-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.survey-icon {
+  font-size: 2rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: #f0fdfa;
+  border-radius: 10px;
+  border: 1px solid #99f6e4;
+}
+
+.survey-time-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.survey-schedule-desc {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.survey-submitted-notice {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-left: 4px solid #16a34a;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.survey-submitted-notice .notice-main strong {
+  color: #166534;
+  font-size: 0.95rem;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.survey-submitted-notice .notice-main p {
+  color: #1f2937;
+  font-size: 0.88rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.survey-submitted-notice .notice-meta {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.82rem;
+  color: #475569;
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #bbf7d0;
+  flex-wrap: wrap;
+}
+
+.survey-guide-notice {
+  background: #f0fdfa;
+  border: 1px solid #ccfbf1;
+  border-left: 4px solid #0d9488;
+  border-radius: 8px;
+  padding: 0.85rem 1.15rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.88rem;
+  color: #134e4a;
+  line-height: 1.5;
+}
+
+.survey-autofill-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.badge-autofill {
+  display: inline-block;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  margin-left: 0.35rem;
+  border: 1px solid #e2e8f0;
+}
+
+.input-locked {
+  background: #f8fafc !important;
+  color: #475569 !important;
+  border-color: #e2e8f0 !important;
+  cursor: not-allowed !important;
+  font-weight: 600;
+}
+
+.survey-category-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.survey-cat-theme {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.survey-cat-theme .theme-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #0f766e;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 0.6rem;
+}
+
+.survey-cat-theme .theme-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.survey-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  user-select: none;
+}
+
+.survey-cat-chip input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #0d9488;
+}
+
+.survey-cat-chip:hover:not(.disabled) {
+  border-color: #0d9488;
+  background: #f0fdfa;
+  transform: translateY(-1px);
+}
+
+.survey-cat-chip.active,
+.survey-cat-chip:has(input[type="radio"]:checked) {
+  background: #0f766e !important;
+  border-color: #0f766e !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(15, 118, 110, 0.25);
+}
+
+.survey-cat-chip.active .chip-icon,
+.survey-cat-chip:has(input[type="radio"]:checked) .chip-icon {
+  filter: brightness(1.2);
+}
+
+.survey-cat-chip.active .chip-label,
+.survey-cat-chip:has(input[type="radio"]:checked) .chip-label {
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+.survey-cat-chip.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.survey-form-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+/* 2. 老師後台統計與篩選 Chip */
+.survey-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.65rem;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 999px;
+  background: #ffffff;
+  font-size: 0.82rem;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.survey-stat-chip:hover {
+  background: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.survey-stat-chip.active {
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.survey-stat-chip.empty {
+  opacity: 0.55;
+}
+
+.survey-stat-chip .chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 700;
+}
+
+.survey-content-snippet {
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  color: #2563eb;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.survey-content-snippet:hover {
+  background: #eff6ff;
+  text-decoration: underline;
+}
+
+/* 3. 歷程日誌時間軸 */
+.survey-logs-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  position: relative;
+  padding-left: 1.25rem;
+  border-left: 2px solid #ccfbf1;
+  margin-top: 0.75rem;
+}
+
+.survey-logs-timeline .timeline-item {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.survey-logs-timeline .timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -1.65rem;
+  top: 1rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #0d9488;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 2px #99f6e4;
+}
+
+.timeline-date {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.timeline-operator {
+  font-size: 0.85rem;
+  color: #1e293b;
+  margin-bottom: 0.35rem;
+}
+
+.timeline-summary {
+  font-size: 0.88rem;
+  color: #334155;
+  background: #f8fafc;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+
+.survey-modal-content-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1rem;
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: #1e293b;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* 4. 首頁前台全班問卷進度卡片 */
+.public-survey-progress-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.public-survey-progress-card:hover {
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.12);
+}
+
+
 
 
 

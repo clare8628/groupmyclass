@@ -196,6 +196,8 @@ export async function handleAction(request, env, db, body) {
         db.prepare('DELETE FROM activity_logs WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM students WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
+        db.prepare('DELETE FROM survey_submissions WHERE course_id = ?').bind(body.courseId),
+        db.prepare('DELETE FROM survey_logs WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM courses WHERE id = ?').bind(body.courseId),
       ]);
       return ok();
@@ -747,10 +749,116 @@ export async function handleAction(request, env, db, body) {
       await db.prepare('DELETE FROM activity_logs WHERE course_id = ?').bind(c.id).run();
       return ok();
     }
+    if (op === 'save-survey-period') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const start = body.surveyStart ? String(body.surveyStart).trim() : '';
+      const end = body.surveyEnd ? String(body.surveyEnd).trim() : '';
+      await db.prepare('UPDATE courses SET survey_start=?, survey_end=? WHERE id=?')
+        .bind(start, end, c.id).run();
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'survey-period-set',
+        targetId: '',
+        targetName: '',
+        detail: `老師設定生活關懷問卷開放時段：${start || '不限開始'} ~ ${end || '不限結束'}`,
+      });
+      return ok();
+    }
+    if (op === 'update-survey-submission') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const studentId = String(body.studentId || '').trim();
+      const st = c.students.find(s => s.id === studentId);
+      if (!st) return bad('找不到該學生', 404);
+      const category = String(body.category || '').trim();
+      const content = String(body.content || '').trim();
+      if (!category) return bad('請選擇輔導面向', 400);
+      if (!content) return bad('請填寫自述內容', 400);
+
+      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).first();
+      const now = Date.now();
+      const prevCat = existing ? (existing.category || '') : '';
+      const prevContent = existing ? (existing.content || '') : '';
+      const diffParts = [];
+      if (prevCat !== category) diffParts.push(`面向由「${prevCat}」修改為「${category}」`);
+      if (prevContent !== content) diffParts.push('自述內容已由老師修改');
+      const diffSummary = diffParts.join('；') || '老師修正問卷內容';
+
+      await db.prepare(`
+        INSERT INTO survey_submissions (course_id, student_id, category, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(course_id, student_id) DO UPDATE SET
+          category = excluded.category,
+          content = excluded.content,
+          updated_at = excluded.updated_at
+      `).bind(c.id, studentId, category, content, existing ? existing.created_at : now, now).run();
+
+      await db.prepare(`
+        INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(c.id, studentId, st.name, 'teacher', 'teacher', '老師', 'update', prevCat, category, prevContent, content, `老師修改：${diffSummary}`, now).run();
+
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'survey-edit',
+        targetId: studentId,
+        targetName: st.name,
+        detail: `老師修改學生 ${st.name} (${studentId}) 的生活關懷問卷：${diffSummary}`,
+      });
+      return ok();
+    }
+    if (op === 'delete-survey-submission') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const studentId = String(body.studentId || '').trim();
+      const st = c.students.find(s => s.id === studentId);
+      const stName = st ? st.name : studentId;
+      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).first();
+      if (!existing) return bad('該筆問卷資料不存在', 404);
+
+      const now = Date.now();
+      await db.prepare('DELETE FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
+
+      await db.prepare(`
+        INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(c.id, studentId, stName, 'teacher', 'teacher', '老師', 'delete', existing.category || '', '', existing.content || '', '', '老師刪除該學生的問卷填寫紀錄', now).run();
+
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'survey-delete',
+        targetId: studentId,
+        targetName: stName,
+        detail: `老師刪除學生 ${stName} (${studentId}) 的生活關懷問卷紀錄`,
+      });
+      return ok();
+    }
+    if (op === 'get-survey-logs') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const studentId = body.studentId ? String(body.studentId).trim() : '';
+      let logs;
+      if (studentId) {
+        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? AND student_id=? ORDER BY created_at DESC').bind(c.id, studentId).all();
+      } else {
+        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? ORDER BY created_at DESC LIMIT 500').bind(c.id).all();
+      }
+      return json({ ok: true, logs: logs.results || [] });
+    }
     return bad('未知操作 Unknown action: ' + op, 400);
   }
 
-  /* ---- 學生（組長） ---- */
+  /* ---- 學生（全體學生均可填寫生活關懷問卷，組長/副組長具額外權限） ---- */
   if (!session || session.role !== 'student') return bad('請先登入 Sign in first', 401);
   const c = course(session.courseId);
   if (!c) return bad('課程不存在', 404);
@@ -759,6 +867,67 @@ export async function handleAction(request, env, db, body) {
 
   const myGroup = self.groupId ? c.groups.find(g => g.id === self.groupId) : null;
   const canEdit = canGroupLeaderEdit(c, myGroup);
+
+  if (action === 'submit-survey') {
+    const start = c.surveyStart || '';
+    const end = c.surveyEnd || '';
+    const now = Date.now();
+    if (start && now < parseDate(start)) {
+      return bad('問卷尚未開放填寫 Survey is not open yet（Chưa đến thời gian mở khảo sát：' + start.replace('T', ' ') + '）', 400);
+    }
+    if (end && now > parseDate(end)) {
+      return bad('問卷填寫已截止 Survey has ended（Đã quá hạn điền phiếu khảo sát：' + end.replace('T', ' ') + '）', 400);
+    }
+    const category = String(body.category || '').trim();
+    const content = String(body.content || '').trim();
+    if (!category) return bad('請選擇輔導面向 Please select a guidance category（Vui lòng chọn hướng tư vấn）', 400);
+    if (!content) return bad('請填寫自述目前狀況或反映問題 Please describe your situation or issue（Vui lòng mô tả tình hình hoặc phản ánh vấn đề）', 400);
+
+    const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, self.id).first();
+    const prevCat = existing ? (existing.category || '') : '';
+    const prevContent = existing ? (existing.content || '') : '';
+
+    if (existing && prevCat === category && prevContent === content) {
+      return ok({ message: '內容未變更 No changes' });
+    }
+
+    const diffParts = [];
+    if (existing) {
+      if (prevCat !== category) diffParts.push(`輔導面向由「${prevCat}」修改為「${category}」`);
+      if (prevContent !== content) diffParts.push('自述內容已更新');
+    }
+    const diffSummary = existing ? (diffParts.join('；') || '學生更新問卷內容') : `首次填寫問卷 (面向: ${category})`;
+    const actType = existing ? 'update' : 'create';
+
+    await db.prepare(`
+      INSERT INTO survey_submissions (course_id, student_id, category, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(course_id, student_id) DO UPDATE SET
+        category = excluded.category,
+        content = excluded.content,
+        updated_at = excluded.updated_at
+    `).bind(c.id, self.id, category, content, existing ? existing.created_at : now, now).run();
+
+    await db.prepare(`
+      INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(c.id, self.id, self.name, 'student', self.id, self.name, actType, prevCat, category, prevContent, content, diffSummary, now).run();
+
+    await logActivity(db, {
+      courseId: c.id,
+      groupId: self.groupId || '',
+      groupName: myGroup ? myGroup.name : '',
+      operatorRole: self.isLeader ? 'leader' : self.isVice ? 'vice' : 'student',
+      operatorId: self.id,
+      operatorName: self.name,
+      actionType: 'survey-submit',
+      targetId: self.id,
+      targetName: self.name,
+      detail: `學生 ${self.name} (${self.id}) ${existing ? '修改' : '填寫'}生活關懷問卷：${diffSummary}`,
+    });
+
+    return ok();
+  }
 
   if (action === 'change-student-password') {
     if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼 Leader or vice leader only（Chỉ nhóm trưởng hoặc nhóm phó mới có thể đổi mật khẩu）', 403);
