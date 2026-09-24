@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.74.20260924.230816';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.75.20260924.231653';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1994,7 +1994,7 @@ function howto() {
         <div class="step-num">2</div>
         <div class="step-info">
           <strong>學生登入開組或填表</strong>
-          <p>全體同學可點選<b>學生登入</b>（輸入姓名+學號密碼）進行生活關懷問卷填寫；組長亦可在此登入開組或挑選組員。</p>
+          <p>點選<b>申請擔任組長登入</b>（輸入姓名+學號密碼）進行開組與挑選組員。</p>
         </div>
       </div>
       <div class="howto-step-card">
