@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.72.20260924.223720';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.73.20260924.225252';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -750,7 +750,7 @@ function unassignedList(c) {
   ${showLoginPrompt && pool.length ? `
     <div class="unassigned-login-tip" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:0.85rem;color:#1e40af;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
       <span>💡 未分組學生欲擔任組長開組請點擊登入 / Want to be a leader? Click to log in / Muốn làm trưởng nhóm hãy đăng nhập:</span>
-      <button class="btn btn-primary" data-act="show-student-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組 Log in（Đăng nhập）</button>
+      <button class="btn btn-primary" data-act="open-leader-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組 Log in（Đăng nhập）</button>
     </div>
   ` : ''}
   <div class="pick-list">${pool.length
@@ -786,8 +786,8 @@ function publicBoard({ withUnassigned = true } = {}) {
       </div>
       ${(!state.session || (state.session && state.session.role !== 'student')) ? `
         <div class="board-actions">
-          <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="show-student-login">
-            <span class="btn-icon">🎓</span> 學生登入 Student Login（Đăng nhập học sinh）
+          <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="open-leader-login" title="登入後，未分組同學即可開組並挑選尚未分組的組員 / Log in to open a group and pick unassigned members（Đăng nhập để lập nhóm và chọn thành viên chưa vào nhóm）">
+            <span class="btn-icon">🎓</span> 申請擔任組長 Apply for Group Leader（Đăng ký làm trưởng nhóm）
           </button>
         </div>` : ''}
     </div>
@@ -5233,6 +5233,14 @@ app.addEventListener('click', e => {
     });
   }
   if (a === 'show-teacher-login') { e.preventDefault(); loginMode = loginMode === 'teacher' ? null : 'teacher'; return render(); }
+  if (a === 'open-leader-login') {
+    // 申請擔任組長：停留在目前分組頁面顯示登入表單，登入後未分組學生即可開組挑選組員（不像 show-student-login 會跳轉去問卷頁）
+    e.preventDefault();
+    loginMode = loginMode === 'student' ? null : 'student';
+    render();
+    document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
   if (a === 'quick-student-fill') {
     e.preventDefault();
     loginMode = 'student';
