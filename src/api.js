@@ -1236,21 +1236,24 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
 
-  if (!self.isLeader) return bad('僅組長可操作 Leader only（Chỉ nhóm trưởng mới có thể thao tác）', 403);
-  if (!canEdit) return bad('已超過分組截止時間，組長不得更換組員 Deadline passed（Đã hết hạn chia nhóm, nhóm trưởng không thể đổi thành viên）', 403);
+  if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可操作（Chỉ nhóm trưởng hoặc nhóm phó mới có thể thao tác）', 403);
+  if (!canEdit) return bad('已超過分組截止時間，不得更換組員（Đã hết hạn chia nhóm, không thể đổi thành viên）', 403);
+
+  const roleTitle = self.isLeader ? '組長' : '副組長';
+  const roleOp = self.isLeader ? 'leader' : 'vice';
 
   if (action === 'pick') {
     const curMembers = membersOf(c, self.groupId);
     const max = cap(c);
     if (curMembers.length >= max) {
-      return bad(`本組現有成員數（${curMembers.length} 人）已達或高於上限（${max} 人），組長只能刪減組員釋出至未分配名單，無法再新增組員。Group is full（Nhóm đã đủ hoặc vượt quá số lượng tối đa ${max} người, chỉ có thể loại bớt, không thể thêm thành viên）。`, 409);
+      return bad(`本組現有成員數（${curMembers.length} 人）已達或高於上限（${max} 人），只能刪減組員釋出至未分配名單，無法再新增組員。（Nhóm đã đủ hoặc vượt quá số lượng tối đa ${max} người, chỉ có thể loại bớt, không thể thêm thành viên）。`, 409);
     }
     const t = await resolveStudent(db, env, c, body.studentId);
-    if (!t) return bad('學生不存在 Student not found（Sinh viên không tồn tại）', 404);
-    if (t.groupId) return bad('該生已被分組 Already assigned（Sinh viên này đã vào nhóm khác）', 409);
+    if (!t) return bad('學生不存在（Sinh viên không tồn tại）', 404);
+    if (t.groupId) return bad('該生已被分組（Sinh viên này đã vào nhóm khác）', 409);
     const g = myGroup || c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
-    const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 加入「${gName}」`;
+    const detail = `${roleTitle} ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 加入「${gName}」`;
     await db.batch([
       db.prepare('UPDATE students SET group_id=?, auto_assigned=0 WHERE course_id=? AND id=?')
         .bind(self.groupId, c.id, t.id),
@@ -1258,7 +1261,7 @@ export async function handleAction(request, env, db, body) {
         courseId: c.id,
         groupId: self.groupId,
         groupName: gName,
-        operatorRole: 'leader',
+        operatorRole: roleOp,
         operatorId: self.id,
         operatorName: self.name,
         actionType: 'pick',
@@ -1273,13 +1276,15 @@ export async function handleAction(request, env, db, body) {
     const curMembers = membersOf(c, self.groupId);
     const min = minCap(c);
     if (curMembers.length <= min) {
-      return bad(`本組現有成員數（${curMembers.length} 人）已低於或等於下限（${min} 人），組長只能新增組員，無法再刪減成員。Group is at minimum size（Nhóm đang ở mức tối thiểu ${min} người, chỉ có thể thêm, không thể loại bớt thành viên）。`, 400);
+      return bad(`本組現有成員數（${curMembers.length} 人）已低於或等於下限（${min} 人），只能新增組員，無法再刪減成員。（Nhóm đang ở mức tối thiểu ${min} người, chỉ có thể thêm, không thể loại bớt thành viên）。`, 400);
     }
     const t = await resolveStudent(db, env, c, body.studentId);
-    if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生 Cannot remove student（Không thể loại sinh viên này）', 400);
+    if (!t || t.groupId !== self.groupId || t.id === self.id) return bad('無法移出該學生（Không thể loại sinh viên này）', 400);
+    // 組長與副組長均不能移除組長
+    if (t.isLeader) return bad('無法移出組長（Không thể loại nhóm trưởng）', 400);
     const g = myGroup || c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
-    const detail = `組長 ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 釋出至未分組名單（原組別：「${gName}」）`;
+    const detail = `${roleTitle} ${self.name} (${self.id}) 將組員 ${t.name} (${t.id}) 釋出至未分組名單（原組別：「${gName}」）`;
     await db.batch([
       db.prepare('UPDATE students SET group_id=NULL, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
         .bind(c.id, t.id),
@@ -1287,7 +1292,7 @@ export async function handleAction(request, env, db, body) {
         courseId: c.id,
         groupId: self.groupId,
         groupName: gName,
-        operatorRole: 'leader',
+        operatorRole: roleOp,
         operatorId: self.id,
         operatorName: self.name,
         actionType: 'drop',
