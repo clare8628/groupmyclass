@@ -596,25 +596,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   gap: 0.6rem;
 }
 
-.selected-year-badge {
-  background: #16a085;
-  color: #ffffff;
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 0.2rem 0.6rem;
-  border-radius: 4px;
-}
-
-.selected-status-tag {
-  font-size: 0.75rem;
-  color: #27ae60;
-  font-weight: 600;
-  background: #eafaf1;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid #d4efdf;
-}
-
 .selected-subject-name {
   font-size: 1.4rem;
   font-weight: 800;
@@ -2758,75 +2739,53 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   color: #ffffff;
 }
 
-/* 2. 第一區塊：目前選取的課程摘要與子系統切換標籤列 */
-.course-top-overview-section {
-  background: #ffffff;
-  border: 1.5px solid #cbd5e1;
-  border-top: 4px solid #0d9488;
-  border-radius: 12px;
-  padding: 1.25rem 1.4rem;
-  margin-bottom: 1.25rem;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+/* [Block B] 公告事項區：緊接於頁首 (Block A) 下方的獨立公告區塊 */
+.notice-block-section {
+  margin-top: 1.25rem;
+  padding: 1.1rem 1.4rem;
 }
 
-.overview-header-row {
+.notice-bulletin-bar {
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.bulletin-bar-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: flex-start;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 0.85rem;
-}
-
-.overview-title-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.overview-badges {
-  display: flex;
-  align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+  color: #92400e;
+  font-size: 0.88rem;
 }
 
-.overview-course-title {
-  margin: 0;
-  font-size: 1.35rem;
-  font-weight: 800;
-  color: #0f172a;
-  letter-spacing: -0.01em;
+.bulletin-bell-icon {
+  font-size: 1.05rem;
 }
 
-.overview-meta-chips {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.meta-chip {
-  font-size: 0.82rem;
-  padding: 0.35rem 0.75rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+.bulletin-time-pill {
+  font-size: 0.78rem;
+  background: #fef3c7;
+  color: #b45309;
+  padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  color: #475569;
-}
-
-.meta-chip.chip-open {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-  color: #166534;
   font-weight: 600;
 }
 
-.meta-chip.chip-expired {
-  background: #fef2f2;
-  border-color: #fecaca;
-  color: #991b1b;
-  font-weight: 600;
+.bulletin-bar-content {
+  font-size: 0.84rem;
+  color: #78350f;
+  line-height: 1.5;
+}
+
+.bulletin-line {
+  margin: 0.2rem 0;
 }
 
 /* 子系統切換導覽列 (Subsystem Tabs) */
@@ -2886,50 +2845,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   font-size: 0.72rem;
   font-weight: normal;
   opacity: 0.85;
-}
-
-/* 精要公告橫幅 (Bulletin banner) */
-.overview-bulletin-bar {
-  background: #fffbeb;
-  border: 1px solid #fef3c7;
-  border-left: 4px solid #f59e0b;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-top: 0.75rem;
-}
-
-.bulletin-bar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.35rem;
-  color: #92400e;
-  font-size: 0.88rem;
-}
-
-.bulletin-bell-icon {
-  font-size: 1.05rem;
-}
-
-.bulletin-time-pill {
-  font-size: 0.78rem;
-  background: #fef3c7;
-  color: #b45309;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-weight: 600;
-}
-
-.bulletin-bar-content {
-  font-size: 0.84rem;
-  color: #78350f;
-  line-height: 1.5;
-}
-
-.bulletin-line {
-  margin: 0.2rem 0;
 }
 
 /* 3. 子系統專屬頂部橫條 (Subsystem Header Bar) */
@@ -3089,12 +3004,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border-color: #334155;
 }
 
-.block-identifier-tag.block-b {
-  background: #eff6ff;
-  color: #1d4ed8;
-  border-color: #bfdbfe;
-}
-
 .block-identifier-tag.block-c {
   background: #f8fafc;
   color: #475569;
@@ -3106,54 +3015,3 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   color: #15803d;
   border-color: #bbf7d0;
 }
-
-/* Moodle 風格階層式路徑導覽列 */
-.moodle-breadcrumb-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  padding: 0.65rem 0.95rem;
-  margin-top: 0.75rem;
-  font-size: 0.86rem;
-  line-height: 1.4;
-}
-
-.moodle-bc-item {
-  color: #475569;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.moodle-bc-link {
-  color: #0284c7;
-  text-decoration: none;
-  font-weight: 600;
-  transition: color 0.15s ease;
-  cursor: pointer;
-}
-
-.moodle-bc-link:hover {
-  color: #0369a1;
-  text-decoration: underline;
-}
-
-.moodle-bc-sep {
-  color: #94a3b8;
-  font-size: 0.75rem;
-  margin: 0 0.15rem;
-}
-
-.moodle-bc-current {
-  color: #0f172a;
-  font-weight: 700;
-  background: #e2e8f0;
-  padding: 0.12rem 0.5rem;
-  border-radius: 4px;
-}
-
-

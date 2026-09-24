@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.64.20260924.121645';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.66.20260924.212126';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1179,8 +1179,8 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
   </div>`;
 }
 
-/* ---- 第一區塊：精要公告欄橫幅 ---- */
-function bulletinBanner(c) {
+/* ===== [Block B] 公告事項區：重要公告與評分規定橫幅（緊接於 Block A 頁首下方） ===== */
+function noticeBlock(c) {
   if (!c) return '';
   const maxB = Number(c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
   const notice = c.notice || defaultNotice(maxB);
@@ -1188,134 +1188,23 @@ function bulletinBanner(c) {
   const lines = notice.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
   return `
-  <div class="overview-bulletin-bar">
-    <div class="bulletin-bar-header">
-      <div style="display:flex;align-items:center;gap:0.4rem;">
-        <span class="bulletin-bell-icon">📢</span>
-        <strong>重要公告與評分規定 Notice <small style="font-weight:normal;color:#64748b;">（Quy định chia nhóm &amp; đánh giá）</small></strong>
-      </div>
-      ${timeStr ? `<span class="bulletin-time-pill">🕒 ${timeStr}</span>` : ''}
-    </div>
-    <div class="bulletin-bar-content">
-      ${lines.map(l => `<div class="bulletin-line">• ${esc(l)}</div>`).join('')}
-    </div>
-  </div>`;
-}
-
-/* ---- [Block B] 課程與導覽路徑區：目前選取的課程摘要與 Moodle 階層麵包屑 ---- */
-function courseHeaderOverview(c) {
-  const subViewTitles = {
-    dashboard: { zh: '總覽儀表板', vn: 'Bảng điều khiển tổng quan', icon: '🏠' },
-    groups: { zh: '學生分組系統', vn: 'Hệ thống chia nhóm', icon: '👥' },
-    attendance: { zh: '點名系統', vn: 'Hệ thống điểm danh', icon: '📋' },
-    survey: { zh: '問卷調查系統', vn: 'Hệ thống khảo sát', icon: '💌' },
-  };
-  const curSub = subViewTitles[publicSubView] || subViewTitles.dashboard;
-
-  if (!c) {
-    return `
-    <section class="block-section course-top-overview-section" id="course-header-block">
-      <div class="block-identifier-tag">
-        <span class="block-tag-code">[Block B]</span>
-        <span class="block-tag-name">課程與導覽路徑區<br><small class="vn-sub">Khu vực khóa học &amp; đường dẫn</small></span>
-      </div>
-      <div class="empty-selection-guide">
-        <div class="guide-arrow">👈</div>
-        <div class="guide-text">
-          <strong>請先於左側清單選擇學年度與科目<br><small class="vn-sub">Vui lòng chọn khóa học ở danh sách bên trái</small></strong>
-          <p>點選任一學年度下的項目，即可在此載入該項目的總覽儀表板、分組、點名與問卷系統。<br><small class="vn-sub">Nhấp vào môn học bất kỳ để tải hệ thống tương ứng.</small></p>
-        </div>
-      </div>
-    </section>`;
-  }
-
-  const s = me();
-  const g = (s && s.groupId) ? c.groups.find(x => x.id === s.groupId) : null;
-  const dStr = c.deadline ? esc(formatDeadline(c.deadline)) : '';
-  const isExp = deadlinePassed(c);
-
-  // Moodle 階層式麵包屑路徑（依使用者要求之商管學院 > 行銷與流通管理系 > 學年度 > 科目 > 當前子系統）
-  const courseCodeSubject = `${c.year || '115-1'}_${c.subject || '套裝軟體應用(一)-四技行一真'}`;
-  const breadcrumbHtml = `
-  <div class="moodle-breadcrumbs-container">
-    <div class="moodle-breadcrumbs">
-      <span class="moodle-crumb moodle-crumb-home">
-        <a href="#dashboard" data-act="nav-public-subview" data-view="dashboard" title="返回總覽首頁">
-          🏠 首頁<br><small class="vn-sub">Trang chủ</small>
-        </a>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb">
-        我的課程<br><small class="vn-sub">Khóa học của tôi</small>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb">
-        商管學院<br><small class="vn-sub">Khoa Quản trị &amp; Kinh doanh</small>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb">
-        行銷與流通管理系<br><small class="vn-sub">Ngành Marketing &amp; Quản lý Lưu thông</small>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb">
-        ${esc(c.year || '115-1')}_行銷與流通管理系<br><small class="vn-sub">Hệ thống lớp khóa ${esc(c.year || '115-1')}</small>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb moodle-crumb-course">
-        <a href="#dashboard" data-act="nav-public-subview" data-view="dashboard" title="切換為本課程總覽">
-          📘 ${esc(courseCodeSubject)}<br><small class="vn-sub">Môn học hiện tại</small>
-        </a>
-      </span>
-      <span class="moodle-crumb-sep">▶</span>
-      <span class="moodle-crumb moodle-crumb-current">
-        <strong style="color:#0f766e;">${curSub.icon} ${curSub.zh}</strong><br><small class="vn-sub">${curSub.vn}</small>
-      </span>
-    </div>
-  </div>`;
-
-  return `
-  <section class="block-section course-top-overview-section" id="course-header-block">
+  <section class="block-section notice-block-section" id="notice-block">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block B]</span>
-      <span class="block-tag-name">課程與導覽路徑區<br><small class="vn-sub">Khu vực khóa học &amp; đường dẫn</small></span>
+      <span class="block-tag-name">公告事項區<br><small class="vn-sub">Khu vực thông báo</small></span>
     </div>
-
-    <!-- Moodle 連結路徑導覽列 -->
-    ${breadcrumbHtml}
-
-    <div class="overview-header-row" style="margin-top:0.75rem;">
-      <div class="overview-title-group">
-        <div class="overview-badges">
-          <span class="selected-year-badge">${esc(c.year || '未分類')} 學年度<br><small class="vn-sub">Năm học</small></span>
-          ${s ? `
-            <span class="status-badge" style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;font-size:0.8rem;">
-              🎓 學生：${esc(s.name)} (${esc(s.id)}) · ${g ? esc(g.name) : '未分組'} ${s.isLeader ? '（👑組長）' : s.isVice ? '（⭐副組長）' : ''}
-              <br><small class="vn-sub">Sinh viên: ${esc(s.name)}${s.isLeader ? ' (Trưởng nhóm)' : s.isVice ? ' (Phó nhóm)' : ''}</small>
-            </span>
-          ` : `
-            <span class="selected-status-tag">選取科目<br><small class="vn-sub">Môn đang chọn</small></span>
-          `}
+    <div class="notice-bulletin-bar">
+      <div class="bulletin-bar-header">
+        <div style="display:flex;align-items:center;gap:0.4rem;">
+          <span class="bulletin-bell-icon">📢</span>
+          <strong>重要公告與評分規定 Notice <small style="font-weight:normal;color:#64748b;">（Quy định chia nhóm &amp; đánh giá）</small></strong>
         </div>
-        <h2 class="overview-course-title">${esc(c.subject || '（未命名）')}</h2>
+        ${timeStr ? `<span class="bulletin-time-pill">🕒 ${timeStr}</span>` : ''}
       </div>
-      <div class="overview-meta-chips">
-        <span class="meta-chip">
-          👥 學生總數：<b>${c.students.length}</b> 人
-          <br><small class="vn-sub">Tổng số: ${c.students.length} người</small>
-        </span>
-        <span class="meta-chip">
-          📊 組別：<b>${c.groups.length}</b> 組（每組 ${c.groupSize}±${c.tolerance} 人）
-          <br><small class="vn-sub">Chia ${c.groups.length} nhóm (${c.groupSize}±${c.tolerance} người)</small>
-        </span>
-        <span class="meta-chip ${isExp ? 'chip-expired' : 'chip-open'}">
-          ⏳ 分組截止：${dStr ? `${dStr} ${isExp ? '(已截止)' : '(進行中)'}` : '未設定'}
-          <br><small class="vn-sub">${isExp ? 'Đã hết hạn' : 'Đang diễn ra'}</small>
-        </span>
+      <div class="bulletin-bar-content">
+        ${lines.map(l => `<div class="bulletin-line">• ${esc(l)}</div>`).join('')}
       </div>
     </div>
-
-    <!-- 公告欄資訊 (精簡橫幅) -->
-    ${bulletinBanner(c)}
   </section>`;
 }
 
@@ -2075,11 +1964,11 @@ function authScreen() {
   const c = cur();
   return `
   ${loginMode === 'teacher' ? loginCard() : ''}
+  ${noticeBlock(c)}
   <div class="home-flow">
     <div class="home-main-layout">
       ${courseTreePublic()}
       <div class="flow-main">
-        ${courseHeaderOverview(c)}
         ${renderSubsystemMain(c)}
       </div>
     </div>
