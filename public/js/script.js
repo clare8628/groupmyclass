@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.73.20260924.225252';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.74.20260924.230816';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -231,6 +231,8 @@ const courseLabel = c => [c.year, c.subject].filter(Boolean).join(' · ') || '�
 
 /* ===== Helpers（皆以某課程為範圍） ===== */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/* 學號同時是學生預設登入密碼，前台公開頁面一律僅顯示前 3 碼，避免任何訪客取得「姓名＋預設密碼」組合 */
+const maskId = id => String(id == null ? '' : id).slice(0, 3) + '*'.repeat(Math.max(0, String(id == null ? '' : id).length - 3));
 const cap = c => Number(c.groupSize) + Number(c.tolerance);
 const minCap = c => Math.max(1, Number(c.groupSize) - Number(c.tolerance));
 const rank = s => s.isLeader ? 0 : s.isVice ? 1 : 2;
@@ -1086,7 +1088,9 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
       const displayId = targetSid || (st ? st.id : key);
       return {
         key,
-        id: displayId,
+        // 前台公開頁面（isPublicFlow）一律遮蔽學號顯示，避免洩漏學生預設登入密碼；
+        // key 仍保留原始值供 view-absence-detail 內部比對缺席明細使用，不受影響
+        id: isPublicFlow ? maskId(displayId) : displayId,
         name: studentName,
         groupName: groupName,
         count: n,
