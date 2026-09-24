@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.71.20260924.222217';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.72.20260924.223720';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -989,12 +989,6 @@ function nav() {
       }
     }
   } else {
-    center = `
-      <div style="display:flex;align-items:center;gap:0.4rem;">
-        <button class="student-link ${loginMode === 'student' ? 'on' : ''}" data-act="show-student-login">
-          🎓 學生登入<br><small class="vn-sub">Đăng nhập sinh viên</small>
-        </button>
-      </div>`;
     right = `
       <button class="teacher-link ${loginMode === 'teacher' ? 'on' : ''}" data-act="show-teacher-login">
         👨‍🏫 老師登入<br><small class="vn-sub">Đăng nhập giáo viên</small>
@@ -1307,14 +1301,11 @@ function renderUncompletedSurveysCard(c) {
       </table>
     </div>
     ${paginationHtml}
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.6rem 0.25rem 0.15rem;border-top:1px solid #f1f5f9;margin-top:0.5rem;">
+    <div style="padding:0.6rem 0.25rem 0.15rem;border-top:1px solid #f1f5f9;margin-top:0.5rem;">
       <span style="font-size:0.8rem;color:#64748b;">
         共 <b>${uncompletedAll.length}</b> 位同學尚未完成生活關懷問卷
         <br><small class="vn-sub">Tổng cộng có ${uncompletedAll.length} sinh viên chưa hoàn thành</small>
       </span>
-      <button class="btn btn-primary btn-sm" data-act="nav-public-subview" data-view="survey" style="padding:0.35rem 0.85rem;font-size:0.82rem;margin:0;">
-        🎓 前往問卷系統線上填寫 ➔<br><small class="vn-sub">Đến hệ thống khảo sát</small>
-      </button>
     </div>
     ` : `
     <div style="text-align:center;padding:2rem 1rem;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534;">

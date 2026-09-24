@@ -194,11 +194,8 @@ nav .teacher-link:hover { opacity: 1; border-color: #e67e22; color: #e67e22; }
 .auth-wrapper.front { max-width: none; margin: 1.5rem 0 0; }
 .layout > main > .board { margin-top: 1.5rem; }
 
-/* ===== 頁首中央：學生登入 ===== */
+/* ===== 頁首中央 ===== */
 nav .center { flex: 1; text-align: center; }
-nav .student-link { color: #fff; background: #3498db; font-size: .95rem; font-weight: bold; padding: .45rem 1.4rem; border-radius: 20px; display: inline-block; }
-nav .student-link:hover { background: #2980b9; }
-nav .student-link.on { background: #e67e22; }
 nav .teacher-link.on { border-color: #e67e22; color: #e67e22; }
 nav .tabs { margin-left: 0; }
 
@@ -214,7 +211,6 @@ nav .tabs { margin-left: 0; }
 
 @media (max-width: 600px) {
   nav .center { flex: 1 0 100%; order: 3; text-align: left; }
-  nav .student-link { width: 100%; text-align: center; }
   .inline-form .form-group { flex: 1 1 100%; }
 }
 
