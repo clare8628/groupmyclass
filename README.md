@@ -53,8 +53,8 @@ wrangler.toml         Worker 設定、assets 目錄、D1 binding
 1. 建立 D1 資料庫並套用 schema：
 
 ```bash
-npx wrangler d1 create groupstu
-npx wrangler d1 execute groupstu --remote --file=schema.sql
+npx wrangler d1 create groupmyclass
+npx wrangler d1 execute groupmyclass --remote --file=schema.sql
 ```
 
 2. 把 `wrangler.toml` 內的 `database_id` 換成上一步輸出的 ID。
@@ -64,15 +64,15 @@ npx wrangler d1 execute groupstu --remote --file=schema.sql
 npx wrangler deploy
 ```
 
-線上網址：<https://groupstu.clare8628.workers.dev>
+線上網址：<https://groupmyclass.clare8628.workers.dev>
 
 要改成 push 後自動部署，可於 Cloudflare Dashboard →
-Workers & Pages → `groupstu` → Settings → Builds → Connect to Git，選擇本 repo 與 `main` 分支。
+Workers & Pages → `groupmyclass` → Settings → Builds → Connect to Git，選擇本 repo 與 `main` 分支。
 
 ## 本機開發
 
 ```bash
-npx wrangler d1 execute groupstu --local --file=schema.sql
+npx wrangler d1 execute groupmyclass --local --file=schema.sql
 npx wrangler dev
 # http://localhost:8787
 ```
