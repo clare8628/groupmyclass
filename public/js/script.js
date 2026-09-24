@@ -1357,22 +1357,22 @@ function renderSubsystemLauncherCards(c) {
     </div>
 
     <!-- 2. 點名系統 -->
-    <div class="subsystem-launcher-card">
+    <div class="subsystem-launcher-card card-attendance" style="background:#fff7ed;border-color:#fed7aa;">
       <div>
         <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.35rem;">
           <span style="font-size:1.35rem;">📋</span>
           <div>
-            <strong style="font-size:1.05rem;color:#1e3a8a;">點名系統</strong>
+            <strong style="font-size:1.05rem;color:#c2410c;">點名系統</strong>
             <br><small class="vn-sub">Hệ thống điểm danh</small>
           </div>
         </div>
-        <div style="font-size:0.86rem;color:#334155;margin-bottom:0.75rem;line-height:1.5;">
+        <div style="font-size:0.86rem;color:#7c2d12;margin-bottom:0.75rem;line-height:1.5;">
           今日日常點名：<b>${todayDateStr()}</b> 開放中<br>
-          <span style="font-size:0.8rem;color:#64748b;">組長/副組長點名確認、出缺席排行追蹤</span>
+          <span style="font-size:0.8rem;color:#ea580c;">組長/副組長點名確認、出缺席排行追蹤</span>
           <br><small class="vn-sub">Điểm danh ngày hôm nay đang mở</small>
         </div>
       </div>
-      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="attendance" style="justify-content:center;font-weight:600;">
+      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="attendance" style="justify-content:center;font-weight:600;background:#ffedd5;color:#9a3412;border-color:#fdba74;">
         進入點名系統 ➔<br><small class="vn-sub">Đến hệ thống điểm danh</small>
       </button>
     </div>

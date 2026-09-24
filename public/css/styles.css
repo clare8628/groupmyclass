@@ -2899,6 +2899,16 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.07);
 }
 
+.subsystem-launcher-card.card-attendance {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.subsystem-launcher-card.card-attendance:hover {
+  box-shadow: 0 6px 14px rgba(234, 88, 12, 0.12);
+  border-color: #fdba74;
+}
+
 /* 5. 核心監控雙欄區 (目前組員缺席排行榜 ＆ 尚未完成調查問卷名單) */
 .dashboard-monitoring-grid {
   display: grid;
