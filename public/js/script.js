@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.77.20260924.234211';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.78.20260924.235435';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4445,41 +4445,23 @@ function studentScreen() {
   return authScreen();
 }
 
-/* ===== 組長／副組長：個人密碼修改卡片 ===== */
+/* ===== 組長／副組長：個人密碼修改（改為彈出對話框，此處僅放觸發按鈕） ===== */
 function studentPasswordPanel(s) {
   return `
   <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.15rem 1.25rem;background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-      <h3 style="margin:0;color:#1e293b;font-size:1.05rem;display:flex;align-items:center;gap:0.4rem;">
-        <span>🔑</span> 修改個人登入密碼 <small style="color:#64748b;font-weight:normal;">Change Password（Đổi mật khẩu cá nhân）</small>
-      </h3>
-      <span class="status-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;font-size:0.8rem;">
-        ${s.hasCustomPassword ? '🔐 已自訂密碼 Custom Password Set（Đã đổi mật khẩu）' : 'ℹ️ 使用預設密碼 Default: ID（Mật khẩu mặc định: Mã SV）'}
-      </span>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+      <div>
+        <h3 style="margin:0 0 0.25rem;color:#1e293b;font-size:1.05rem;display:flex;align-items:center;gap:0.4rem;">
+          <span>🔑</span> 個人登入密碼 <small style="color:#64748b;font-weight:normal;">Password（Mật khẩu cá nhân）</small>
+        </h3>
+        <span class="status-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;font-size:0.8rem;">
+          ${s.hasCustomPassword ? '🔐 已自訂密碼 Custom Password Set（Đã đổi mật khẩu）' : 'ℹ️ 使用預設密碼 Default: ID（Mật khẩu mặc định: Mã SV）'}
+        </span>
+      </div>
+      <button class="btn btn-primary btn-sm" data-act="open-student-password-modal" style="padding:0.4rem 1rem;">
+        🔑 修改密碼<br><small class="vn-sub">Đổi mật khẩu</small>
+      </button>
     </div>
-    <p class="file-path" style="margin:0 0 0.85rem;color:#475569;">
-      擔任組長或副組長可在此修改個人登入密碼。預設密碼為您的學號。修改後下次登入請使用新密碼。若日後忘記密碼，可請授課老師於後台協助重設。<br>
-      <small style="color:#64748b;">(Leaders and vice leaders can change password here. Default password is student ID. Next login requires new password. If forgotten, ask teacher to reset. / Nhóm trưởng và nhóm phó có thể đổi mật khẩu tại đây. Mật khẩu mặc định là mã sinh viên. Lần sau đăng nhập dùng mật khẩu mới. Nếu quên mật khẩu, hãy nhờ giáo viên đặt lại.)</small>
-    </p>
-    <form data-act="change-student-password" class="form-row" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1rem;">
-      <div class="form-group" style="flex:1;min-width:180px;">
-        <label>目前密碼 Current Password（Mật khẩu hiện tại）</label>
-        <input type="password" name="current" placeholder="${s.hasCustomPassword ? '請輸入目前密碼 (Nhập mật khẩu hiện tại)' : '首次修改請輸入您的學號 (Lần đầu: Mã SV)'}" required autocomplete="off">
-      </div>
-      <div class="form-group" style="flex:1;min-width:180px;">
-        <label>新密碼 New Password（Mật khẩu mới - ít nhất 4 ký tự）</label>
-        <input type="password" name="next" minlength="4" placeholder="請輸入新密碼 At least 4 chars (Nhập mật khẩu mới)" required autocomplete="off">
-      </div>
-      <div class="form-group" style="flex:1;min-width:180px;">
-        <label>再次確認新密碼 Confirm New Password（Xác nhận mật khẩu mới）</label>
-        <input type="password" name="confirm" minlength="4" placeholder="再次輸入新密碼 Re-enter (Nhập lại mật khẩu mới)" required autocomplete="off">
-      </div>
-      <div class="form-group full" style="margin-top:0.25rem;">
-        <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.25rem;font-size:0.9rem;">
-          💾 儲存修改新密碼 Save Password（Lưu mật khẩu mới）
-        </button>
-      </div>
-    </form>
   </div>`;
 }
 
@@ -4967,23 +4949,6 @@ app.addEventListener('submit', e => {
     const password = (f.password ? f.password.value : (f.sid ? f.sid.value : '')).trim();
     return act('login-student', { courseId: c.id, name, password },
       { after: () => { loginMode = null; } });
-  }
-  if (a === 'change-student-password') {
-    const current = (f.current ? f.current.value : '').trim();
-    const next = (f.next ? f.next.value : '').trim();
-    const confirm = (f.confirm ? f.confirm.value : '').trim();
-    if (next !== confirm) {
-      return alert('兩次輸入的新密碼不相符！\nPasswords do not match. (Mật khẩu nhập lại không khớp!)');
-    }
-    if (next.length < 4) {
-      return alert('新密碼長度至少需 4 碼！\nPassword must be at least 4 characters. (Mật khẩu phải có ít nhất 4 ký tự!)');
-    }
-    return act('change-student-password', { current, next }, {
-      after: () => {
-        alert('🎉 密碼已成功修改！下次登入請使用新密碼。\n(Đổi mật khẩu thành công! Lần đăng nhập sau vui lòng dùng mật khẩu mới.)');
-        f.reset();
-      }
-    });
   }
   if (a === 'change-student-password-modal-form') {
     const current = (f.current ? f.current.value : '').trim();
