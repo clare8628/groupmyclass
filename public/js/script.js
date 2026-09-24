@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.62.20260924.104542';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.63.20260924.112122';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -59,6 +59,7 @@ let viewingSurveyModal = null;      // 查看問卷詳情彈窗
 let editingSurveyModal = null;      // 老師修改學生問卷彈窗
 let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
 let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
+let simulatingStudentModal = false; // 老師模擬學生身分登入測試彈窗
 
 /* 生活關懷問卷常數 */
 const SURVEY_CATEGORIES = [
@@ -769,7 +770,7 @@ function publicBoard({ withUnassigned = true } = {}) {
       ${(!state.session || (state.session && state.session.role !== 'student')) ? `
         <div class="board-actions">
           <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="show-student-login">
-            <span class="btn-icon">🎓</span> 組長/副組長登入 Leader/Vice Login（Đăng nhập Trưởng/Phó nhóm）
+            <span class="btn-icon">🎓</span> 學生登入 Student Login（Đăng nhập học sinh）
           </button>
         </div>` : ''}
     </div>
@@ -793,9 +794,6 @@ function publicBoard({ withUnassigned = true } = {}) {
 
     <!-- 學生登入區塊嵌入於此 -->
     ${loginMode === 'student' ? loginCard() : ''}
-
-    <!-- 生活關懷問卷進度看板 -->
-    ${c ? publicSurveyProgressCard(c) : ''}
 
     ${!c ? `<p class="file-path empty-notice">請先於左側「學年度分組清單」中點選欲查看分組的學年度與項目。Please select a course from the left list. (Vui lòng chọn môn học từ danh sách bên trái.)</p>` : ''}
 
@@ -887,6 +885,9 @@ function nav() {
             <button class="mode-btn ${teacherPreviewMode === 'leader' ? 'active' : ''}" data-act="switch-preview" data-mode="leader" title="模擬擔任組長的學生登入後看到的完整挑選與管理畫面">
               🎓 組長登入模式
             </button>
+            <button class="mode-btn" data-act="open-simulate-student-modal" title="轉換身分以指定學生身分模擬登入測試問卷">
+              🧪 模擬學生測試
+            </button>
           </div>
         </div>
         <span class="who">老師 Teacher</span>
@@ -894,10 +895,21 @@ function nav() {
       `;
     } else {
       const who = esc((me() || {}).name || '');
-      right = `<span class="who">${who}</span><button class="tab-btn" data-act="logout">登出 Logout（Đăng xuất）</button>`;
+      if (state.session && state.session.simulatedBy === 'teacher') {
+        right = `
+          <span class="who" style="background:#fef3c7;color:#92400e;padding:0.25rem 0.65rem;border-radius:6px;font-weight:700;border:1px solid #fde68a;">
+            🧪 模擬測試：${who}
+          </span>
+          <button class="tab-btn" data-act="exit-simulation" style="background:#f59e0b;color:#ffffff;font-weight:700;border-color:#d97706;">
+            ↩️ 結束測試 Exit
+          </button>
+        `;
+      } else {
+        right = `<span class="who">${who}</span><button class="tab-btn" data-act="logout">登出 Logout（Đăng xuất）</button>`;
+      }
     }
   } else {
-    center = `<a href="#login" class="student-link ${loginMode === 'student' ? 'on' : ''}" data-act="show-student-login">🎓 組長/副組長登入 Leader/Vice Login（Đăng nhập Trưởng/Phó nhóm）</a>`;
+    center = `<a href="#login" class="student-link ${loginMode === 'student' ? 'on' : ''}" data-act="show-student-login">🎓 學生登入 Student Login（Đăng nhập học sinh）</a>`;
     right = `<a href="#login" class="teacher-link ${loginMode === 'teacher' ? 'on' : ''}" data-act="show-teacher-login">老師登入 Teacher Login（Đăng nhập giáo viên）</a>`;
   }
   return `<nav>
@@ -916,17 +928,18 @@ function loginCard() {
     const c = cur();
     return `<div class="login-bar embedded" id="login">
       <div class="login-header">
-        <strong>🎓 擔任組長/副組長之學生登入 Student Login（Đăng nhập Trưởng/Phó nhóm）</strong>
+        <strong>🎓 學生登入 Student Login（Đăng nhập học sinh）</strong>
         <button class="tab-btn close" type="button" data-act="close-login" title="關閉 Close">✕</button>
       </div>
       <form data-act="login-student" class="inline-form">
-        <div class="form-group"><label>帳號 Account（Họ tên hoặc Mã SV）</label><input name="name" placeholder="請輸入姓名或學號 Enter Name or ID (Nhập họ tên hoặc mã SV)" required autocomplete="off"></div>
+        <div class="form-group"><label>帳號（學生姓名） Student Name（Họ và tên）</label><input name="name" placeholder="請輸入姓名 Enter Name (Nhập họ và tên)" required autocomplete="off"></div>
         <div class="form-group"><label>密碼 Password（Mật khẩu - Mặc định là mã SV）</label><input type="password" name="password" placeholder="預設學號 Default: ID (Mặc định: Mã SV)" required autocomplete="off"></div>
         <button class="btn btn-primary" type="submit">登入 Sign In（Đăng nhập）</button>
       </form>
       <p class="file-path">目前課程 Current Course: <b>${esc(c ? courseLabel(c) : '請先於左側選擇課程 Please select a course (Vui lòng chọn khóa học)')}</b>。<br>
-      預設密碼為學號，登入後可於後台自訂密碼。若忘記密碼請洽老師重設。<br>
-      <small style="color:#64748b;">(Default password is student ID. You can customize password after login. / Mật khẩu mặc định là mã sinh viên. Sau khi đăng nhập có thể đổi mật khẩu. Nếu quên mật khẩu, hãy nhờ giáo viên đặt lại.)</small></p>
+      全體修課學生皆可登入填寫生活關懷問卷，或擔任組長開組挑選組員。<br>
+      <b>帳號請輸入學生姓名</b>，預設密碼為<b>學號</b>，登入後可於後台自訂密碼。若忘記密碼請洽老師重設。<br>
+      <small style="color:#64748b;">(All students can sign in to fill surveys or lead groups. Username: Student Name. Default password: Student ID. / Tất cả học sinh đều có thể đăng nhập để điền khảo sát hoặc làm nhóm trưởng. Tài khoản: Họ và tên. Mật khẩu mặc định: Mã sinh viên.)</small></p>
     </div>`;
   }
   if (loginMode === 'teacher') {
@@ -1152,7 +1165,10 @@ function authScreen() {
     <div class="home-main-layout">
       ${courseTreePublic()}
       <div class="flow-main">
-        ${courseSelectionBlock()}
+        <div class="courses-top-grid">
+          ${courseSelectionBlock()}
+          ${publicSurveyDashboardBlock(c)}
+        </div>
         ${publicBoard()}
       </div>
     </div>
@@ -1182,8 +1198,8 @@ function howto() {
       <div class="howto-step-card">
         <div class="step-num">2</div>
         <div class="step-info">
-          <strong>學生登入開組</strong>
-          <p>組長請至「分組現況」點選<b>擔任組長之學生登入</b>（姓名+學號），並按下「我要當組長」。</p>
+          <strong>學生登入開組或填表</strong>
+          <p>全體同學可點選<b>學生登入</b>（輸入姓名+學號密碼）進行生活關懷問卷填寫；組長亦可在此登入開組或挑選組員。</p>
         </div>
       </div>
       <div class="howto-step-card">
@@ -2492,6 +2508,7 @@ function rosterTable(c) {
         <td><input type="checkbox" data-act="set-leader" data-id="${esc(keyOf(s))}" ${s.isLeader ? 'checked' : ''} ${s.groupId ? '' : 'disabled'}></td>
         <td>${scoreBadge(adj)}</td>
         <td style="white-space:nowrap;">
+          <button class="tab-btn" data-act="simulate-student" data-id="${esc(s.id)}" title="轉換身分以此學生登入測試問卷與系統" style="margin-right:0.35rem;">🧪 模擬</button>
           ${isLeadOrVice ? `<button class="tab-btn" data-act="teacher-manage-student-pw" data-id="${esc(s.id)}" data-name="${esc(s.name)}" data-has-custom="${s.hasCustomPassword ? '1' : '0'}" title="協助修改或重設密碼" style="margin-right:0.35rem;">🔑 密碼</button>` : ''}
           <button class="tab-btn" data-act="del-student" data-id="${esc(keyOf(s))}">刪除</button>
         </td>
@@ -2625,52 +2642,145 @@ function renderCategoryBadge(category) {
   </span>`;
 }
 
-function publicSurveyProgressCard(c) {
-  if (!c) return '';
+function publicSurveyDashboardBlock(c) {
+  if (!c) {
+    return `
+    <section class="block-section survey-dashboard-section" id="survey-dashboard-block">
+      <div class="block-header">
+        <div class="block-title-wrap">
+          <span class="step-badge" style="background:#0d9488;">問卷專區 Surveys</span>
+          <h2>問卷調查專區 Surveys <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Khu vực khảo sát）</small></h2>
+        </div>
+      </div>
+      <div class="course-selection-card" style="border-color:#99f6e4;">
+        <div class="empty-selection-guide">
+          <div class="guide-arrow" style="color:#0d9488;">👈</div>
+          <div class="guide-text">
+            <strong>請先選擇學年度分組 Please select a course（Vui lòng chọn khóa học）</strong>
+            <p>選擇左側任一項目後，將在此呈現該科目的問卷調查清單與填寫進度。（Chọn khóa học bên trái để xem tiến độ khảo sát.）</p>
+          </div>
+        </div>
+      </div>
+    </section>`;
+  }
+
   const stats = getSurveyStats(c);
   const status = getSurveyStatus(c);
   const isStudent = state.session && state.session.role === 'student';
 
   return `
-  <div class="public-survey-progress-card">
-    <div class="progress-card-top">
-      <div class="progress-card-header">
-        <span class="header-icon">💌</span>
-        <div>
-          <h3 class="header-title">生活關懷問卷填寫進度 <small style="font-weight:normal;color:#64748b;">Wellbeing Survey Progress（Tiến độ khảo sát cuộc sống）</small></h3>
-          <div class="header-sub">
-            <span class="status-badge ${status.badgeClass}">${status.label}</span>
-            <span class="schedule-text">📅 ${status.timeDesc}</span>
-          </div>
-        </div>
+  <section class="block-section survey-dashboard-section" id="survey-dashboard-block">
+    <div class="block-header">
+      <div class="block-title-wrap">
+        <span class="step-badge" style="background:#0d9488;">問卷專區 Surveys</span>
+        <h2>問卷調查專區 Surveys &amp; Questionnaires <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Khu vực khảo sát &amp; thăm dò）</small></h2>
       </div>
-      <div class="progress-actions">
-        <button class="btn btn-secondary btn-sm" type="button" data-act="show-public-uncompleted-modal">
-          👥 查看尚未完成名單 (${stats.uncompleted} 人)
-        </button>
-        ${!isStudent ? `
-          <button class="btn btn-primary btn-sm" type="button" data-act="show-student-login">
-            🎓 學生登入填寫問卷 Sign In to Fill
-          </button>
-        ` : `
-          <button class="btn btn-primary btn-sm" type="button" data-act="jump-to-my-survey">
-            ✍️ 前往填寫／修改我的問卷 My Survey
-          </button>
-        `}
+      <div class="survey-badge-indicator" style="display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;color:#0d9488;background:#f0fdfa;padding:0.25rem 0.7rem;border-radius:15px;border:1px solid #99f6e4;font-weight:600;">
+        <span class="link-pulse-dot" style="background:#0d9488;"></span>
+        <span>即時連動進度 Live Progress</span>
       </div>
     </div>
 
-    <!-- 進度條 -->
-    <div class="progress-bar-wrap">
-      <div class="bar-labels">
-        <span class="bar-title">全班完成率 Class Completion: <b>${stats.completed}</b> / ${stats.total} 人</span>
-        <span class="bar-percent"><b>${stats.percent}%</b></span>
+    <div class="survey-dashboard-content">
+      <!-- 問卷樹狀目錄結構（預留未來擴充其他問卷，如學雜費一次繳交意願、分期繳交狀況等） -->
+      <div class="survey-tree-box">
+        <!-- 分組 1: 進行中調查 -->
+        <div class="survey-tree-group">
+          <div class="survey-tree-group-header">
+            <span class="group-folder-icon">📂</span>
+            <span class="group-folder-title">進行中調查 Active Surveys（Đang mở khảo sát）</span>
+            <span class="group-count-tag active">1</span>
+          </div>
+          <ul class="survey-tree-nav-list">
+            <li class="survey-nav-node active">
+              <div class="node-clickable">
+                <span class="node-emoji">💌</span>
+                <div class="node-info">
+                  <span class="node-main-title">生活關懷問卷</span>
+                  <span class="node-sub-title">Wellbeing Survey（Phiếu khảo sát chăm sóc cuộc sống）</span>
+                </div>
+                <span class="node-status-pill ${status.badgeClass}">${status.label}</span>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- 分組 2: 未來規劃調查（預留擴充空間） -->
+        <div class="survey-tree-group future">
+          <div class="survey-tree-group-header">
+            <span class="group-folder-icon">📁</span>
+            <span class="group-folder-title">未來規劃問卷 Upcoming Surveys（Kế hoạch khảo sát sắp tới）</span>
+            <span class="group-count-tag">2</span>
+          </div>
+          <ul class="survey-tree-nav-list">
+            <li class="survey-nav-node disabled" title="即將推出，敬請期待 Coming Soon">
+              <div class="node-clickable">
+                <span class="node-emoji">💳</span>
+                <div class="node-info">
+                  <span class="node-main-title">學雜費一次繳交意願調查</span>
+                  <span class="node-sub-title">Tuition Full Payment Intent（Khảo sát ý định nộp học phí 1 lần）</span>
+                </div>
+                <span class="node-status-pill upcoming">即將推出 Sắp ra mắt</span>
+              </div>
+            </li>
+            <li class="survey-nav-node disabled" title="即將推出，敬請期待 Coming Soon">
+              <div class="node-clickable">
+                <span class="node-emoji">📑</span>
+                <div class="node-info">
+                  <span class="node-main-title">學雜費分期繳交狀況調查</span>
+                  <span class="node-sub-title">Tuition Installment Status（Khảo sát tình trạng trả góp học phí）</span>
+                </div>
+                <span class="node-status-pill upcoming">即將推出 Sắp ra mắt</span>
+              </div>
+            </li>
+          </ul>
+        </div>
       </div>
-      <div class="bar-track">
-        <div class="bar-fill" style="width:${stats.percent}%;"></div>
+
+      <!-- 當前選中問卷之進度與互動卡片（生活關懷問卷） -->
+      <div class="public-survey-progress-card selected-survey-card" style="margin-top:0.85rem;">
+        <div class="progress-card-top">
+          <div class="progress-card-header">
+            <span class="header-icon">💌</span>
+            <div>
+              <h3 class="header-title" style="font-size:1.02rem;">
+                生活關懷問卷填寫狀況 <small style="font-weight:normal;color:#64748b;">Wellbeing Survey Status（Tiến độ khảo sát cuộc sống）</small>
+              </h3>
+              <div class="header-sub">
+                <span class="status-badge ${status.badgeClass}">${status.label}</span>
+                <span class="schedule-text">📅 ${status.timeDesc}</span>
+              </div>
+            </div>
+          </div>
+          <div class="progress-actions">
+            <button class="btn btn-secondary btn-sm" type="button" data-act="show-public-uncompleted-modal">
+              👥 查看尚未完成名單 (${stats.uncompleted} 人) / Xem danh sách chưa nộp
+            </button>
+            ${!isStudent ? `
+              <button class="btn btn-primary btn-sm" type="button" data-act="show-student-login">
+                🎓 學生登入填寫問卷 Sign In to Fill（Đăng nhập điền khảo sát）
+              </button>
+            ` : `
+              <button class="btn btn-primary btn-sm" type="button" data-act="jump-to-my-survey">
+                ✍️ 前往填寫／修改我的問卷 Fill/Edit Survey（Điền/Sửa phiếu khảo sát）
+              </button>
+            `}
+          </div>
+        </div>
+
+        <!-- 進度條 -->
+        <div class="progress-bar-wrap">
+          <div class="bar-labels">
+            <span class="bar-title">全班完成率 Class Completion（Tỷ lệ hoàn thành toàn lớp）: <b>${stats.completed}</b> / ${stats.total} 人</span>
+            <span class="bar-percent"><b>${stats.percent}%</b></span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" style="width:${stats.percent}%;"></div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>`;
+  </section>`;
 }
 
 function studentSurveyPanel(c, s) {
@@ -3029,6 +3139,7 @@ function teacherWellbeingBlock(c) {
                   <th>學號 Student ID</th>
                   <th>姓名 Name</th>
                   <th>問卷填寫狀態 Status</th>
+                  <th>操作 Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -3039,6 +3150,9 @@ function teacherWellbeingBlock(c) {
                   <td><code>${esc(st.id)}</code></td>
                   <td><b>${esc(st.name)}</b></td>
                   <td><span class="status-badge under-threshold">⏳ 尚未填寫 Pending</span></td>
+                  <td style="white-space:nowrap;">
+                    <button class="tab-btn" data-act="simulate-student" data-id="${esc(st.id)}" title="以此未填寫學生身分模擬登入測試問卷">🧪 模擬填寫</button>
+                  </td>
                 </tr>`).join('')}
               </tbody>
             </table>
@@ -3109,9 +3223,10 @@ function teacherWellbeingBlock(c) {
                   <td>${formatLogTime(sub.updatedAt)}</td>
                   <td style="white-space:nowrap;">
                     <div style="display:flex;gap:0.3rem;">
+                      <button class="tab-btn" data-act="simulate-student" data-id="${esc(sub.studentId)}" title="以此學生身分模擬登入測試問卷">🧪 模擬</button>
                       <button class="tab-btn" data-act="view-survey-detail" data-id="${esc(sub.studentId)}" title="查閱完整內容與歷程">🔍 查閱</button>
                       <button class="tab-btn" data-act="teacher-edit-survey-modal" data-id="${esc(sub.studentId)}" title="修改此筆問卷資料">✏️ 修改</button>
-                      <button class="tab-btn" data-act="delete-survey-submission" data-id="${esc(sub.studentId)}" data-name="${esc(sub.studentName)}" title="刪除此筆問卷資料" style="color:#dc2626;">🗑️ 刪除</button>
+                      <button class="tab-btn" data-act="delete-survey-submission" data-id="${esc(sub.studentId)}" data-name="${esc(sub.studentName)}" title="刪除此筆問卷資料與日誌" style="color:#dc2626;">🗑️ 刪除</button>
                       <button class="tab-btn" data-act="view-survey-logs-modal" data-id="${esc(sub.studentId)}" title="查看異動日誌">📜 歷程</button>
                     </div>
                   </td>
@@ -3128,7 +3243,14 @@ function teacherWellbeingBlock(c) {
     <!-- 分頁 3: 問卷異動日誌 -->
     ${surveyActiveTab === 'logs' ? `
       <div>
-        <p class="file-path" style="margin-bottom:0.75rem;">完整記錄學生填寫、重新修改以及老師編輯／刪除之所有問卷異動歷程。</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+          <p class="file-path" style="margin:0;">完整記錄學生填寫、重新修改以及老師編輯／刪除之所有問卷異動歷程。</p>
+          ${logs.length ? `
+            <button class="btn btn-neutral btn-sm" type="button" data-act="clear-course-survey-logs" style="color:#dc2626;border-color:#fca5a5;padding:0.35rem 0.85rem;font-size:0.82rem;margin:0;">
+              🗑️ 清空全班問卷日誌 Clear All
+            </button>
+          ` : ''}
+        </div>
         ${logs.length ? `
           <div class="table-wrap">
             <table class="roster">
@@ -3362,7 +3484,48 @@ function surveyModalsHtml() {
           ` : '<p class="file-path">尚無異動紀錄。</p>'}
         </div>
         <div class="absence-modal-footer">
+          ${isTeacher ? `
+            <button class="btn btn-neutral btn-sm" type="button" data-act="clear-student-survey-logs" data-id="${esc(studentId)}" style="margin:0;margin-right:auto;color:#dc2626;border-color:#fca5a5;padding:0.4rem 0.9rem;font-size:0.85rem;">
+              🗑️ 清除此學生修改紀錄 Clear History
+            </button>
+          ` : ''}
           <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-survey-logs-modal">關閉 Close</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // 5. 老師轉換身分模擬學生登入測試 Modal
+  if (simulatingStudentModal && c) {
+    html += `
+    <div class="absence-modal-overlay" data-act="close-simulate-modal-bg">
+      <div class="absence-modal-content" style="max-width:580px;">
+        <div class="absence-modal-header" style="background:#fef3c7;border-bottom:1px solid #fde68a;">
+          <h3 style="color:#92400e;"><span>🧪</span> 轉換身分以學生登入測試問卷 Simulate Student</h3>
+          <button class="absence-modal-close-btn" type="button" data-act="close-simulate-modal">✕</button>
+        </div>
+        <div class="absence-modal-body">
+          <div style="background:#fefce8;border:1px solid #fef08a;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;font-size:0.88rem;color:#854d0e;line-height:1.5;">
+            💡 選擇任一學生後，系統將立即將您轉換為該學生的真實登入身分，讓您測試填寫生活關懷問卷或組別功能。測試完成後可隨時一鍵返回老師後台，並可於後台隨時清除測試日誌。
+          </div>
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label style="font-weight:700;display:block;margin-bottom:0.4rem;">請選擇要模擬的學生 Select Student：</label>
+            <select id="simulate-student-select" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;font-size:0.92rem;">
+              ${c.students.map(st => {
+                const grp = st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+                const grpName = grp ? grp.name : '未分組';
+                const roleName = st.isLeader ? ' (組長)' : st.isVice ? ' (副組長)' : '';
+                const doneTag = st.surveyCompleted ? ' [問卷已完成]' : ' [問卷尚未填寫]';
+                return `<option value="${esc(st.id)}">${esc(st.name)} (${esc(st.id)}) - ${esc(grpName)}${roleName}${doneTag}</option>`;
+              }).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="btn btn-secondary" type="button" data-act="close-simulate-modal" style="margin:0;padding:0.4rem 1rem;">取消 Cancel</button>
+          <button class="btn btn-primary" type="button" data-act="confirm-simulate-student" style="margin:0;padding:0.4rem 1.4rem;background:#d97706;border-color:#b45309;">
+            🚀 開始模擬登入 Start Simulation
+          </button>
         </div>
       </div>
     </div>`;
@@ -3946,6 +4109,28 @@ function attendanceDelegatePanel(c, del) {
 
 /* ===== 老師切換預覽模式專用提示橫幅 ===== */
 function teacherPreviewBanner() {
+  if (state.session && state.session.role === 'student' && state.session.simulatedBy === 'teacher') {
+    const s = me();
+    const c = cur();
+    return `
+    <div class="teacher-preview-floating-bar simulation-active" style="background:linear-gradient(90deg, #78350f, #92400e);border-bottom:2px solid #f59e0b;">
+      <div class="preview-bar-left">
+        <span class="preview-pulse-icon" style="font-size:1.4rem;">🧪</span>
+        <span class="preview-text" style="color:#ffffff;">
+          <b>【老師模擬學生測試中】</b> 目前正以學生 <b>${esc(s ? s.name : '')} (${esc(s ? s.id : '')})</b> 身分登入測試生活關懷問卷
+          ${c ? `（課程：${esc(courseLabel(c))}）` : ''}
+        </span>
+      </div>
+      <div class="preview-bar-right" style="display:flex;gap:0.5rem;align-items:center;">
+        <button class="btn btn-secondary btn-sm" data-act="jump-to-my-survey" style="padding:0.35rem 0.85rem;font-size:0.85rem;margin:0;background:#ffffff;color:#92400e;font-weight:600;">
+          ✍️ 前往問卷表單
+        </button>
+        <button class="btn btn-primary btn-sm" data-act="exit-simulation" style="padding:0.35rem 0.95rem;font-size:0.85rem;margin:0;background:#f59e0b;border-color:#d97706;font-weight:700;color:#ffffff;">
+          ↩️ 結束測試，返回老師後台 Exit
+        </button>
+      </div>
+    </div>`;
+  }
   if (!state.session || state.session.role !== 'teacher' || teacherPreviewMode === 'admin') return '';
   const isLeader = teacherPreviewMode === 'leader';
   const c = cur();
@@ -4747,6 +4932,71 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       editingSurveyModal = null;
       return render();
     }
+  }
+  if (a === 'simulate-student') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const st = c.students.find(s => s.id === sid);
+    if (!st) return;
+    if (!confirm(`確定轉換身分為學生「${st.name} (${st.id})」登入以測試生活關懷問卷？\n\n轉換後您將能以該學生視角測試填寫、送出與修改問卷。\n隨時可點擊頂部橫幅返回老師後台。`)) return;
+    return act('teacher:simulate-student', { courseId: c.id, studentId: sid }, {
+      after: () => {
+        teacherView = 'course';
+        loginMode = null;
+      }
+    });
+  }
+  if (a === 'exit-simulation') {
+    return act('exit-simulation', {}, {
+      after: () => {
+        teacherView = 'wellbeing';
+        teacherPreviewMode = 'admin';
+      }
+    });
+  }
+  if (a === 'open-simulate-student-modal') {
+    simulatingStudentModal = true;
+    return render();
+  }
+  if (a === 'close-simulate-modal' || a === 'close-simulate-modal-bg') {
+    if (a === 'close-simulate-modal-bg' && !e.target.classList.contains('absence-modal-overlay')) return;
+    simulatingStudentModal = false;
+    return render();
+  }
+  if (a === 'confirm-simulate-student') {
+    if (!c) return;
+    const sel = document.getElementById('simulate-student-select');
+    if (!sel || !sel.value) return;
+    const sid = sel.value;
+    simulatingStudentModal = false;
+    return act('teacher:simulate-student', { courseId: c.id, studentId: sid }, {
+      after: () => {
+        teacherView = 'course';
+        loginMode = null;
+      }
+    });
+  }
+  if (a === 'clear-student-survey-logs') {
+    if (!c) return;
+    const sid = btn.dataset.id;
+    const st = c.students.find(x => x.id === sid);
+    const sname = st ? st.name : sid;
+    if (!confirm(`確定要清除學生「${sname} (${sid})」的生活關懷問卷修改紀錄嗎？\n\n此動作將清空該學生的修改歷程日誌，清除測試產生的修改痕跡。`)) return;
+    return act('teacher:clear-survey-logs', { courseId: c.id, studentId: sid }, {
+      after: () => {
+        viewingSurveyLogsModal = null;
+        alert(`已成功清除【${sname}】的生活關懷問卷修改歷程日誌！`);
+      }
+    });
+  }
+  if (a === 'clear-course-survey-logs') {
+    if (!c) return;
+    if (!confirm(`確定要清空本科目「${courseLabel(c)}」全體學生的生活關懷問卷修改歷程日誌嗎？\n\n注意：此動作將清空所有修改歷程日誌，無法復原！`)) return;
+    return act('teacher:clear-survey-logs', { courseId: c.id }, {
+      after: () => {
+        alert('已成功清空全班生活關懷問卷修改歷程日誌！');
+      }
+    });
   }
   if (a === 'delete-survey-submission') {
     if (!c) return;

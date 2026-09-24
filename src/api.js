@@ -82,11 +82,29 @@ export async function handleAction(request, env, db, body) {
     const inputAccount = String(body.name || body.account || '').trim();
     const inputPassword = String(body.password || body.sid || '').trim();
     if (!inputAccount || !inputPassword) {
-      return bad('請輸入姓名或學號，以及密碼 Please enter account and password（Vui lòng nhập họ tên/mã SV và mật khẩu）', 400);
+      return bad('請輸入學生姓名與密碼 Please enter name and password（Vui lòng nhập họ tên cùng mật khẩu）', 400);
     }
-    // 先依學號或姓名尋找學生
-    const s = c.students.find(x => x.name === inputAccount || x.id === inputAccount);
-    if (!s) return bad('找不到該學生，或不在本課程修課名單中 Student not found in this course（Không tìm thấy sinh viên trong khóa học này）', 401);
+    // 依姓名尋找學生（若有多位同名學生，搭配學號密碼比對）
+    const matchingByName = c.students.filter(x => x.name.trim() === inputAccount);
+    let s = null;
+    if (matchingByName.length === 1) {
+      s = matchingByName[0];
+    } else if (matchingByName.length > 1) {
+      for (const candidate of matchingByName) {
+        let valid = false;
+        if (candidate.password_hash) {
+          valid = (await sha256(inputPassword)) === candidate.password_hash;
+        } else {
+          valid = inputPassword === candidate.id;
+        }
+        if (valid) { s = candidate; break; }
+      }
+      if (!s) s = matchingByName[0];
+    } else {
+      // 容錯支援：若學生誤輸入學號，亦允許對應以維持最佳操作體驗
+      s = c.students.find(x => x.id === inputAccount);
+    }
+    if (!s) return bad('找不到該學生姓名，或不在本課程修課名單中 Student not found in this course（Không tìm thấy họ tên sinh viên trong khóa học này）', 401);
 
     // 驗證密碼：若有自訂密碼 hash 則比對雜湊；若尚未自訂則預設密碼為學號
     let valid = false;
@@ -100,6 +118,11 @@ export async function handleAction(request, env, db, body) {
     }
     const token = await makeToken(db, env, { role: 'student', id: s.id, courseId: c.id });
     return ok({ session: { role: 'student', id: s.id, courseId: c.id } }, { 'set-cookie': sessionCookie(token) });
+  }
+  if (action === 'exit-simulation') {
+    if (!session || session.simulatedBy !== 'teacher') return bad('非模擬身分 Not in simulation mode', 400);
+    const token = await makeToken(db, env, { role: 'teacher' });
+    return ok({ session: { role: 'teacher' } }, { 'set-cookie': sessionCookie(token) });
   }
   if (action === 'logout') return ok({ session: null }, { 'set-cookie': clearCookie });
 
@@ -825,11 +848,8 @@ export async function handleAction(request, env, db, body) {
 
       const now = Date.now();
       await db.prepare('DELETE FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
-
-      await db.prepare(`
-        INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(c.id, studentId, stName, 'teacher', 'teacher', '老師', 'delete', existing.category || '', '', existing.content || '', '', '老師刪除該學生的問卷填寫紀錄', now).run();
+      // 一併清理該學生於此課程的所有問卷歷程日誌，確保測試或重新填寫乾淨
+      await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
 
       await logActivity(db, {
         courseId: c.id,
@@ -854,6 +874,55 @@ export async function handleAction(request, env, db, body) {
         logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? ORDER BY created_at DESC LIMIT 500').bind(c.id).all();
       }
       return json({ ok: true, logs: logs.results || [] });
+    }
+    if (op === 'clear-survey-logs') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const studentId = body.studentId ? String(body.studentId).trim() : '';
+      if (studentId) {
+        const st = c.students.find(s => s.id === studentId);
+        const stName = st ? st.name : studentId;
+        await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
+        await logActivity(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'survey-logs-clear',
+          targetId: studentId,
+          targetName: stName,
+          detail: `老師清除學生 ${stName} (${studentId}) 的生活關懷問卷修改歷程日誌`,
+        });
+      } else {
+        await db.prepare('DELETE FROM survey_logs WHERE course_id=?').bind(c.id).run();
+        await logActivity(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'survey-logs-clear-all',
+          targetId: '',
+          targetName: '',
+          detail: '老師清空全班生活關懷問卷修改歷程日誌',
+        });
+      }
+      return ok();
+    }
+    if (op === 'simulate-student') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在 Course not found', 404);
+      const studentId = String(body.studentId || '').trim();
+      const st = c.students.find(s => s.id === studentId);
+      if (!st) return bad('找不到該學生 Student not found', 404);
+      const token = await makeToken(db, env, {
+        role: 'student',
+        id: st.id,
+        courseId: c.id,
+        simulatedBy: 'teacher'
+      });
+      return ok({
+        session: { role: 'student', id: st.id, courseId: c.id, simulatedBy: 'teacher' }
+      }, { 'set-cookie': sessionCookie(token) });
     }
     return bad('未知操作 Unknown action: ' + op, 400);
   }
