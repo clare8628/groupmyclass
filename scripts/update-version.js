@@ -29,8 +29,16 @@ try {
   scriptContent = scriptContent.replace(/let APP_VERSION = '[^']+';/, `let APP_VERSION = '${newVer}';`);
   fs.writeFileSync(scriptPath, scriptContent);
 
+  // 同步更新 index.html 的 ?v= 快取破壞參數，避免瀏覽器沿用舊版 script.js / styles.css 快取
+  const indexPath = path.join(__dirname, '..', 'public', 'index.html');
+  let indexContent = fs.readFileSync(indexPath, 'utf8');
+  indexContent = indexContent
+    .replace(/(href="css\/styles\.css)(\?v=[^"]*)?(")/, `$1?v=${newVer}$3`)
+    .replace(/(src="js\/script\.js)(\?v=[^"]*)?(")/, `$1?v=${newVer}$3`);
+  fs.writeFileSync(indexPath, indexContent);
+
   // 將版本檔案加回 staging
-  execSync('git add src/version.js public/js/script.js');
+  execSync('git add src/version.js public/js/script.js public/index.html');
   console.log(`[Version Hook] 自動更新版本編號至 ${newVer}`);
 } catch (err) {
   console.warn('[Version Hook] 更新版本號略過:', err.message);
