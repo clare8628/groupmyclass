@@ -413,7 +413,7 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 /* 主畫面雙欄佈局：左側樹狀清單 + 右側主要內容 */
 .home-main-layout {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 1.25rem;
   align-items: start;
   position: relative;
@@ -2721,22 +2721,8 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 
 .tree-subnode-btn .subnode-name {
   flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tree-subnode-btn .subnode-badge {
-  font-size: 0.68rem;
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-  background: #e2e8f0;
-  color: #475569;
-}
-
-.tree-sub-list li.sub-active .tree-subnode-btn .subnode-badge {
-  background: rgba(255, 255, 255, 0.25);
-  color: #ffffff;
+  white-space: normal;
+  min-width: 0;
 }
 
 /* [Block B] 公告事項區：緊接於頁首 (Block A) 下方的獨立公告區塊 */
@@ -2909,15 +2895,22 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   border-color: #fdba74;
 }
 
-/* 5. 核心監控雙欄區 (目前組員缺席排行榜 ＆ 尚未完成調查問卷名單) */
+/* 5. 核心監控雙欄區 (組員缺席排行榜 ＆ 未完成問卷名單) */
 .dashboard-monitoring-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
   gap: 1.25rem;
-  align-items: start;
+  align-items: stretch;
 }
 
-/* 尚未完成調查問卷名單卡片 */
+.dashboard-monitoring-grid .absence-leaderboard-box,
+.dashboard-monitoring-grid .uncompleted-surveys-box {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 未完成問卷名單卡片 */
 .uncompleted-surveys-box {
   background: #ffffff;
   border: 1.5px solid #ccfbf1;

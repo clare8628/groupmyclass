@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.66.20260924.212126';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.68.20260924.215023';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -53,7 +53,7 @@ let state = {
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
 let studentPasswordModalOpen = false; // 最上方前台學生密碼修改彈窗：true | false
-let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（總覽儀表板）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）
+let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）
 let teacherView = getInitialTeacherView();   // 後台主區：'course' | 'settings' | 'eval' | 'logs' | 'attendance'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
@@ -66,7 +66,7 @@ let attendanceStatDate = '';        // 缺席統計所選日期，預設為今�
 let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
-let publicSurveyUncompletedPage = 1;     // 前台總覽尚未完成調查問卷名單頁碼（每頁 15 筆）
+let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentName, studentId, details: [] } | null
 let surveyActiveTab = 'uncompleted'; // 後台問卷子分頁：'uncompleted' | 'submissions' | 'logs'
 let surveyCategoryFilter = 'all';
@@ -1208,7 +1208,7 @@ function noticeBlock(c) {
   </section>`;
 }
 
-/* ---- 核心監控卡片：尚未完成調查問卷名單（前 15 筆分頁切換，學號升冪排序） ---- */
+/* ---- 核心監控卡片：未完成問卷名單（前 15 筆分頁切換，學號升冪排序） ---- */
 function renderUncompletedSurveysCard(c) {
   if (!c) return '';
   const stats = getSurveyStats(c);
@@ -1249,7 +1249,7 @@ function renderUncompletedSurveysCard(c) {
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <span style="font-size:1.15rem;">⏳</span>
         <div>
-          <strong style="color:#0f766e;font-size:1.02rem;">尚未完成調查問卷名單</strong>
+          <strong style="color:#0f766e;font-size:1.02rem;">未完成問卷名單</strong>
           <br><small class="vn-sub">Danh sách chưa hoàn thành khảo sát</small>
         </div>
       </div>
@@ -1400,22 +1400,22 @@ function renderSubsystemLauncherCards(c) {
   </div>`;
 }
 
-/* ---- 預設中央主要顯示區域：總覽儀表板 ---- */
+/* ---- 預設中央主要顯示區域：首頁 ---- */
 function renderPublicDashboard(c) {
   return `
   <div class="public-dashboard-content">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（總覽儀表板）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Bảng tổng quan)</small></span>
+      <span class="block-tag-name">主要內容顯示區（首頁）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Bảng tổng quan)</small></span>
     </div>
 
     <!-- 三大子系統入口捷徑卡片 -->
     ${renderSubsystemLauncherCards(c)}
 
-    <!-- 中央核心即時監控：目前組員缺席排行榜 ＆ 尚未完成調查問卷名單 -->
+    <!-- 中央核心即時監控：組員缺席排行榜 ＆ 未完成問卷名單 -->
     <div class="dashboard-monitoring-grid">
       ${renderAbsenceLeaderboardCard(c, {
-        title: '目前組員缺席排行榜',
+        title: '組員缺席排行榜',
         subTitle: 'Bảng xếp hạng vắng mặt',
         scopeAct: 'public-attendance-stat-scope',
         currentScope: publicAttendanceStatScope,
@@ -1628,7 +1628,7 @@ function renderPublicGroupsSection(c) {
 
     <div class="subsystem-header-bar">
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">👥</span>
@@ -1656,7 +1656,7 @@ function renderPublicGroupsSection(c) {
 
     <div style="margin-top:1.5rem;text-align:center;">
       <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
     </div>
   </div>`;
@@ -1678,7 +1678,7 @@ function renderPublicAttendanceSection(c) {
 
     <div class="subsystem-header-bar">
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">📋</span>
@@ -1744,7 +1744,7 @@ function renderPublicAttendanceSection(c) {
 
     <div style="margin-top:1.5rem;text-align:center;">
       <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
     </div>
   </div>`;
@@ -1792,7 +1792,7 @@ function renderSurveyStandaloneLogin(c) {
 
     <div class="subsystem-header-bar">
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">💌</span>
@@ -1893,7 +1893,7 @@ function renderPublicSurveySection(c) {
 
     <div class="subsystem-header-bar">
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">💌</span>
@@ -1930,7 +1930,7 @@ function renderPublicSurveySection(c) {
 
     <div style="margin-top:1.5rem;text-align:center;">
       <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回總覽儀表板<br><small class="vn-sub">Quay lại bảng điều khiển</small>
+        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
       </button>
     </div>
   </div>`;
@@ -2036,7 +2036,7 @@ function courseTreePublic() {
     <div class="block-header tree-header">
       <div class="block-title-wrap">
         <span class="step-badge">清單<br><small class="vn-sub">Danh mục</small></span>
-        <h2>學年度與系統清單<br><small class="vn-sub" style="font-weight:normal;font-size:0.82rem;color:#64748b;">Năm học &amp; Hệ thống</small></h2>
+        <h2>學年度<br><small class="vn-sub" style="font-weight:normal;font-size:0.82rem;color:#64748b;">Năm học</small></h2>
       </div>
       <p class="block-desc">選擇學年度、科目與子系統<br><small class="vn-sub">Chọn khóa học và hệ thống</small></p>
     </div>
@@ -2058,10 +2058,10 @@ function courseTreePublic() {
               ${active ? `
                 <ul class="tree-sub-list">
                   <li class="${publicSubView === 'dashboard' ? 'sub-active' : ''}">
-                    <button class="tree-subnode-btn" data-act="nav-public-subview" data-view="dashboard" data-course="${c.id}" title="查看目前組員缺席排行榜與問卷未完成名單">
+                    <button class="tree-subnode-btn" data-act="nav-public-subview" data-view="dashboard" data-course="${c.id}" title="查看組員缺席排行榜與未完成問卷名單">
                       <span class="subnode-icon">🏠</span>
                       <span class="subnode-name">
-                        總覽儀表板
+                        首頁
                         <br><small class="vn-sub">Bảng tổng quan</small>
                       </span>
                     </button>
@@ -2073,7 +2073,6 @@ function courseTreePublic() {
                         學生分組系統
                         <br><small class="vn-sub">Hệ thống chia nhóm</small>
                       </span>
-                      <span class="subnode-badge">${c.groups.length}組</span>
                     </button>
                   </li>
                   <li class="${publicSubView === 'attendance' ? 'sub-active' : ''}">
@@ -3466,7 +3465,7 @@ function getSurveyStats(c) {
     }
   });
 
-  // 仿照目前組員缺席排行榜，以學號進行升冪方式排序顯示
+  // 仿照組員缺席排行榜，以學號進行升冪方式排序顯示
   uncompletedList.sort((a, b) =>
     String(a.id).localeCompare(String(b.id), undefined, { numeric: true, sensitivity: 'base' })
   );
