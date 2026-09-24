@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.75.20260924.231653';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.76.20260924.233053';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1687,11 +1687,7 @@ function renderPublicAttendanceSection(c) {
           🎓 學生：${esc(s.name)} (${esc(s.id)})
           <br><small class="vn-sub">Sinh viên: ${esc(s.name)}</small>
         </span>
-      ` : `
-        <button class="btn btn-primary btn-sm" data-act="show-student-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">
-          🎓 組長／副組長點名登入<br><small class="vn-sub">Đăng nhập điểm danh</small>
-        </button>
-      `}
+      ` : ''}
     </div>
 
     ${isLeaderOrVice && g ? `
@@ -1719,10 +1715,11 @@ function renderPublicAttendanceSection(c) {
               💡 擔任組長或副組長之同學，請登入以進行今日點名：
               <br><small class="vn-sub">Sinh viên là nhóm trưởng hoặc nhóm phó vui lòng đăng nhập để điểm danh:</small>
             </span>
-            <button class="btn btn-primary btn-sm" data-act="show-student-login" style="padding:0.35rem 0.95rem;">
-              🎓 學生登入點名<br><small class="vn-sub">Đăng nhập</small>
+            <button class="btn btn-primary btn-sm" data-act="open-leader-login" style="padding:0.35rem 0.95rem;">
+              🎓 組長/副組長點名登入<br><small class="vn-sub">Đăng nhập điểm danh</small>
             </button>
           </div>
+          ${loginMode === 'student' ? loginCard() : ''}
         ` : ''}
       </div>
     `}
