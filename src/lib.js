@@ -227,6 +227,9 @@ async function ensureSurveySchema(db) {
     await db.prepare('ALTER TABLE courses ADD COLUMN survey_end TEXT NOT NULL DEFAULT ""').run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE courses ADD COLUMN hide_upcoming_surveys INTEGER NOT NULL DEFAULT 0').run();
+  } catch (_) {}
+  try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS survey_submissions (
         course_id   TEXT NOT NULL,
@@ -605,6 +608,7 @@ export async function loadState(db) {
       students: courseStudents,
       surveyStart: c.survey_start || '',
       surveyEnd: c.survey_end || '',
+      hideUpcomingSurveys: !!c.hide_upcoming_surveys,
     };
 
     courseStudents.forEach(s => {

@@ -777,8 +777,9 @@ export async function handleAction(request, env, db, body) {
       if (!c) return bad('課程不存在', 404);
       const start = body.surveyStart ? String(body.surveyStart).trim() : '';
       const end = body.surveyEnd ? String(body.surveyEnd).trim() : '';
-      await db.prepare('UPDATE courses SET survey_start=?, survey_end=? WHERE id=?')
-        .bind(start, end, c.id).run();
+      const hideUpcoming = body.hideUpcomingSurveys ? 1 : 0;
+      await db.prepare('UPDATE courses SET survey_start=?, survey_end=?, hide_upcoming_surveys=? WHERE id=?')
+        .bind(start, end, hideUpcoming, c.id).run();
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
@@ -787,7 +788,7 @@ export async function handleAction(request, env, db, body) {
         actionType: 'survey-period-set',
         targetId: '',
         targetName: '',
-        detail: `老師設定生活關懷問卷開放時段：${start || '不限開始'} ~ ${end || '不限結束'}`,
+        detail: `老師設定生活關懷問卷開放時段：${start || '不限開始'} ~ ${end || '不限結束'}（${hideUpcoming ? '前台隱藏規劃中問卷' : '前台顯示規劃中問卷'}）`,
       });
       return ok();
     }

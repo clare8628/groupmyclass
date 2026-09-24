@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS courses (
   deadline_assigned INTEGER NOT NULL DEFAULT 0,
   notice            TEXT NOT NULL DEFAULT '',
   notice_time       TEXT NOT NULL DEFAULT '',
+  survey_start      TEXT NOT NULL DEFAULT '',
+  survey_end        TEXT NOT NULL DEFAULT '',
+  hide_upcoming_surveys INTEGER NOT NULL DEFAULT 0,
   created_at        INTEGER NOT NULL
 );
 

@@ -2685,3 +2685,364 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   50% { border-bottom-color: #fbbf24; box-shadow: 0 4px 18px rgba(245, 158, 11, 0.45); }
   100% { border-bottom-color: #f59e0b; }
 }
+
+/* ========================================================
+   前台改版：左側樹狀子系統收納、第一區塊概覽與子系統切換標籤列
+   ======================================================== */
+
+/* 1. 左側樹狀結構子系統節點 (學年度 → 科目 → 總覽/分組/點名/問卷) */
+.tree-sub-list {
+  list-style: none;
+  margin: 0.4rem 0 0.4rem 0.5rem;
+  padding: 0 0 0 0.65rem;
+  border-left: 2px solid #a7f3d0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.tree-subnode-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.tree-subnode-btn:hover {
+  background: #f0fdfa;
+  border-color: #0d9488;
+  color: #0f766e;
+  transform: translateX(2px);
+}
+
+.tree-sub-list li.sub-active .tree-subnode-btn {
+  background: #0d9488;
+  border-color: #0f766e;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.25);
+}
+
+.tree-subnode-btn .subnode-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.tree-subnode-btn .subnode-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-subnode-btn .subnode-badge {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.tree-sub-list li.sub-active .tree-subnode-btn .subnode-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+/* 2. 第一區塊：目前選取的課程摘要與子系統切換標籤列 */
+.course-top-overview-section {
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-top: 4px solid #0d9488;
+  border-radius: 12px;
+  padding: 1.25rem 1.4rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+.overview-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.overview-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.overview-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.overview-course-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.overview-meta-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.meta-chip {
+  font-size: 0.82rem;
+  padding: 0.35rem 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  color: #475569;
+}
+
+.meta-chip.chip-open {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+  font-weight: 600;
+}
+
+.meta-chip.chip-expired {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+  font-weight: 600;
+}
+
+/* 子系統切換導覽列 (Subsystem Tabs) */
+.subsystem-tabs-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.65rem;
+  margin: 0.9rem 0;
+  padding: 0.35rem;
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.subsystem-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.9rem;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  font-weight: 600;
+  font-size: 0.88rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.subsystem-tab-btn:hover {
+  background: #f8fafc;
+  color: #0f766e;
+  border-color: #99f6e4;
+  transform: translateY(-1px);
+}
+
+.subsystem-tab-btn.active {
+  background: #0d9488;
+  color: #ffffff;
+  border-color: #0f766e;
+  box-shadow: 0 4px 10px rgba(13, 148, 136, 0.3);
+}
+
+.subsystem-tab-btn .tab-icon {
+  font-size: 1.15rem;
+}
+
+.subsystem-tab-btn .tab-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.subsystem-tab-btn .tab-text small {
+  font-size: 0.72rem;
+  font-weight: normal;
+  opacity: 0.85;
+}
+
+/* 精要公告橫幅 (Bulletin banner) */
+.overview-bulletin-bar {
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.bulletin-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  color: #92400e;
+  font-size: 0.88rem;
+}
+
+.bulletin-bell-icon {
+  font-size: 1.05rem;
+}
+
+.bulletin-time-pill {
+  font-size: 0.78rem;
+  background: #fef3c7;
+  color: #b45309;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.bulletin-bar-content {
+  font-size: 0.84rem;
+  color: #78350f;
+  line-height: 1.5;
+}
+
+.bulletin-line {
+  margin: 0.2rem 0;
+}
+
+/* 3. 子系統專屬頂部橫條 (Subsystem Header Bar) */
+.subsystem-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.75rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+
+.subsystem-title-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  color: #1e293b;
+}
+
+.subsystem-title-tag .subsystem-icon {
+  font-size: 1.3rem;
+}
+
+/* 4. 總覽儀表板三大子系統入口卡片 (Launcher Grid) */
+.subsystem-launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.subsystem-launcher-card {
+  background: #ffffff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.85rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s ease;
+}
+
+.subsystem-launcher-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.07);
+}
+
+/* 5. 核心監控雙欄區 (目前組員缺席排行榜 ＆ 尚未完成調查問卷名單) */
+.dashboard-monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* 尚未完成調查問卷名單卡片 */
+.uncompleted-surveys-box {
+  background: #ffffff;
+  border: 1.5px solid #ccfbf1;
+  border-radius: 10px;
+  padding: 1.25rem;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.05);
+}
+
+.uncompleted-surveys-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+/* 6. 獨立問卷填寫頁面版面 (Survey Standalone Page) */
+.survey-standalone-page {
+  animation: fadeIn 0.25s ease;
+}
+
+.survey-login-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+  align-items: stretch;
+}
+
+@media (max-width: 860px) {
+  .survey-login-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.survey-intro-card {
+  background: #f0fdfa;
+  border: 1.5px solid #99f6e4;
+  border-radius: 12px;
+  padding: 1.4rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.survey-login-card {
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 1.4rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
