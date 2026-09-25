@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.78.20260924.235435';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.79.20260925.093218';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -11,10 +11,17 @@ function parseViewFromHash() {
   // 老師後台視圖
   if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
   // 前台子系統視圖
-  if (['dashboard', 'groups', 'attendance', 'survey'].includes(h)) return { type: 'public', view: h };
+  if (['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(h)) return { type: 'public', view: h };
   // 相容舊 hash
   if (h === 'attendance') return { type: 'public', view: 'attendance' };
   return null;
+}
+
+// 取出目前 hash 對應的前台子系統名稱（非教師後台視圖時回傳 null）；
+// popstate／hashchange 監聽器用來同步瀏覽器上一頁/下一頁時的 publicSubView
+function parseSubViewFromHash() {
+  const parsed = parseViewFromHash();
+  return parsed && parsed.type === 'public' ? parsed.view : null;
 }
 
 function getInitialTeacherView() {
@@ -33,7 +40,7 @@ function getInitialTeacherView() {
 function getInitialPublicSubView() {
   const parsed = parseViewFromHash();
   if (parsed && parsed.type === 'public') return parsed.view;
-  if (window.history.state && window.history.state.publicSubView && ['dashboard', 'groups', 'attendance', 'survey'].includes(window.history.state.publicSubView)) {
+  if (window.history.state && window.history.state.publicSubView && ['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(window.history.state.publicSubView)) {
     return window.history.state.publicSubView;
   }
   return 'dashboard';
@@ -52,8 +59,7 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
-let studentPasswordModalOpen = false; // 最上方前台學生密碼修改彈窗：true | false
-let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）
+let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）| 'password'（修改個人密碼）
 let teacherView = getInitialTeacherView();   // 後台主區：'course' | 'settings' | 'eval' | 'logs' | 'attendance'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
@@ -885,25 +891,38 @@ function publicBoard({ withUnassigned = true } = {}) {
 }
 
 /* ===== [Block A] 頁首頂端導覽區：登入、登出、密碼修改與全域狀態 ===== */
-function studentPasswordModalHtml() {
-  if (!studentPasswordModalOpen) return '';
+/* ---- 獨立頁面：修改個人密碼（取代原本的彈出對話框，可用「回到上一頁」返回進入前的畫面） ---- */
+function renderPasswordChangePage() {
   const s = me();
-  if (!s) return '';
   return `
-  <div class="modal-backdrop" data-act="close-student-password-modal">
-    <div class="modal-content" style="max-width:540px;" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        <h3 style="margin:0;display:flex;align-items:center;gap:0.4rem;color:#1e293b;">
-          <span>🔑</span> 修改個人密碼<br><small class="vn-sub">Đổi mật khẩu cá nhân</small>
-        </h3>
-        <button class="modal-close-btn" data-act="close-student-password-modal">✕</button>
+  <div class="password-standalone-page">
+    <div class="block-identifier-tag">
+      <span class="block-tag-code">[Block D]</span>
+      <span class="block-tag-name">主要內容顯示區（修改個人密碼）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Đổi mật khẩu)</small></span>
+    </div>
+
+    <div class="subsystem-header-bar">
+      <button class="btn btn-secondary btn-sm" type="button" data-act="history-back">
+        ↩️ 回到上一頁<br><small class="vn-sub">Quay lại trang trước</small>
+      </button>
+      <div class="subsystem-title-tag">
+        <span class="subsystem-icon">🔑</span>
+        <div>
+          <strong>修改個人密碼</strong>
+          <br><small class="vn-sub">Đổi mật khẩu cá nhân</small>
+        </div>
       </div>
-      <div class="modal-body">
+    </div>
+
+    ${!s ? `
+      <p class="file-path empty-notice">請先登入學生帳號才能修改密碼。<br><small class="vn-sub">Vui lòng đăng nhập trước khi đổi mật khẩu.</small></p>
+    ` : `
+      <div class="block-section" style="max-width:560px;">
         <p class="file-path" style="margin:0 0 0.85rem;color:#475569;">
           您好，<b>${esc(s.name)}</b> (${esc(s.id)})。請在此修改個人登入密碼。<br>
           <small class="vn-sub">Xin chào ${esc(s.name)}. Vui lòng đổi mật khẩu tại đây. Mật khẩu mới tối thiểu 4 ký tự.</small>
         </p>
-        <form data-act="change-student-password-modal-form" class="form-row" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1rem;">
+        <form data-act="change-student-password-page-form" class="form-row" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.9rem 1rem;">
           <div class="form-group full">
             <label>目前密碼<br><small class="vn-sub">Mật khẩu hiện tại (Lần đầu: Mã SV)</small></label>
             <input type="password" name="current" placeholder="${s.hasCustomPassword ? '請輸入目前密碼' : '首次修改請輸入您的學號'}" required autocomplete="off" style="width:100%;padding:0.5rem;border:1px solid #cbd5e1;border-radius:6px;">
@@ -917,7 +936,7 @@ function studentPasswordModalHtml() {
             <input type="password" name="confirm" minlength="4" placeholder="再次輸入新密碼" required autocomplete="off" style="width:100%;padding:0.5rem;border:1px solid #cbd5e1;border-radius:6px;">
           </div>
           <div class="form-group full" style="margin-top:0.5rem;display:flex;justify-content:flex-end;gap:0.5rem;">
-            <button class="btn btn-neutral btn-sm" type="button" data-act="close-student-password-modal">
+            <button class="btn btn-neutral btn-sm" type="button" data-act="history-back">
               取消<br><small class="vn-sub">Hủy</small>
             </button>
             <button class="btn btn-primary btn-sm" type="submit">
@@ -926,7 +945,7 @@ function studentPasswordModalHtml() {
           </div>
         </form>
       </div>
-    </div>
+    `}
   </div>`;
 }
 
@@ -981,7 +1000,7 @@ function nav() {
             🎓 ${who} ${studentRoleTag}
             <br><small class="vn-sub">Sinh viên</small>
           </span>
-          <button class="tab-btn" data-act="open-student-password-modal" style="background:#f0fdf4;border-color:#86efac;color:#166534;" title="修改個人登入密碼">
+          <button class="tab-btn" data-act="nav-public-subview" data-view="password" style="background:#f0fdf4;border-color:#86efac;color:#166534;" title="修改個人登入密碼">
             🔑 密碼修改<br><small class="vn-sub">Đổi mật khẩu</small>
           </button>
           <button class="tab-btn" data-act="logout">
@@ -1608,9 +1627,6 @@ function renderPublicGroupsSection(c) {
 
       <!-- 期末組長評分面板 (僅組長) -->
       ${s.isLeader ? renderStudentPeerEvalPanel(c, g, s, mates) : ''}
-
-      <!-- 修改個人密碼 -->
-      ${studentPasswordPanel(s)}
     </div>`;
   }
 
@@ -1930,6 +1946,9 @@ function renderPublicSurveySection(c) {
 
 /* ---- 依當前子系統視角渲染中央區域 ---- */
 function renderSubsystemMain(c) {
+  if (publicSubView === 'password') {
+    return renderPasswordChangePage();
+  }
   if (!c) {
     return `
     <div class="empty-selection-guide">
@@ -4445,26 +4464,6 @@ function studentScreen() {
   return authScreen();
 }
 
-/* ===== 組長／副組長：個人密碼修改（改為彈出對話框，此處僅放觸發按鈕） ===== */
-function studentPasswordPanel(s) {
-  return `
-  <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.15rem 1.25rem;background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
-      <div>
-        <h3 style="margin:0 0 0.25rem;color:#1e293b;font-size:1.05rem;display:flex;align-items:center;gap:0.4rem;">
-          <span>🔑</span> 個人登入密碼 <small style="color:#64748b;font-weight:normal;">Password（Mật khẩu cá nhân）</small>
-        </h3>
-        <span class="status-badge" style="background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc;font-size:0.8rem;">
-          ${s.hasCustomPassword ? '🔐 已自訂密碼 Custom Password Set（Đã đổi mật khẩu）' : 'ℹ️ 使用預設密碼 Default: ID（Mật khẩu mặc định: Mã SV）'}
-        </span>
-      </div>
-      <button class="btn btn-primary btn-sm" data-act="open-student-password-modal" style="padding:0.4rem 1rem;">
-        🔑 修改密碼<br><small class="vn-sub">Đổi mật khẩu</small>
-      </button>
-    </div>
-  </div>`;
-}
-
 /* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
 function attendanceLeaderPanel(c, g, s, mates) {
   const sessions = attendanceSessions(c);
@@ -4827,7 +4826,7 @@ function render() {
   }
 
   document.getElementById('app').innerHTML =
-    nav() + teacherPreviewBanner() + '<div class="container">' + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml() + studentPasswordModalHtml();
+    nav() + teacherPreviewBanner() + '<div class="container">' + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml();
   if (!state.session && loginMode) {
     const first = document.querySelector('#login input');
     if (first) first.focus();
@@ -4950,7 +4949,7 @@ app.addEventListener('submit', e => {
     return act('login-student', { courseId: c.id, name, password },
       { after: () => { loginMode = null; } });
   }
-  if (a === 'change-student-password-modal-form') {
+  if (a === 'change-student-password-page-form') {
     const current = (f.current ? f.current.value : '').trim();
     const next = (f.next ? f.next.value : '').trim();
     const confirm = (f.confirm ? f.confirm.value : '').trim();
@@ -4963,8 +4962,7 @@ app.addEventListener('submit', e => {
     return act('change-student-password', { current, next }, {
       after: () => {
         alert('🎉 密碼已成功修改！下次登入請使用新密碼。\n(Đổi mật khẩu thành công! Lần đăng nhập sau vui lòng dùng mật khẩu mới.)');
-        studentPasswordModalOpen = false;
-        render();
+        f.reset();
       }
     });
   }
@@ -5255,14 +5253,6 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       return render();
     }
     return;
-  }
-  if (a === 'open-student-password-modal') {
-    studentPasswordModalOpen = true;
-    return render();
-  }
-  if (a === 'close-student-password-modal') {
-    studentPasswordModalOpen = false;
-    return render();
   }
   if (a === 'nav-public-subview') {
     publicSubView = btn.dataset.view || 'dashboard';
