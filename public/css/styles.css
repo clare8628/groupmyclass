@@ -524,21 +524,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   font-weight: 600;
 }
 
-/* 樹狀項目選中時指向右側的連接三角形指示針 */
-.tree-active-pointer {
-  position: absolute;
-  right: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0;
-  height: 0;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  border-left: 12px solid #16a085;
-  z-index: 5;
-  filter: drop-shadow(2px 0 2px rgba(0,0,0,0.1));
-}
-
 /* 右側：課程選擇展示區塊 (Courses overview) 與左側的關聯視覺設計 */
 .courses-overview-section {
   border-top: 4px solid #16a085;
@@ -666,9 +651,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   .tree-section {
     position: static;
     max-height: none;
-  }
-  .tree-active-pointer {
-    display: none;
   }
 }
 
@@ -1577,7 +1559,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 }
 
 .absence-leaderboard-box.public-flow {
-  margin-top: 1.25rem;
   border-top: 4px solid #ef4444;
 }
 
