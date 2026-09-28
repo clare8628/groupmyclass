@@ -112,7 +112,7 @@ nav .tab-btn:hover { border-color: #e67e22; color: #e67e22; }
 
 .btn-row { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
 .btn-row .btn { width: auto; }
-select, input[type="datetime-local"], input[type="number"], input[type="text"], input[type="email"], input[type="password"] {
+select, input:not([type]), input[type="datetime-local"], input[type="number"], input[type="text"], input[type="email"], input[type="password"] {
   padding: .5rem; border: 1px solid #ddd; border-radius: 4px; font: inherit; background: #fff;
 }
 select { max-width: 100%; }
@@ -3011,4 +3011,78 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   background: #f0fdf4;
   color: #15803d;
   border-color: #bbf7d0;
+}
+
+/* 8. Block D 主要內容顯示區：統一區塊感（所有子系統頁面共用同一個淺底容器，內部卡片等距排列） */
+.public-dashboard-content,
+.groups-subsystem-page,
+.attendance-standalone-page,
+.survey-standalone-page,
+.password-standalone-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1.25rem 1.35rem 1.5rem;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.04);
+}
+
+.public-dashboard-content > *,
+.groups-subsystem-page > *,
+.attendance-standalone-page > *,
+.survey-standalone-page > *,
+.password-standalone-page > * {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.public-dashboard-content > .block-identifier-tag,
+.groups-subsystem-page > .block-identifier-tag,
+.attendance-standalone-page > .block-identifier-tag,
+.survey-standalone-page > .block-identifier-tag,
+.password-standalone-page > .block-identifier-tag {
+  align-self: flex-start;
+}
+
+.public-dashboard-content > .subsystem-header-bar,
+.groups-subsystem-page > .subsystem-header-bar,
+.attendance-standalone-page > .subsystem-header-bar,
+.survey-standalone-page > .subsystem-header-bar,
+.password-standalone-page > .subsystem-header-bar {
+  background: #ffffff;
+}
+
+/* 9. 各子系統共用返回按鈕：頂部橫條最左與頁尾置中，配色與大小一致 */
+.btn.btn-back {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-width: 9.5rem;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #1e3a8a;
+  background: #ffffff;
+  border: 1.5px solid #bfdbfe;
+  border-radius: 8px;
+}
+
+.btn.btn-back:hover {
+  background: #eff6ff;
+  border-color: #60a5fa;
+}
+
+.btn.btn-back .vn-sub {
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.subsystem-footer {
+  display: flex;
+  justify-content: center;
 }

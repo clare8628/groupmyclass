@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.80.20260925.094927';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.81.20260928.230202';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -62,7 +62,7 @@ let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
 let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）| 'password'（修改個人密碼）
 let teacherView = getInitialTeacherView();   // 後台主區：'course' | 'settings' | 'eval' | 'logs' | 'attendance'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
-let logActionFilter = 'all';  // 異動日誌類別過濾：'all' | 'pick' | 'drop' | 'leader' | 'teacher' | 'system' | 'attendance'
+let logActionFilter = 'all';  // 異動日誌細項過濾：'all' 或 LOG_SUB_FILTERS 中目前分類的值（切換管理頁時重設）
 let logSearchText = '';       // 異動日誌搜尋關鍵字
 let attendanceEditingId = null;     // 後台目前正在編輯的點名時段 id（null＝新增模式）
 let attendanceStatScope = 'all';    // 老師後台缺席統計範圍：預設 'all'（整學期）| 'date'（依日期）
@@ -73,7 +73,7 @@ let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
-let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentName, studentId, details: [] } | null
+let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
 let surveyActiveTab = 'uncompleted'; // 後台問卷子分頁：'uncompleted' | 'submissions' | 'logs'
 let surveyCategoryFilter = 'all';
 let surveyGroupFilter = 'all';
@@ -298,7 +298,7 @@ function canGroupLeaderEdit(c, g) {
   return true;
 }
 
-/* ===== 點名 Attendance（Điểm danh）helpers ===== */
+/* ===== 點名 helpers ===== */
 const todayDateStr = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 
 /* 判斷點名時段是否為一般日常點名 */
@@ -346,7 +346,7 @@ function isAttendanceEditable(c, session, groupId) {
 const attendanceSessionLabel = s => {
   if (!s) return '';
   const isDaily = isDailySession(s);
-  const namePart = isDaily ? '一般日常點名 Daily（Điểm danh hàng ngày）' : s.name;
+  const namePart = isDaily ? '一般日常點名（Điểm danh hàng ngày）' : s.name;
   return [s.date, s.timeSlot, namePart].filter(Boolean).join(' · ');
 };
 /* 老師視角：某時段各組完成度（是否已為全部現有組員留下紀錄），並列出尚未被點名的組員（含組長／副組長）與點名執行者 */
@@ -644,7 +644,8 @@ function attendanceAbsentCounts(c, date, filterStudentIds = null) {
     const st = c.students.find(s => (s.id && r.studentId && s.id === r.studentId) || (s.ref && r.ref && s.ref === r.ref) || (s.id && s.id === r.ref) || (s.ref && s.ref === r.studentId));
     const key = r.studentId || (st ? (st.id || st.ref) : r.ref);
     if (!key) return;
-    if (filterSet && !filterSet.has(key) && !filterSet.has(r.studentId) && !filterSet.has(r.ref) && !filterSet.has(st?.ref) && !filterSet.has(st?.id)) return;
+    // 前台他人學號已遮蔽（僅前 3 碼），不同組學生可能遮蔽後相同，故優先以唯一 ref 比對；無 ref（老師端）才用完整學號
+    if (filterSet && !filterSet.has(r.ref) && !(st && st.ref && filterSet.has(st.ref)) && !filterSet.has(r.studentId) && !(st && !st.ref && filterSet.has(st.id))) return;
     counts[key] = (counts[key] || 0) + 1;
   });
   return counts;
@@ -673,8 +674,8 @@ function getStudentAbsenceList(c, studentKey, date = null) {
 
     const isDaily = isDailySession(session);
     const activityName = isDaily
-      ? '一般日常點名 Daily Attendance'
-      : (session.name || '重要集會 Special Session');
+      ? '一般日常點名'
+      : (session.name || '重要集會');
     const timeSlotStr = session.timeSlot ? `（${session.timeSlot}）` : '';
 
     list.push({
@@ -757,18 +758,18 @@ function unassignedList(c) {
   return `
   ${showLoginPrompt && pool.length ? `
     <div class="unassigned-login-tip" style="margin-bottom:0.75rem;padding:0.6rem 0.85rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:0.85rem;color:#1e40af;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
-      <span>💡 未分組學生欲擔任組長開組請點擊登入 / Want to be a leader? Click to log in / Muốn làm trưởng nhóm hãy đăng nhập:</span>
-      <button class="btn btn-primary" data-act="open-leader-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組 Log in（Đăng nhập）</button>
+      <span>💡 未分組學生欲擔任組長開組請點擊登入：<br><small class="vn-sub">Sinh viên chưa có nhóm muốn làm trưởng nhóm vui lòng đăng nhập:</small></span>
+      <button class="btn btn-primary" data-act="open-leader-login" style="padding:0.3rem 0.75rem;font-size:0.82rem;">🎓 登入開組<br><small class="vn-sub">Đăng nhập lập nhóm</small></button>
     </div>
   ` : ''}
   <div class="pick-list">${pool.length
     ? pool.map(s => {
         if (showLoginPrompt) {
-          return `<div class="student student-clickable-login" data-act="quick-student-fill" data-name="${esc(s.name)}" data-id="${esc(s.id)}" title="點擊以此身分登入擔任組長 / Click to log in / Bấm để đăng nhập làm trưởng nhóm" style="cursor:pointer;">${esc(s.name)} (${esc(s.id)}) <span class="login-chip" style="margin-left:auto;font-size:0.72rem;background:#dbeafe;color:#1d4ed8;padding:0.1rem 0.4rem;border-radius:4px;">登入開組 Log in（Đăng nhập） ➔</span></div>`;
+          return `<div class="student student-clickable-login" data-act="quick-student-fill" data-name="${esc(s.name)}" data-id="${esc(s.id)}" title="點擊以此身分登入擔任組長 / Bấm để đăng nhập làm trưởng nhóm" style="cursor:pointer;">${esc(s.name)} (${esc(s.id)}) <span class="login-chip" style="margin-left:auto;font-size:0.72rem;background:#dbeafe;color:#1d4ed8;padding:0.1rem 0.4rem;border-radius:4px;">登入開組 ➔<small class="vn-sub">Đăng nhập lập nhóm</small></span></div>`;
         }
         return `<div class="student">${esc(s.name)} (${esc(s.id)})</div>`;
       }).join('')
-    : '<p class="file-path">全部學生皆已分組 Everyone is assigned（Tất cả sinh viên đã vào nhóm）.</p>'}</div>`;
+    : '<p class="file-path">全部學生皆已分組。<br><small class="vn-sub">Tất cả sinh viên đã vào nhóm.</small></p>'}</div>`;
 }
 
 function publicBoard({ withUnassigned = true } = {}) {
@@ -782,37 +783,33 @@ function publicBoard({ withUnassigned = true } = {}) {
   const isLeader = self && self.isLeader;
   const hideUnassignedForLeader = isLeader && closed && !canEdit;
 
-  // 若為組長登入狀態（或老師切換至組長預覽模式），因為組長已登入挑選，故移除「Step 2」步驟標籤
-  const isLeaderView = isLeader || (state.session && state.session.role === 'teacher' && teacherPreviewMode === 'leader');
-
   return `
   <section class="block-section group-status-section" id="group-status-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        ${!isLeaderView ? '<span class="step-badge">Step 2</span>' : ''}
-        <h2>分組現況 Group Status <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Tình trạng chia nhóm）</small></h2>
+        <h2>分組現況<br><small class="vn-sub" style="font-size:0.85rem;color:#64748b;">Tình trạng chia nhóm</small></h2>
       </div>
       ${(!state.session || (state.session && state.session.role !== 'student')) ? `
         <div class="board-actions">
-          <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="open-leader-login" title="登入後，未分組同學即可開組並挑選尚未分組的組員 / Log in to open a group and pick unassigned members（Đăng nhập để lập nhóm và chọn thành viên chưa vào nhóm）">
-            <span class="btn-icon">🎓</span> 申請擔任組長 Apply for Group Leader（Đăng ký làm trưởng nhóm）
+          <button class="btn btn-primary student-login-btn ${loginMode === 'student' ? 'active' : ''}" data-act="open-leader-login" title="登入後，未分組同學即可開組並挑選尚未分組的組員 / Đăng nhập để lập nhóm và chọn thành viên chưa vào nhóm">
+            <span class="btn-icon">🎓</span> <span>申請擔任組長<br><small class="vn-sub">Đăng ký làm trưởng nhóm</small></span>
           </button>
         </div>` : ''}
     </div>
 
     <!-- 顯眼呈顯目前選取的學年度科目 -->
     <div class="current-course-banner">
-      <div class="banner-badge">目前選擇科目 Current Course（Môn học hiện tại）</div>
+      <div class="banner-badge">目前選擇科目<br><small class="vn-sub">Môn học hiện tại</small></div>
       <div class="banner-content">
         <div class="banner-main">
-          <div class="course-year-tag">${esc(c ? (c.year || '未設學年度') : '尚未選擇學年度 / Chưa chọn năm học')}</div>
-          <div class="course-subject-title">${esc(c ? (c.subject || '（未命名科目）') : '請先於左側課程列表選擇課程 Please select course (Chọn môn học bên trái)')}</div>
+          <div class="course-year-tag">${esc(c ? (c.year || '未設學年度') : '尚未選擇學年度（Chưa chọn năm học）')}</div>
+          <div class="course-subject-title">${esc(c ? (c.subject || '（未命名科目）') : '請先於左側課程列表選擇課程（Chọn môn học bên trái）')}</div>
         </div>
         ${c ? `
           <div class="course-meta-tags">
             <span class="meta-pill">👥 每組 ${c.groupSize || 4} ± ${c.tolerance || 0} 人（門檻 ${minCap(c)} ~ 上限 ${cap(c)} 人 / ${minCap(c)}~${cap(c)} người）</span>
             <span class="meta-pill">📊 學生數 ${c.students.length} 人 · ${c.groups.length} 組（${c.students.length} SV · ${c.groups.length} nhóm）</span>
-            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 分組截止 Deadline: ${esc(formatDeadline(c.deadline))} ${deadlinePassed(c) ? '(已截止 Closed / Đã hết hạn)' : '(進行中 Open / Đang mở)'}</span>` : '<span class="meta-pill" style="opacity:0.85;">⏳ 分組截止 Deadline: 尚未設定 Not set（Chưa thiết lập）</span>'}
+            ${c.deadline ? `<span class="meta-pill ${deadlinePassed(c) ? 'expired' : 'active'}">⏳ 分組截止：${esc(formatDeadline(c.deadline))} ${deadlinePassed(c) ? '（已截止 / Đã hết hạn）' : '（進行中 / Đang mở）'}<small class="vn-sub">Hạn chót chia nhóm</small></span>` : '<span class="meta-pill" style="opacity:0.85;">⏳ 分組截止：尚未設定<small class="vn-sub">Hạn chót chia nhóm: Chưa thiết lập</small></span>'}
           </div>` : ''}
       </div>
     </div>
@@ -820,7 +817,7 @@ function publicBoard({ withUnassigned = true } = {}) {
     <!-- 學生登入區塊嵌入於此 -->
     ${loginMode === 'student' ? loginCard() : ''}
 
-    ${!c ? `<p class="file-path empty-notice">請先於左側「學年度分組清單」中點選欲查看分組的學年度與項目。Please select a course from the left list. (Vui lòng chọn môn học từ danh sách bên trái.)</p>` : ''}
+    ${!c ? `<p class="file-path empty-notice">請先於左側「學年度分組清單」中點選欲查看分組的學年度與項目。<br><small class="vn-sub">Vui lòng chọn môn học từ danh sách bên trái.</small></p>` : ''}
 
     ${c ? (c.groups.length ? `<div class="group-grid">${c.groups.map(g => {
       const list = members(c, g.id);
@@ -836,36 +833,36 @@ function publicBoard({ withUnassigned = true } = {}) {
       let evalStatusTag = '';
       const maxB = Number(c && c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
       if (!lead) {
-        evalStatusTag = `<span class="tag-status no-leader">無組長 No Leader (Trưởng nhóm: -10)</span>`;
+        evalStatusTag = `<span class="tag-status no-leader">無組長<small class="vn-sub">Chưa có trưởng nhóm (-10)</small></span>`;
       } else if (isSubmitted) {
-        evalStatusTag = `<span class="tag-status submitted">✅ 組長已完成加分評定 Evaluated (Trưởng nhóm +${maxB})</span>`;
+        evalStatusTag = `<span class="tag-status submitted">✅ 組長已完成加分評定<small class="vn-sub">Trưởng nhóm đã đánh giá (+${maxB})</small></span>`;
       } else if (isOverdue) {
-        evalStatusTag = `<span class="tag-status overdue">⚠️ 評分逾時 Overdue (Quá hạn)</span>`;
+        evalStatusTag = `<span class="tag-status overdue">⚠️ 評分逾時<small class="vn-sub">Quá hạn đánh giá</small></span>`;
       } else if (isEvalOpen) {
-        evalStatusTag = `<span class="tag-status open">📝 評分開放中 Evaluation Open (Đang mở đánh giá)${g.peerEvalDeadline ? ` (${esc(g.peerEvalDeadline.replace('T', ' '))}截止)` : ''}</span>`;
+        evalStatusTag = `<span class="tag-status open">📝 評分開放中${g.peerEvalDeadline ? `（${esc(g.peerEvalDeadline.replace('T', ' '))}截止）` : ''}<small class="vn-sub">Đang mở đánh giá</small></span>`;
       }
 
       return `<div class="group-card ${self && self.groupId === g.id ? 'mine' : ''} ${isGroupEditActive ? 'reopened' : ''}">
         <div class="group-card-top-tags">
-          ${autoCount ? `<span class="tag">自動 Auto（Tự động） ${autoCount}</span>` : ''}
+          ${autoCount ? `<span class="tag">自動 ${autoCount}<small class="vn-sub">Tự động</small></span>` : ''}
           ${evalStatusTag}
         </div>
-        <h3>${esc(g.name)} <small>${list.length}/${cap(c)} 人（người）${full ? ' · 已滿 Full（Đã đủ）' : ''}</small></h3>
-        <p class="file-path">組長 Leader（Trưởng nhóm）: ${lead ? esc(lead.name) : '尚未產生 None（Chưa có）'}</p>
+        <h3>${esc(g.name)} <small>${list.length}/${cap(c)} 人${full ? ' · 已滿' : ''}<small class="vn-sub">${list.length}/${cap(c)} người${full ? ' · Đã đủ' : ''}</small></small></h3>
+        <p class="file-path">組長：${lead ? esc(lead.name) : '尚未產生'}<small class="vn-sub">Trưởng nhóm: ${lead ? esc(lead.name) : 'Chưa có'}</small></p>
         ${g.allowEdit ? `
           <div class="group-badge-reopened">
-            ${isGroupEditActive ? '🔓 老師已重新開放本組挑選 Re-opened（Đã mở lại quyền chọn thành viên）' : '⏳ 重新開放挑選已逾時截止 Expired（Đã hết hạn）'}
-            ${g.editDeadline ? `<span style="font-size:0.75rem;opacity:0.9;">（截止 Hạn chót：${esc(g.editDeadline.replace('T', ' '))}）</span>` : ''}
+            ${isGroupEditActive ? '🔓 老師已重新開放本組挑選<small class="vn-sub">Đã mở lại quyền chọn thành viên</small>' : '⏳ 重新開放挑選已逾時截止<small class="vn-sub">Đã hết hạn</small>'}
+            ${g.editDeadline ? `<span style="font-size:0.75rem;opacity:0.9;">（截止：${esc(g.editDeadline.replace('T', ' '))} / Hạn chót）</span>` : ''}
           </div>` : ''}
         <div class="students">${list.length ? list.map(s => {
           const adj = calcAdjustment(c, g, s);
           return `<div class="student ${s.isLeader ? 'leader' : ''} ${s.isVice ? 'vice-leader' : ''}">
             <span class="student-info-col">
-              ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — ⭐組長 Leader（Trưởng nhóm）' : s.isVice ? ' — 🛡️副組長 Vice（Phó nhóm）' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動 Auto（Tự động）</span>' : ''}
+              ${esc(s.name)} (${esc(s.id)})${s.isLeader ? ' — ⭐組長<small class="vn-sub">Trưởng nhóm</small>' : s.isVice ? ' — 🛡️副組長<small class="vn-sub">Phó nhóm</small>' : ''}${s.autoAssigned ? ' <span class="tag-inline auto">自動<small class="vn-sub">Tự động</small></span>' : ''}
             </span>
             ${isTeacher ? scoreBadge(adj) : ''}
           </div>`;
-        }).join('') : '<div class="student">（尚無成員 Empty / Chưa có thành viên）</div>'}</div>
+        }).join('') : '<div class="student">（尚無成員）<small class="vn-sub">Chưa có thành viên</small></div>'}</div>
         ${isTeacher ? `
           <div class="group-teacher-ctrls">
             <button class="tab-btn ${g.allowEdit ? 'on' : ''}" data-act="toggle-group-edit" data-id="${g.id}" data-allow="${g.allowEdit ? '0' : '1'}">
@@ -874,14 +871,14 @@ function publicBoard({ withUnassigned = true } = {}) {
             ${g.allowEdit && g.editDeadline ? `<span style="font-size:0.75rem;color:#d97706;margin-top:0.25rem;display:block;">截止: ${esc(g.editDeadline.replace('T', ' '))}</span>` : ''}
           </div>` : ''}
       </div>`;
-    }).join('')}</div>` : '<p class="file-path empty-notice">老師尚未建立組別，或由學生自行擔任組長開組。No groups yet. (Chưa có nhóm nào, sinh viên có thể tự lập nhóm làm trưởng nhóm.)</p>') : ''}
+    }).join('')}</div>` : '<p class="file-path empty-notice">老師尚未建立組別，或由學生自行擔任組長開組。<br><small class="vn-sub">Chưa có nhóm nào, sinh viên có thể tự lập nhóm làm trưởng nhóm.</small></p>') : ''}
   </section>
 
   ${withUnassigned && c && !hideUnassignedForLeader ? `
   <section class="block-section unassigned-section" id="unassigned-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <h2>未分組名單 Unassigned Students <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Chưa vào nhóm）</small> <span class="badge-count">${pool.length}</span></h2>
+        <h2>未分組名單 <span class="badge-count">${pool.length}</span><br><small class="vn-sub" style="font-size:0.85rem;color:#64748b;">Danh sách chưa vào nhóm</small></h2>
       </div>
     </div>
     <div class="unassigned-body">
@@ -891,6 +888,13 @@ function publicBoard({ withUnassigned = true } = {}) {
 }
 
 /* ===== [Block A] 頁首頂端導覽區：登入、登出、密碼修改與全域狀態 ===== */
+/* ---- 各子系統共用返回按鈕：位置（頂部橫條最左、頁尾置中）、配色與大小一致 ---- */
+function subsystemBackBtn(kind = 'home') {
+  return kind === 'history'
+    ? '<button class="btn btn-back" type="button" data-act="history-back">↩️ 回到上一頁<small class="vn-sub">Quay lại trang trước</small></button>'
+    : '<button class="btn btn-back" type="button" data-act="nav-public-subview" data-view="dashboard">⬅️ 返回首頁<small class="vn-sub">Quay lại trang chủ</small></button>';
+}
+
 /* ---- 獨立頁面：修改個人密碼（取代原本的彈出對話框，可用「回到上一頁」返回進入前的畫面） ---- */
 function renderPasswordChangePage() {
   const s = me();
@@ -902,9 +906,7 @@ function renderPasswordChangePage() {
     </div>
 
     <div class="subsystem-header-bar">
-      <button class="btn btn-secondary btn-sm" type="button" data-act="history-back">
-        ↩️ 回到上一頁<br><small class="vn-sub">Quay lại trang trước</small>
-      </button>
+      ${subsystemBackBtn('history')}
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">🔑</span>
         <div>
@@ -946,6 +948,8 @@ function renderPasswordChangePage() {
         </form>
       </div>
     `}
+
+    <div class="subsystem-footer">${subsystemBackBtn('history')}</div>
   </div>`;
 }
 
@@ -1031,14 +1035,24 @@ function nav() {
   </nav>`;
 }
 
-function loginCard() {
+/* context：'groups'（分組子系統：申請擔任組長）| 'attendance'（點名系統：組長／副組長點名）——說明文字只聚焦該子系統功能 */
+function loginCard(context = 'groups') {
   if (loginMode === 'student') {
     const c = cur();
+    const isAttendance = context === 'attendance';
+    const title = isAttendance
+      ? '🎓 組長／副組長點名登入<br><small class="vn-sub">Đăng nhập điểm danh (Nhóm trưởng / Nhóm phó)</small>'
+      : '🎓 申請擔任組長登入<br><small class="vn-sub">Đăng nhập đăng ký làm trưởng nhóm</small>';
+    const tips = isAttendance ? `
+        • 擔任組長或副組長者，登入後即可進行今日組員點名。<br><small class="vn-sub">Nhóm trưởng hoặc nhóm phó sau khi đăng nhập có thể điểm danh thành viên hôm nay.</small>
+        • 預設密碼為學號；若忘記密碼請洽老師協助重設。<br><small class="vn-sub">Mật khẩu mặc định là mã SV; nếu quên mật khẩu vui lòng liên hệ giáo viên.</small>` : `
+        • 尚未分組的同學登入後即可開組擔任組長，並從未分組名單挑選組員。<br><small class="vn-sub">Sinh viên chưa có nhóm sau khi đăng nhập có thể lập nhóm làm trưởng nhóm và chọn thành viên từ danh sách chưa chia nhóm.</small>
+        • 組長或副組長登入後可挑選、釋出組員，組長並可設定副組長。<br><small class="vn-sub">Nhóm trưởng hoặc nhóm phó có thể thêm, loại thành viên; nhóm trưởng có thể đặt nhóm phó.</small>
+        • 預設密碼為學號；若忘記密碼請洽老師協助重設。<br><small class="vn-sub">Mật khẩu mặc định là mã SV; nếu quên mật khẩu vui lòng liên hệ giáo viên.</small>`;
     return `<div class="login-bar embedded" id="login">
       <div class="login-header">
         <div>
-          <strong>🎓 學生登入</strong>
-          <br><small class="vn-sub">Đăng nhập sinh viên（可填寫問卷、組長/副組長點名與挑選組員）</small>
+          <strong>${title}</strong>
         </div>
         <button class="tab-btn close" type="button" data-act="close-login" title="關閉">✕</button>
       </div>
@@ -1056,11 +1070,8 @@ function loginCard() {
         </button>
       </form>
       <p class="file-path">
-        目前選取科目：<b>${esc(c ? courseLabel(c) : '請先於左側選擇科目')}</b>。<br>
-        • 全體修課學生皆可登入填寫生活關懷問卷。<br>
-        • 擔任組長或副組長者，可登入進行今日組員點名，以及挑選未分配組員或釋出組員。<br>
-        • 登入後可於上方第 1 區塊點選<b>「🔑 密碼修改」</b>自訂新密碼。若忘記密碼請洽老師協助重設。<br>
-        <small class="vn-sub">(Tất cả sinh viên có thể đăng nhập điền phiếu. Nhóm trưởng/nhóm phó có thể điểm danh và chọn thành viên. Có thể đổi mật khẩu ở góc trên.)</small>
+        目前選取科目：<b>${esc(c ? courseLabel(c) : '請先於左側選擇科目')}</b><br><small class="vn-sub">Môn học đang chọn</small>
+        ${tips}
       </p>
     </div>`;
   }
@@ -1088,9 +1099,9 @@ function loginCard() {
 }
 
 /* ---- 共用元件：組員缺席排行榜卡片（支援全班或組內、前台或後台，點選數字開明細） ---- */
-function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subTitle = 'Absence leaderboard', filterMates = null, scopeAct = 'public-attendance-stat-scope', currentScope = 'all', limit = 15, isPublicFlow = false } = {}) {
+function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subTitle = 'Bảng xếp hạng vắng mặt', filterMates = null, scopeAct = 'public-attendance-stat-scope', currentScope = 'all', limit = 15, isPublicFlow = false } = {}) {
   if (!c) return '';
-  const filterIds = filterMates ? filterMates.map(m => m.id || m.ref) : null;
+  const filterIds = filterMates ? filterMates.map(m => m.ref || m.id) : null;
   const counts = attendanceAbsentCounts(c, currentScope === 'date' ? (attendanceStatDate || todayDateStr()) : null, filterIds);
 
   const listSource = filterMates || c.students;
@@ -1133,7 +1144,7 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
       </div>
       <div style="display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;">
         <button class="pagination-btn" data-act="set-public-leaderboard-page" data-page="${publicAttendanceLeaderboardPage - 1}" ${publicAttendanceLeaderboardPage <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
-          ◀ 上一頁
+          ◀ 上一頁 / Trang trước
         </button>
         ${Array.from({ length: totalPages }, (_, idx) => idx + 1).map(p => `
           <button class="pagination-page-btn ${p === publicAttendanceLeaderboardPage ? 'active' : ''}" data-act="set-public-leaderboard-page" data-page="${p}" style="${p === publicAttendanceLeaderboardPage ? 'font-weight:750;background:#3b82f6;color:#fff;border-color:#3b82f6;' : ''}">
@@ -1141,7 +1152,7 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
           </button>
         `).join('')}
         <button class="pagination-btn" data-act="set-public-leaderboard-page" data-page="${publicAttendanceLeaderboardPage + 1}" ${publicAttendanceLeaderboardPage >= totalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
-          下一頁 ▶
+          下一頁 / Trang sau ▶
         </button>
       </div>
     </div>` : '';
@@ -1151,12 +1162,12 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
     <div class="absence-leaderboard-header">
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <span style="font-size:1.15rem;">🏆</span>
-        <strong style="color:#991b1b;font-size:1.02rem;">${esc(title)} <small style="font-weight:normal;color:#64748b;font-size:0.82rem;">${esc(subTitle)}</small></strong>
+        <strong style="color:#991b1b;font-size:1.02rem;">${esc(title)}<small class="vn-sub" style="color:#64748b;">${esc(subTitle)}</small></strong>
       </div>
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <select data-act="${esc(scopeAct)}" style="font-size:0.8rem;padding:0.25rem 0.45rem;border-radius:6px;border:1px solid #cbd5e1;">
-          <option value="all" ${currentScope === 'all' ? 'selected' : ''}>整個學期 Whole semester</option>
-          <option value="date" ${currentScope === 'date' ? 'selected' : ''}>依日期（${esc(dateStr)}）</option>
+          <option value="all" ${currentScope === 'all' ? 'selected' : ''}>整個學期（Cả học kỳ）</option>
+          <option value="date" ${currentScope === 'date' ? 'selected' : ''}>依日期（${esc(dateStr)} / Theo ngày）</option>
         </select>
       </div>
     </div>
@@ -1165,11 +1176,11 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
       <table class="roster" style="background:#fff;margin:0;font-size:0.86rem;">
         <thead>
           <tr>
-            <th style="width:48px;">排名</th>
-            <th>學號 ID</th>
-            <th>姓名 Name</th>
-            <th>組別 Group</th>
-            <th style="text-align:center;width:95px;">缺席次數</th>
+            <th style="width:48px;">排名<br><small class="vn-sub">Hạng</small></th>
+            <th>學號<br><small class="vn-sub">Mã SV</small></th>
+            <th>姓名<br><small class="vn-sub">Họ tên</small></th>
+            <th>組別<br><small class="vn-sub">Nhóm</small></th>
+            <th style="text-align:center;width:95px;">缺席次數<br><small class="vn-sub">Số lần vắng</small></th>
           </tr>
         </thead>
         <tbody>
@@ -1182,7 +1193,7 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
               <td><b>${esc(l.name)}</b></td>
               <td><span class="group-name-tag" style="font-size:0.75rem;">${esc(l.groupName)}</span></td>
               <td style="text-align:center;">
-                <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.key)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細 / Click to view absent dates & activities">
+                <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(l.key)}" data-name="${esc(l.name)}" data-id="${esc(l.id)}" title="點選查看缺席日期與對應活動明細 / Xem chi tiết ngày vắng mặt">
                   ⚠️ ${l.count} 次
                 </button>
               </td>
@@ -1192,7 +1203,7 @@ function renderAbsenceLeaderboardCard(c, { title = '組員缺席排行榜', subT
       </table>
     </div>
     ${paginationHtml}
-    ` : '<p class="file-path" style="margin:0.25rem 0 0;font-size:0.84rem;color:#166534;">✅ 統計範圍內目前無任何組員缺席紀錄 No absence records found.</p>'}
+    ` : '<p class="file-path" style="margin:0.25rem 0 0;font-size:0.84rem;color:#166534;">✅ 統計範圍內目前無任何組員缺席紀錄。<br><small class="vn-sub">Không có ghi nhận vắng mặt.</small></p>'}
   </div>`;
 }
 
@@ -1214,7 +1225,7 @@ function noticeBlock(c) {
       <div class="bulletin-bar-header">
         <div style="display:flex;align-items:center;gap:0.4rem;">
           <span class="bulletin-bell-icon">📢</span>
-          <strong>重要公告與評分規定 Notice <small style="font-weight:normal;color:#64748b;">（Quy định chia nhóm &amp; đánh giá）</small></strong>
+          <strong>重要公告與評分規定<small class="vn-sub" style="color:#64748b;">Thông báo quan trọng &amp; quy định đánh giá</small></strong>
         </div>
         ${timeStr ? `<span class="bulletin-time-pill">🕒 ${timeStr}</span>` : ''}
       </div>
@@ -1355,8 +1366,8 @@ function renderSubsystemLauncherCards(c) {
         <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.35rem;">
           <span style="font-size:1.35rem;">👥</span>
           <div>
-            <strong style="font-size:1.05rem;color:#1e3a8a;">學生分組系統</strong>
-            <br><small class="vn-sub">Hệ thống chia nhóm</small>
+            <strong style="font-size:1.05rem;color:#1e3a8a;">分組子系統</strong>
+            <br><small class="vn-sub">Hệ thống con chia nhóm</small>
           </div>
         </div>
         <div style="font-size:0.86rem;color:#334155;margin-bottom:0.75rem;line-height:1.5;">
@@ -1366,7 +1377,7 @@ function renderSubsystemLauncherCards(c) {
         </div>
       </div>
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="groups" style="justify-content:center;font-weight:600;">
-        進入分組現況與說明 ➔<br><small class="vn-sub">Xem tình trạng chia nhóm</small>
+        進入分組子系統 ➔<br><small class="vn-sub">Vào hệ thống con chia nhóm</small>
       </button>
     </div>
 
@@ -1387,7 +1398,7 @@ function renderSubsystemLauncherCards(c) {
         </div>
       </div>
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="attendance" style="justify-content:center;font-weight:600;background:#ffedd5;color:#9a3412;border-color:#fdba74;">
-        進入點名系統 ➔<br><small class="vn-sub">Đến hệ thống điểm danh</small>
+        進入點名系統 ➔<br><small class="vn-sub">Vào hệ thống điểm danh</small>
       </button>
     </div>
 
@@ -1397,8 +1408,8 @@ function renderSubsystemLauncherCards(c) {
         <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.35rem;">
           <span style="font-size:1.35rem;">💌</span>
           <div>
-            <strong style="font-size:1.05rem;color:#0f766e;">生活關懷問卷系統</strong>
-            <br><small class="vn-sub">Hệ thống khảo sát</small>
+            <strong style="font-size:1.05rem;color:#0f766e;">問卷子系統</strong>
+            <br><small class="vn-sub">Hệ thống con khảo sát</small>
           </div>
         </div>
         <div style="font-size:0.86rem;color:#134e4a;margin-bottom:0.75rem;line-height:1.5;">
@@ -1408,7 +1419,7 @@ function renderSubsystemLauncherCards(c) {
         </div>
       </div>
       <button class="btn btn-primary btn-sm" data-act="nav-public-subview" data-view="survey" style="justify-content:center;font-weight:600;">
-        ✍️ 前往問卷線上填寫 ➔<br><small class="vn-sub">Điền khảo sát trực tuyến</small>
+        進入問卷子系統 ➔<br><small class="vn-sub">Vào hệ thống con khảo sát</small>
       </button>
     </div>
   </div>`;
@@ -1416,11 +1427,14 @@ function renderSubsystemLauncherCards(c) {
 
 /* ---- 預設中央主要顯示區域：首頁 ---- */
 function renderPublicDashboard(c) {
+  // 組長／副組長登入後只可看到自己小組的缺席排行榜，不得出現其他組成員
+  const s = me();
+  const myGroup = (s && (s.isLeader || s.isVice) && s.groupId) ? c.groups.find(x => x.id === s.groupId) : null;
   return `
   <div class="public-dashboard-content">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（首頁）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Bảng tổng quan)</small></span>
+      <span class="block-tag-name">主要內容顯示區（首頁）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Trang chủ)</small></span>
     </div>
 
     <!-- 三大子系統入口捷徑卡片 -->
@@ -1428,7 +1442,15 @@ function renderPublicDashboard(c) {
 
     <!-- 中央核心即時監控：組員缺席排行榜 ＆ 未完成問卷名單 -->
     <div class="dashboard-monitoring-grid">
-      ${renderAbsenceLeaderboardCard(c, {
+      ${renderAbsenceLeaderboardCard(c, myGroup ? {
+        title: `${myGroup.name} 組員缺席排行榜`,
+        subTitle: 'Bảng xếp hạng vắng mặt của nhóm',
+        filterMates: members(c, myGroup.id),
+        scopeAct: 'public-attendance-stat-scope',
+        currentScope: publicAttendanceStatScope,
+        limit: 15,
+        isPublicFlow: true
+      } : {
         title: '組員缺席排行榜',
         subTitle: 'Bảng xếp hạng vắng mặt',
         scopeAct: 'public-attendance-stat-scope',
@@ -1453,33 +1475,33 @@ function renderStudentPeerEvalPanel(c, g, s, mates) {
   return `
   <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;">
     <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
-      <h3 style="margin:0;color:#166534;">📝 期末組員貢獻度評分 Peer Evaluation（Đánh giá đóng góp cuối kỳ）</h3>
+      <h3 style="margin:0;color:#166534;">📝 期末組員貢獻度評分<br><small class="vn-sub">Đánh giá đóng góp cuối kỳ</small></h3>
       ${isSubmitted
-        ? '<span class="status-badge meets-threshold">✅ 您已完成評分提交 Submitted（Đã nộp）</span>'
+        ? '<span class="status-badge meets-threshold">✅ 您已完成評分提交<small class="vn-sub">Đã nộp</small></span>'
         : isOverdue
-        ? '<span class="status-badge under-threshold">⚠️ 已超過評分截止時間 (逾時懲罰生效) Overdue（Đã quá hạn）</span>'
+        ? '<span class="status-badge under-threshold">⚠️ 已超過評分截止時間（逾時懲罰生效）<small class="vn-sub">Đã quá hạn</small></span>'
         : isEvalOpen
-        ? '<span class="status-badge can-edit">開放評分中 Open（Đang mở）</span>'
-        : '<span class="status-badge is-locked">老師尚未開放評分 Not open（Chưa mở）</span>'}
+        ? '<span class="status-badge can-edit">開放評分中<small class="vn-sub">Đang mở</small></span>'
+        : '<span class="status-badge is-locked">老師尚未開放評分<small class="vn-sub">Chưa mở</small></span>'}
     </div>
 
     <div style="margin:0.75rem 0;font-size:0.88rem;color:#14532d;line-height:1.6;">
-      <p style="margin:0 0 0.4rem 0;"><b>說明 Guide（Hướng dẫn）：</b>在老師開放評分期間，組長可依據組員之貢獻與配合程度給予<b>加分 (0 ~ ${maxB} 分)</b>。<br><small style="color:#166534;">(During evaluation period, group leader can award bonus points (0~${maxB}) to members based on contribution. / Trong thời gian mở đánh giá, nhóm trưởng cho điểm cộng từ 0 ~ ${maxB} điểm dựa trên đóng góp.)</small></p>
-      <p style="margin:0;color:#166534;font-weight:600;"><b>🎁 組長獎勵 Leader Bonus（Thưởng nhóm trưởng）：</b>組長在老師開放評分權限時進行評分，<b>組長自己可獲得 ${maxB} 分的加分</b>！<br><small style="color:#15803d;">(Leader gets +${maxB} bonus points immediately after submitting evaluation! / Nhóm trưởng nộp đánh giá sẽ được cộng ngay +${maxB} điểm cuối kỳ!)</small></p>
-      ${g.peerEvalDeadline ? `<p style="margin:0.4rem 0 0 0;font-weight:600;">⏳ 本組評分截止時間 Evaluation Deadline（Hạn chót đánh giá）：${esc(g.peerEvalDeadline.replace('T', ' '))}</p>` : ''}
+      <p style="margin:0 0 0.4rem 0;"><b>說明：</b>在老師開放評分期間，組長可依據組員之貢獻與配合程度給予<b>加分 (0 ~ ${maxB} 分)</b>。<br><small class="vn-sub">Trong thời gian mở đánh giá, nhóm trưởng cho điểm cộng từ 0 ~ ${maxB} điểm dựa trên đóng góp.</small></p>
+      <p style="margin:0;color:#166534;font-weight:600;"><b>🎁 組長獎勵：</b>組長在老師開放評分權限時進行評分，<b>組長自己可獲得 ${maxB} 分的加分</b>！<br><small class="vn-sub">Thưởng nhóm trưởng: nộp đánh giá sẽ được cộng ngay +${maxB} điểm cuối kỳ!</small></p>
+      ${g.peerEvalDeadline ? `<p style="margin:0.4rem 0 0 0;font-weight:600;">⏳ 本組評分截止時間：${esc(g.peerEvalDeadline.replace('T', ' '))}<br><small class="vn-sub">Hạn chót đánh giá</small></p>` : ''}
     </div>
 
     ${!isEvalOpen ? `
       <div style="padding:0.75rem;background:#fff;border-radius:6px;border:1px dashed #86efac;color:#4b5563;font-size:0.88rem;">
-        授課老師尚未開放本組評分權限。待老師開放並公告評分截止時間後，您可在此進行評分。<br><small style="color:#64748b;">(Teacher has not opened peer evaluation yet. / Giáo viên chưa mở quyền đánh giá cho nhóm này.)</small>
+        授課老師尚未開放本組評分權限。待老師開放並公告評分截止時間後，您可在此進行評分。<br><small class="vn-sub">Giáo viên chưa mở quyền đánh giá cho nhóm này.</small>
       </div>` : isOverdue ? `
       <div style="padding:0.75rem;background:#fef2f2;border-radius:6px;border:1px solid #fecaca;color:#991b1b;font-size:0.88rem;">
-        已超過老師規定的評分截止時間，組長評分權限已關閉。因未在時限內進行評分，組長無法獲得 ${maxB} 分加分，組員亦無法獲得加分。<br><small style="color:#991b1b;">(Evaluation deadline passed. / Đã quá hạn đánh giá, quyền đánh giá của nhóm trưởng đã bị đóng.)</small>
+        已超過老師規定的評分截止時間，組長評分權限已關閉。因未在時限內進行評分，組長無法獲得 ${maxB} 分加分，組員亦無法獲得加分。<br><small class="vn-sub">Đã quá hạn đánh giá, quyền đánh giá của nhóm trưởng đã bị đóng.</small>
       </div>` : !otherMembers.length ? `
       <div style="padding:0.75rem;background:#fff;border-radius:6px;border:1px dashed #86efac;color:#4b5563;font-size:0.88rem;">
-        目前組內尚無其他成員。您可直接送出評分以獲得組長專屬的 ${maxB} 分加分（Không có thành viên khác, bấm để nhận điểm cộng nhóm trưởng）：
+        目前組內尚無其他成員。您可直接送出評分以獲得組長專屬的 ${maxB} 分加分：<br><small class="vn-sub">Không có thành viên khác, bấm để nhận điểm cộng nhóm trưởng:</small>
         <form data-act="submit-peer-eval" style="margin-top:0.6rem;">
-          <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.2rem;">確認並領取組長 ${maxB} 分加分 Confirm &amp; Claim (${maxB} pts / Nhận ${maxB} điểm)</button>
+          <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.2rem;">確認並領取組長 ${maxB} 分加分<br><small class="vn-sub">Nhận ${maxB} điểm cộng</small></button>
         </form>
       </div>` : `
       <form data-act="submit-peer-eval" style="margin-top:1rem;">
@@ -1487,10 +1509,10 @@ function renderStudentPeerEvalPanel(c, g, s, mates) {
           <table class="roster" style="background:#fff;">
             <thead>
               <tr>
-                <th>組員姓名 (學號) Name &amp; ID（Họ tên &amp; Mã SV）</th>
-                <th>角色 Role（Vai trò）</th>
-                <th>期末考加分 (0 ~ ${maxB} 分) Bonus（Điểm cộng）</th>
-                <th>加分原因 / 貢獻說明 (選填) Note（Ghi chú đóng góp, có thể để trống）</th>
+                <th>組員姓名（學號）<br><small class="vn-sub">Họ tên &amp; Mã SV</small></th>
+                <th>角色<br><small class="vn-sub">Vai trò</small></th>
+                <th>期末考加分（0 ~ ${maxB} 分）<br><small class="vn-sub">Điểm cộng</small></th>
+                <th>加分原因／貢獻說明（選填）<br><small class="vn-sub">Ghi chú đóng góp, có thể để trống</small></th>
               </tr>
             </thead>
             <tbody>
@@ -1498,19 +1520,19 @@ function renderStudentPeerEvalPanel(c, g, s, mates) {
                 let options = `<option value="0" ${m.peerPenalty === 0 ? 'selected' : ''}>+0 分（無額外加分 / Không cộng thêm）</option>`;
                 for (let i = 1; i <= maxB; i++) {
                   const extra = (i === maxB) ? '（表現優異 上限 / Xuất sắc）' : '';
-                  options += `<option value="${i}" ${m.peerPenalty === i ? 'selected' : ''}>+${i} 分 Bonus（Điểm cộng）${extra}</option>`;
+                  options += `<option value="${i}" ${m.peerPenalty === i ? 'selected' : ''}>+${i} 分（+${i} điểm）${extra}</option>`;
                 }
                 return `
                 <tr>
                   <td><b>${esc(m.name)}</b> (${esc(m.id)})</td>
-                  <td>${m.isVice ? '<span class="tag-inline">副組長（Phó nhóm）</span>' : '組員（Thành viên）'}</td>
+                  <td>${m.isVice ? '<span class="tag-inline">副組長<small class="vn-sub">Phó nhóm</small></span>' : '組員<small class="vn-sub">Thành viên</small>'}</td>
                   <td>
                     <select name="penalty_${esc(keyOf(m))}" style="padding:0.35rem 0.5rem;font-size:0.9rem;border:1.5px solid #cbd5e1;border-radius:4px;" ${isSubmitted ? 'disabled' : ''}>
                       ${options}
                     </select>
                   </td>
                   <td>
-                    <input type="text" name="comment_${esc(keyOf(m))}" value="${esc(m.peerComment || '')}" placeholder="若有加分可填寫貢獻事蹟 / Mention contributions" style="width:100%;max-width:260px;padding:0.35rem 0.5rem;font-size:0.85rem;" ${isSubmitted ? 'disabled' : ''}>
+                    <input type="text" name="comment_${esc(keyOf(m))}" value="${esc(m.peerComment || '')}" placeholder="若有加分可填寫貢獻事蹟 / Ghi chú đóng góp" style="width:100%;max-width:260px;padding:0.35rem 0.5rem;font-size:0.85rem;" ${isSubmitted ? 'disabled' : ''}>
                   </td>
                 </tr>`;
               }).join('')}
@@ -1519,11 +1541,11 @@ function renderStudentPeerEvalPanel(c, g, s, mates) {
         </div>
         <div style="margin-top:0.85rem;display:flex;align-items:center;gap:0.75rem;">
           ${isSubmitted ? `
-            <span style="color:#166534;font-weight:600;font-size:0.9rem;">✅ 評分已送出完成（您已獲得組長 ${maxB} 分加分）。如需調整請直接修改並重新送出：</span>
-            <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.1rem;font-size:0.9rem;">🔄 重新更新評分 Update Evaluation</button>
+            <span style="color:#166534;font-weight:600;font-size:0.9rem;">✅ 評分已送出完成（您已獲得組長 ${maxB} 分加分）。如需調整請直接修改並重新送出：<br><small class="vn-sub">Đã nộp đánh giá (đã nhận ${maxB} điểm). Có thể sửa và nộp lại:</small></span>
+            <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.1rem;font-size:0.9rem;">🔄 重新更新評分<br><small class="vn-sub">Cập nhật đánh giá</small></button>
           ` : `
-            <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.95rem;">📤 送出評分（組長即獲 +${maxB} 分）Submit Evaluation</button>
-            <span style="font-size:0.82rem;color:#64748b;">提交後組長自身立即獲得 ${maxB} 分加分，截止前仍可重複調整。</span>
+            <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.95rem;">📤 送出評分（組長即獲 +${maxB} 分）<br><small class="vn-sub">Nộp đánh giá (nhóm trưởng +${maxB} điểm)</small></button>
+            <span style="font-size:0.82rem;color:#64748b;">提交後組長自身立即獲得 ${maxB} 分加分，截止前仍可重複調整。<br><small class="vn-sub">Sau khi nộp nhóm trưởng được cộng ${maxB} điểm, trước hạn chót vẫn có thể điều chỉnh.</small></span>
           `}
         </div>
       </form>`}
@@ -1573,7 +1595,7 @@ function renderPublicGroupsSection(c) {
       <!-- 已挑選成員面板 -->
       <div class="selected-members-panel">
         <div class="panel-header">
-          <h3 style="margin:0">本組已挑選成員<br><small class="vn-sub">Thành viên đã chọn trong nhóm（下限 ${min} 人，上限 ${max} 人，目前 ${mates.length} 人 / Tối thiểu ${min}, Tối đa ${max}, Hiện có ${mates.length}）</small></h3>
+          <h3 style="margin:0">本組已挑選成員（下限 ${min} 人，上限 ${max} 人，目前 ${mates.length} 人）<br><small class="vn-sub">Thành viên đã chọn trong nhóm (Tối thiểu ${min}, Tối đa ${max}, Hiện có ${mates.length})</small></h3>
           <div class="header-badges">
             ${isBelowMin
               ? `<span class="status-badge under-threshold">⚠️ 低於下限（缺 ${needed} 人）<br><small class="vn-sub">Dưới mức tối thiểu (Thiếu ${needed} người)</small></span>`
@@ -1615,7 +1637,7 @@ function renderPublicGroupsSection(c) {
       ${canEdit ? `
         <div class="pick-members-panel" style="margin-top:1.25rem">
           <div class="panel-header">
-            <h3 style="margin:0">挑選組員<br><small class="vn-sub">Chọn thành viên（從未分配名單新增 / Thêm từ danh sách chưa chia nhóm）</small></h3>
+            <h3 style="margin:0">挑選組員（從未分配名單新增）<br><small class="vn-sub">Chọn thành viên (Thêm từ danh sách chưa chia nhóm)</small></h3>
             ${!canPick ? `<span class="badge-full" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">已達上限無法再新增<br><small class="vn-sub">Đã đủ số lượng tối đa</small></span>` : ''}
           </div>
           <div class="pick-list" style="margin-top:0.75rem">${unassigned(c).length ? unassigned(c).map(p => `
@@ -1634,18 +1656,16 @@ function renderPublicGroupsSection(c) {
   <div class="groups-subsystem-page">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（學生分組系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống chia nhóm)</small></span>
+      <span class="block-tag-name">主要內容顯示區（分組子系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống con chia nhóm)</small></span>
     </div>
 
     <div class="subsystem-header-bar">
-      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
+      ${subsystemBackBtn()}
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">👥</span>
         <div>
-          <strong>學生分組系統</strong>
-          <br><small class="vn-sub">Hệ thống chia nhóm</small>
+          <strong>分組子系統</strong>
+          <br><small class="vn-sub">Hệ thống con chia nhóm</small>
         </div>
       </div>
       ${s ? `
@@ -1665,11 +1685,7 @@ function renderPublicGroupsSection(c) {
     <!-- 分組現況與未分組名單 -->
     ${publicBoard()}
 
-    <div style="margin-top:1.5rem;text-align:center;">
-      <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
-    </div>
+    <div class="subsystem-footer">${subsystemBackBtn()}</div>
   </div>`;
 }
 
@@ -1688,9 +1704,7 @@ function renderPublicAttendanceSection(c) {
     </div>
 
     <div class="subsystem-header-bar">
-      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
+      ${subsystemBackBtn()}
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">📋</span>
         <div>
@@ -1715,7 +1729,7 @@ function renderPublicAttendanceSection(c) {
       <div style="background:#ffffff;border:1px solid #cbd5e1;border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
           <h3 style="margin:0;font-size:1.1rem;color:#1e3a8a;display:flex;align-items:center;gap:0.4rem;">
-            <span>📅</span> 今日點名現況<br><small class="vn-sub">Tình trạng điểm danh hôm nay</small>
+            <span>📅</span> <span>今日點名現況<small class="vn-sub">Tình trạng điểm danh hôm nay</small></span>
           </h3>
           <span class="status-badge" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;">
             日期：${todayDateStr()}<br><small class="vn-sub">Ngày</small>
@@ -1735,7 +1749,7 @@ function renderPublicAttendanceSection(c) {
               🎓 組長/副組長點名登入<br><small class="vn-sub">Đăng nhập điểm danh</small>
             </button>
           </div>
-          ${loginMode === 'student' ? loginCard() : ''}
+          ${loginMode === 'student' ? loginCard('attendance') : ''}
         ` : ''}
       </div>
     `}
@@ -1750,11 +1764,7 @@ function renderPublicAttendanceSection(c) {
       isPublicFlow: true
     })}
 
-    <div style="margin-top:1.5rem;text-align:center;">
-      <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
-    </div>
+    <div class="subsystem-footer">${subsystemBackBtn()}</div>
   </div>`;
 }
 
@@ -1764,25 +1774,25 @@ function renderUpcomingSurveysBox() {
   <div class="upcoming-surveys-container" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1.15rem 1.25rem;margin-top:1rem;">
     <div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.75rem;">
       <span style="font-size:1.2rem;">📁</span>
-      <strong style="color:#475569;font-size:0.95rem;">未來規劃問卷 Upcoming Surveys（Kế hoạch khảo sát sắp tới）</strong>
-      <span class="status-badge" style="background:#f1f5f9;color:#64748b;font-size:0.75rem;">敬請期待 Coming Soon</span>
+      <strong style="color:#475569;font-size:0.95rem;">未來規劃問卷<br><small class="vn-sub">Kế hoạch khảo sát sắp tới</small></strong>
+      <span class="status-badge" style="background:#f1f5f9;color:#64748b;font-size:0.75rem;">敬請期待<br><small class="vn-sub">Sắp ra mắt</small></span>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:0.85rem;">
       <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:0.85rem 1rem;opacity:0.85;">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
           <span style="font-size:1.25rem;">💳</span>
           <b style="font-size:0.92rem;color:#1e293b;">學雜費一次繳交意願調查</b>
-          <span class="node-status-pill upcoming" style="margin-left:auto;">即將推出</span>
+          <span class="node-status-pill upcoming" style="margin-left:auto;">即將推出<br><small class="vn-sub">Sắp ra mắt</small></span>
         </div>
-        <p style="margin:0;font-size:0.8rem;color:#64748b;">Tuition Full Payment Intent（Khảo sát ý định nộp học phí 1 lần）</p>
+        <p style="margin:0;font-size:0.8rem;color:#64748b;">Khảo sát ý định nộp học phí 1 lần</p>
       </div>
       <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:0.85rem 1rem;opacity:0.85;">
         <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
           <span style="font-size:1.25rem;">📑</span>
           <b style="font-size:0.92rem;color:#1e293b;">學雜費分期繳交狀況調查</b>
-          <span class="node-status-pill upcoming" style="margin-left:auto;">即將推出</span>
+          <span class="node-status-pill upcoming" style="margin-left:auto;">即將推出<br><small class="vn-sub">Sắp ra mắt</small></span>
         </div>
-        <p style="margin:0;font-size:0.8rem;color:#64748b;">Tuition Installment Status（Khảo sát tình trạng trả góp học phí）</p>
+        <p style="margin:0;font-size:0.8rem;color:#64748b;">Khảo sát tình trạng trả góp học phí</p>
       </div>
     </div>
   </div>`;
@@ -1795,18 +1805,16 @@ function renderSurveyStandaloneLogin(c) {
   <div class="survey-standalone-page">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（問卷調查系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống khảo sát)</small></span>
+      <span class="block-tag-name">主要內容顯示區（問卷子系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống con khảo sát)</small></span>
     </div>
 
     <div class="subsystem-header-bar">
-      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
+      ${subsystemBackBtn()}
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">💌</span>
         <div>
-          <strong>學生問卷調查系統</strong>
-          <br><small class="vn-sub">Hệ thống khảo sát sinh viên</small>
+          <strong>問卷子系統</strong>
+          <br><small class="vn-sub">Hệ thống con khảo sát</small>
         </div>
       </div>
     </div>
@@ -1844,7 +1852,7 @@ function renderSurveyStandaloneLogin(c) {
       <div class="survey-login-card">
         <div style="border-bottom:1px solid #e2e8f0;padding-bottom:0.75rem;margin-bottom:1rem;">
           <h3 style="margin:0 0 0.35rem 0;color:#1e293b;font-size:1.15rem;display:flex;align-items:center;gap:0.4rem;">
-            <span>🎓</span> 學生登入填寫問卷<br><small class="vn-sub">Đăng nhập điền khảo sát</small>
+            <span>🎓</span> <span>學生登入填寫問卷<small class="vn-sub">Đăng nhập điền khảo sát</small></span>
           </h3>
           <p style="margin:0;font-size:0.84rem;color:#64748b;">
             請輸入中文姓名與學號，登入後即可直接填寫或修改問卷。<br>
@@ -1879,10 +1887,12 @@ function renderSurveyStandaloneLogin(c) {
 
     <!-- 規劃中問卷區塊（若老師設定隱藏則不顯示） -->
     ${!c.hideUpcomingSurveys ? renderUpcomingSurveysBox() : ''}
+
+    <div class="subsystem-footer">${subsystemBackBtn()}</div>
   </div>`;
 }
 
-/* ---- 問卷調查系統子頁面 ---- */
+/* ---- 問卷子系統子頁面 ---- */
 function renderPublicSurveySection(c) {
   const s = me();
   if (!s) {
@@ -1896,18 +1906,16 @@ function renderPublicSurveySection(c) {
   <div class="survey-standalone-page">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（問卷調查系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống khảo sát)</small></span>
+      <span class="block-tag-name">主要內容顯示區（問卷子系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống con khảo sát)</small></span>
     </div>
 
     <div class="subsystem-header-bar">
-      <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="dashboard">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
+      ${subsystemBackBtn()}
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">💌</span>
         <div>
-          <strong>學生問卷調查系統</strong>
-          <br><small class="vn-sub">Hệ thống khảo sát sinh viên</small>
+          <strong>問卷子系統</strong>
+          <br><small class="vn-sub">Hệ thống con khảo sát</small>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:0.5rem;">
@@ -1936,11 +1944,7 @@ function renderPublicSurveySection(c) {
     <!-- 規劃中問卷區塊（若老師設定隱藏則不顯示） -->
     ${!c.hideUpcomingSurveys ? renderUpcomingSurveysBox() : ''}
 
-    <div style="margin-top:1.5rem;text-align:center;">
-      <button class="btn btn-secondary" data-act="nav-public-subview" data-view="dashboard" style="padding:0.6rem 1.6rem;font-size:0.95rem;">
-        ⬅️ 返回首頁<br><small class="vn-sub">Quay lại bảng điều khiển</small>
-      </button>
-    </div>
+    <div class="subsystem-footer">${subsystemBackBtn()}</div>
   </div>`;
 }
 
@@ -1954,8 +1958,8 @@ function renderSubsystemMain(c) {
     <div class="empty-selection-guide">
       <div class="guide-arrow">👈</div>
       <div class="guide-text">
-        <strong>請點選左側清單選擇學年度與科目 Please select a course（Vui lòng chọn khóa học）</strong>
-        <p>點選任一學年度下的項目，即可在此載入儀表板、分組、點名與問卷等子系統。（Nhấp vào môn học bất kỳ để tải thông tin.）</p>
+        <strong>請點選左側清單選擇學年度與科目<br><small class="vn-sub">Vui lòng chọn khóa học</small></strong>
+        <p>點選任一學年度下的項目，即可在此載入首頁、分組、點名與問卷等子系統。<br><small class="vn-sub">Nhấp vào môn học bất kỳ để tải thông tin.</small></p>
       </div>
     </div>`;
   }
@@ -1995,36 +1999,36 @@ function howto() {
   return `<section class="block-section howto-section" id="howto-block">
     <div class="block-header">
       <div class="block-title-wrap">
-        <h2>使用方式 How it works</h2>
+        <h2>使用方式<br><small class="vn-sub">Cách sử dụng</small></h2>
       </div>
     </div>
     <div class="howto-steps">
       <div class="howto-step-card">
         <div class="step-num">1</div>
         <div class="step-info">
-          <strong>選擇學年度分組</strong>
-          <p>在左側樹狀區塊中點選欲查看的<b>學年度分組</b>，右側將即時載入該項目資料。</p>
+          <strong>選擇學年度分組<br><small class="vn-sub">Chọn năm học và môn học</small></strong>
+          <p>在左側樹狀區塊中點選欲查看的<b>學年度分組</b>，右側將即時載入該項目資料。<br><small class="vn-sub">Chọn môn học ở menu bên trái, dữ liệu sẽ hiển thị bên phải.</small></p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">2</div>
         <div class="step-info">
-          <strong>學生登入開組或填表</strong>
-          <p>點選<b>申請擔任組長登入</b>（輸入姓名+學號密碼）進行開組與挑選組員。</p>
+          <strong>申請擔任組長開組<br><small class="vn-sub">Đăng ký làm trưởng nhóm để lập nhóm</small></strong>
+          <p>點選<b>申請擔任組長</b>（輸入姓名＋學號密碼）登入後即可開組與挑選組員。<br><small class="vn-sub">Bấm "Đăng ký làm trưởng nhóm" (họ tên + mật khẩu mã SV) để lập nhóm và chọn thành viên.</small></p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">3</div>
         <div class="step-info">
-          <strong>挑選組員與指定副組長</strong>
-          <p>組長可從未分組名單挑選組員、設定副組長。<b>欲加入尚未額滿的各組組員，請一律透過組長加入</b>；被挑選同學不需額外動作。</p>
+          <strong>挑選組員與指定副組長<br><small class="vn-sub">Chọn thành viên và chỉ định nhóm phó</small></strong>
+          <p>組長可從未分組名單挑選組員、設定副組長。<b>欲加入尚未額滿的各組組員，請一律透過組長加入</b>；被挑選同學不需額外動作。<br><small class="vn-sub">Nhóm trưởng chọn thành viên từ danh sách chưa chia nhóm và đặt nhóm phó. Muốn vào nhóm còn chỗ, vui lòng nhờ nhóm trưởng thêm vào.</small></p>
         </div>
       </div>
       <div class="howto-step-card">
         <div class="step-num">4</div>
         <div class="step-info">
-          <strong>截止後自動分配</strong>
-          <p>超過分組截止時間未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。${deadlineStr ? `<br><span style="display:inline-block;margin-top:0.35rem;padding:0.15rem 0.5rem;background:${isExpired ? '#fee2e2' : '#fef3c7'};color:${isExpired ? '#991b1b' : '#92400e'};border-radius:4px;font-weight:600;font-size:0.85rem;">⏳ 本科目分組截止時間：${deadlineStr} ${isExpired ? '(已截止)' : ''}</span>` : '<br><span style="color:#64748b;font-size:0.85rem;">（本科目尚未設定分組截止時間）</span>'}</p>
+          <strong>截止後自動分配<br><small class="vn-sub">Tự động phân nhóm sau hạn chót</small></strong>
+          <p>超過分組截止時間未被挑選者由系統隨機分配至未滿組別，並標示為「自動」。<small class="vn-sub">Sau hạn chót, sinh viên chưa được chọn sẽ được hệ thống phân ngẫu nhiên vào nhóm còn chỗ.</small>${deadlineStr ? `<br><span style="display:inline-block;margin-top:0.35rem;padding:0.15rem 0.5rem;background:${isExpired ? '#fee2e2' : '#fef3c7'};color:${isExpired ? '#991b1b' : '#92400e'};border-radius:4px;font-weight:600;font-size:0.85rem;">⏳ 本科目分組截止時間：${deadlineStr} ${isExpired ? '(已截止)' : ''}</span>` : '<br><span style="color:#64748b;font-size:0.85rem;">（本科目尚未設定分組截止時間）</span>'}</p>
         </div>
       </div>
     </div>
@@ -2073,7 +2077,7 @@ function courseTreePublic() {
                       <span class="subnode-icon">🏠</span>
                       <span class="subnode-name">
                         首頁
-                        <br><small class="vn-sub">Bảng tổng quan</small>
+                        <br><small class="vn-sub">Trang chủ</small>
                       </span>
                     </button>
                   </li>
@@ -2081,8 +2085,8 @@ function courseTreePublic() {
                     <button class="tree-subnode-btn" data-act="nav-public-subview" data-view="groups" data-course="${c.id}" title="查看分組使用說明、組別現況與挑選組員">
                       <span class="subnode-icon">👥</span>
                       <span class="subnode-name">
-                        學生分組系統
-                        <br><small class="vn-sub">Hệ thống chia nhóm</small>
+                        分組子系統
+                        <br><small class="vn-sub">Hệ thống con chia nhóm</small>
                       </span>
                     </button>
                   </li>
@@ -2099,8 +2103,8 @@ function courseTreePublic() {
                     <button class="tree-subnode-btn" data-act="nav-public-subview" data-view="survey" data-course="${c.id}" title="進入獨立問卷填寫頁面">
                       <span class="subnode-icon">💌</span>
                       <span class="subnode-name">
-                        問卷調查系統
-                        <br><small class="vn-sub">Hệ thống khảo sát</small>
+                        問卷子系統
+                        <br><small class="vn-sub">Hệ thống con khảo sát</small>
                       </span>
                     </button>
                   </li>
@@ -2117,7 +2121,7 @@ function courseTreePublic() {
 function courseTree() {
   const byYear = {};
   state.courses.forEach(c => {
-    const y = c.year || '未分類 Unfiled';
+    const y = c.year || '未分類';
     (byYear[y] = byYear[y] || []).push(c);
   });
   const years = Object.keys(byYear).sort().reverse();
@@ -2134,24 +2138,24 @@ function courseTree() {
             </button>
           </li>`).join('')}</ul>
       </div>`).join('') : '<p class="file-path">尚無分組，請於右側「分組設定」建立。</p>'}
-    <button class="btn btn-secondary" data-act="new-course">＋ 新增分組項目 New</button>
+    <button class="btn btn-secondary" data-act="new-course">＋ 新增分組項目</button>
     <div class="tree-year tree-sys">
-      <div class="tree-year-label">系統設定 System</div>
+      <div class="tree-year-label">系統設定</div>
       <ul>
         <li class="${teacherView === 'settings' ? 'active' : ''}">
-          <button data-act="sys-password">🔑 密碼與安全性管理<span class="count">管理者與組長密碼 Password security</span></button>
+          <button data-act="sys-password">🔑 密碼與安全性管理<span class="count">管理者與組長密碼</span></button>
         </li>
         <li class="${teacherView === 'eval' ? 'active' : ''}">
-          <button data-act="sys-peer-eval">學期成績加減分與組長評分控制<span class="count">Peer evaluation</span></button>
+          <button data-act="sys-peer-eval">⚖️ 學期成績加減分與組長評分控制<span class="count">組長評分權限與期末加減分</span></button>
         </li>
         <li class="${teacherView === 'logs' ? 'active' : ''}">
-          <button data-act="sys-logs">📜 分組異動日誌<span class="count">Activity logs</span></button>
+          <button data-act="sys-logs">👥 分組管理<span class="count">分組異動日誌</span></button>
         </li>
         <li class="${teacherView === 'attendance' ? 'active' : ''}">
-          <button data-act="sys-attendance">📋 點名管理（Điểm danh）<span class="count">Attendance</span></button>
+          <button data-act="sys-attendance">📋 點名管理<span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
         </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
-          <button data-act="sys-wellbeing">❤️ 生活關懷問卷管理<span class="count">Wellbeing survey</span></button>
+          <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
         </li>
       </ul>
     </div>
@@ -2163,10 +2167,10 @@ function teacherSubpageNav(viewTitle, c) {
   <div class="teacher-subpage-nav">
     <div class="nav-actions">
       <button class="btn btn-primary btn-sm" data-act="back-to-course" title="返回老師後台分組與課程主頁">
-        ⬅️ 返回老師後台主頁 Dashboard
+        ⬅️ 返回老師後台主頁
       </button>
       <button class="btn btn-secondary btn-sm" type="button" data-act="history-back" title="回到上一頁">
-        ↩️ 回到上一頁 Back
+        ↩️ 回到上一頁
       </button>
     </div>
     <div class="nav-breadcrumbs">
@@ -2186,11 +2190,11 @@ function teacherScreen() {
   } else if (teacherView === 'eval') {
     main = teacherSubpageNav('學期成績加減分與組長評分控制', c) + teacherPeerEvalBlock(c);
   } else if (teacherView === 'logs') {
-    main = teacherSubpageNav('分組異動日誌', c) + teacherLogsBlock(c);
+    main = teacherSubpageNav('分組管理', c) + activityLogPanel(c, 'group');
   } else if (teacherView === 'attendance') {
-    main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c);
+    main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
   } else if (teacherView === 'wellbeing') {
-    main = teacherSubpageNav('生活關懷問卷管理', c) + teacherWellbeingBlock(c);
+    main = teacherSubpageNav('問卷管理', c) + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -2200,33 +2204,38 @@ function teacherScreen() {
 function teacherNoCourse() {
   return `
   <div class="teacher-section">
-    <h2>分組設定 Grouping setup</h2>
+    <h2>分組設定</h2>
     <p class="file-path">建立新分組：填寫學年度與名稱後儲存，會出現在左側樹狀清單。</p>
     ${courseForm({ year: '', subject: '', groupSize: 4, tolerance: 1, maxBonus: 10, deadline: '', notice: '' })}
   </div>`;
 }
 
-function courseForm(c) {
-  const maxB = (c && Number(c.maxBonus) > 0) ? Number(c.maxBonus) : 10;
-  const noticeVal = (c && c.notice !== undefined && c.notice !== null) ? c.notice : `【期末考成績加減分與評分規定】：
+/* 公布欄預設注意事項（課程未自訂公告時，前台 Block B 與後台表單共用） */
+function defaultNotice(maxB) {
+  return `【期末考成績加減分與評分規定】：
 1. 當老師開放組長評分權限時，組長可依據組員之貢獻或配合程度於期末時給予加分 (0 ~ ${maxB} 分)。
 2. 組長在老師開放評分權限時進行評分，組長自己可獲得 ${maxB} 分的加分。
 3. 超過分組截止時間由系統自動分組造成沒有組長的組別，每位成員期末考成績扣 10 分。`;
+}
+
+function courseForm(c) {
+  const maxB = (c && Number(c.maxBonus) > 0) ? Number(c.maxBonus) : 10;
+  const noticeVal = (c && c.notice !== undefined && c.notice !== null) ? c.notice : defaultNotice(maxB);
 
   return `<form data-act="save-course">
     <div class="form-row">
-      <div class="form-group"><label>學年度 Academic year</label><input name="year" value="${esc(c.year)}" placeholder="113-1" required></div>
+      <div class="form-group"><label>學年度</label><input name="year" value="${esc(c.year)}" placeholder="113-1" required></div>
       <div class="form-group"><label>名稱</label><input name="subject" value="${esc(c.subject)}" placeholder="例如：113入學行銷真班" required></div>
-      <div class="form-group"><label>每組人數 Group size</label><input type="number" min="1" name="groupSize" value="${c.groupSize || 4}"></div>
-      <div class="form-group"><label>誤差人數 ± Tolerance</label><input type="number" min="0" name="tolerance" value="${c.tolerance ?? 1}"></div>
-      <div class="form-group"><label>組長加分上限 Max bonus (分)</label><input type="number" min="1" max="100" name="maxBonus" value="${maxB}" placeholder="例如 5 或 10" required></div>
-      <div class="form-group"><label>分組截止時間 Deadline</label><input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}"></div>
+      <div class="form-group"><label>每組人數</label><input type="number" min="1" name="groupSize" value="${c.groupSize || 4}"></div>
+      <div class="form-group"><label>誤差人數 ±</label><input type="number" min="0" name="tolerance" value="${c.tolerance ?? 1}"></div>
+      <div class="form-group"><label>組長加分上限（分）</label><input type="number" min="1" max="100" name="maxBonus" value="${maxB}" placeholder="例如 5 或 10" required></div>
+      <div class="form-group"><label>分組截止時間</label><input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}"></div>
       <div class="form-group full">
-        <label>公布欄注意事項 Notice (顯示於前台最上方)</label>
+        <label>公布欄注意事項（顯示於前台最上方）</label>
         <textarea name="notice" rows="4" style="width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px;font:inherit;">${esc(noticeVal)}</textarea>
       </div>
     </div>
-    <button class="btn btn-primary" type="submit">儲存 Save</button>
+    <button class="btn btn-primary" type="submit">儲存</button>
   </form>`;
 }
 
@@ -2235,7 +2244,7 @@ function teacherPeerEvalBlock(c) {
   if (!c) {
     return `
     <div class="teacher-section peer-eval-admin-box">
-      <h2>⚖️ 學期成績加減分與組長評分控制 <small>Peer Evaluation Management</small></h2>
+      <h2>⚖️ 學期成績加減分與組長評分控制</h2>
       <p class="file-path">請先從左側點選或建立課程，即可進行該課程的學期成績加減分與組長評分控制。</p>
     </div>`;
   }
@@ -2251,7 +2260,7 @@ function teacherPeerEvalBlock(c) {
         <input type="datetime-local" name="evalDeadline" style="padding:0.35rem 0.6rem;font-size:0.85rem;" required>
         <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵開放全體組長評分</button>
         <button class="btn btn-secondary" type="button" data-act="close-all-eval" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">一鍵關閉全體評分</button>
-        <button class="btn btn-success" type="button" data-act="export-eval-csv" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;margin-left:auto;">📥 下載匯出評分結果 (依學號排序) Export CSV</button>
+        <button class="btn btn-success" type="button" data-act="export-eval-csv" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;margin-left:auto;">📥 下載匯出評分結果（依學號排序）</button>
       </form>
     </div>
 
@@ -2278,8 +2287,8 @@ function teacherPeerEvalBlock(c) {
               <td>${lead ? `<span style="color:#16a34a;font-weight:600;">${esc(lead.name)} (${esc(lead.id)})</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
               <td>
                 ${g.peerEvalOpen
-                  ? `<span class="status-badge can-edit">開放中 Open</span>`
-                  : `<span class="status-badge is-locked">未開放 Closed</span>`}
+                  ? `<span class="status-badge can-edit">開放中</span>`
+                  : `<span class="status-badge is-locked">未開放</span>`}
               </td>
               <td>${g.peerEvalDeadline ? esc(g.peerEvalDeadline.replace('T', ' ')) : '<span style="color:#94a3b8">未設定</span>'}</td>
               <td>
@@ -2306,18 +2315,19 @@ function teacherPeerEvalBlock(c) {
 function teacherCourse(c) {
   const total = c.students.length;
   const assigned = c.students.filter(s => s.groupId).length;
+  const groupLogs = (c.logs || []).filter(l => logCategoryOf(l.actionType) === 'group');
   return `
   <div class="teacher-section">
-    <h2>分組設定 Grouping setup <small>${esc(courseLabel(c))}</small></h2>
+    <h2>分組設定 <small>${esc(courseLabel(c))}</small></h2>
     ${courseForm(c)}
     <div class="btn-row" style="margin-top:1rem;justify-content:flex-end;">
-      <button class="btn btn-danger btn-sm" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">🗑️ 刪除整個科目（含名單與分組）Delete course</button>
+      <button class="btn btn-danger btn-sm" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">🗑️ 刪除整個科目（含名單與分組）</button>
     </div>
   </div>
 
   <div class="teacher-section grouping-admin-section">
     <div class="grouping-header-row">
-      <h2 style="margin:0;">👥 分組管理與組員分配 <small>Group Management (${esc(courseLabel(c))})</small></h2>
+      <h2 style="margin:0;">👥 分組管理與組員分配 <small>${esc(courseLabel(c))}</small></h2>
       <div class="grouping-header-actions">
         <button class="btn btn-secondary btn-sm" data-act="export-csv" title="匯出分組名單為 CSV 格式">📥 匯出 CSV</button>
         <button class="btn btn-secondary btn-sm" data-act="export-json" title="匯出完整分組 JSON">📥 匯出 JSON</button>
@@ -2327,22 +2337,22 @@ function teacherCourse(c) {
 
     <!-- 1. 分組截止時間設定列 -->
     <form data-act="set-course-deadline" class="grouping-deadline-bar" style="margin-top:1rem;">
-      <label>⏳ 全體分組截止時間 Deadline：</label>
+      <label>⏳ 全體分組截止時間：</label>
       <input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}">
       <button class="btn btn-primary" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">儲存截止時間</button>
       ${c.deadline ? `
         <span class="deadline-status-tag ${deadlinePassed(c) ? 'closed' : 'open'}">
-          ${deadlinePassed(c) ? '🚫 已截止（逾時不解散原組，未選學生已自動分配）Closed' : '🟢 分組進行中 Open'}
+          ${deadlinePassed(c) ? '🚫 已截止（逾時不解散原組，未選學生已自動分配）' : '🟢 分組進行中'}
         </span>
       ` : '<span style="font-size:0.82rem;color:#64748b;">(尚未設定截止時間)</span>'}
     </form>
 
     <!-- 2. 四格狀態統計數據 -->
     <div class="stats" style="margin-top:1rem;">
-      <div class="stat"><div class="value">${total}</div><div class="label">總學生數 Students</div></div>
-      <div class="stat"><div class="value">${c.groups.length}</div><div class="label">目前組數 Groups</div></div>
-      <div class="stat"><div class="value">${assigned}</div><div class="label">已分組人數 Assigned</div></div>
-      <div class="stat"><div class="value" style="color:${total - assigned > 0 ? '#e67e22' : '#27ae60'};">${total - assigned}</div><div class="label">未分組學生 Unassigned</div></div>
+      <div class="stat"><div class="value">${total}</div><div class="label">總學生數</div></div>
+      <div class="stat"><div class="value">${c.groups.length}</div><div class="label">目前組數</div></div>
+      <div class="stat"><div class="value">${assigned}</div><div class="label">已分組人數</div></div>
+      <div class="stat"><div class="value" style="color:${total - assigned > 0 ? '#e67e22' : '#27ae60'};">${total - assigned}</div><div class="label">未分組學生</div></div>
     </div>
 
     <!-- 3. 功能操作卡片群組 (三大模組分類) -->
@@ -2351,7 +2361,7 @@ function teacherCourse(c) {
       <!-- 模組一：日常組別維護與擴展 (安全操作) -->
       <div class="grouping-card safe-ops-card">
         <div class="grouping-card-header">
-          <strong class="card-title">🟢 組別常態維護與增設 <small>Group Creation &amp; Expansion</small></strong>
+          <strong class="card-title">🟢 組別常態維護與增設</strong>
           <span class="card-badge safe">安全操作</span>
         </div>
         <div class="grouping-card-body">
@@ -2363,7 +2373,7 @@ function teacherCourse(c) {
                 <b>➕ 手動新增單一組別</b>
                 <span>為本課程新增 1 個全新組別（第 ${c.groups.length + 1} 組），供學生自行加入或老師手動指派。</span>
               </div>
-              <button class="btn btn-secondary" data-act="add-group">新增 1 組 Add Group</button>
+              <button class="btn btn-secondary" data-act="add-group">新增 1 組</button>
             </div>
 
             <div class="grouping-action-box">
@@ -2382,7 +2392,7 @@ function teacherCourse(c) {
                 <span>將未分組學生隨機分派至未滿門檻（${minCap(c)}人）的組別。若現有組別皆已達上限，將自動開新組收納。已完成編組的組別成員完全不變。</span>
               </div>
               <button class="btn btn-primary" data-act="auto-assign" ${total - assigned === 0 ? 'disabled' : ''}>
-                隨機分配未分組學生 Auto-assign
+                隨機分配未分組學生
               </button>
             </div>
 
@@ -2393,7 +2403,7 @@ function teacherCourse(c) {
       <!-- 模組二：危險區域：全班分組重置 (清楚區分「重新建立空組」vs「清空所有組別」) -->
       <div class="grouping-card danger-ops-card">
         <div class="grouping-card-header">
-          <strong class="card-title">⚠️ 全班分組重設與清空 <small>Full Reset &amp; Clear（重要操作，請詳閱差異）</small></strong>
+          <strong class="card-title">⚠️ 全班分組重設與清空 <small>（重要操作，請詳閱差異）</small></strong>
           <span class="card-badge danger">高風險操作</span>
         </div>
         <div class="grouping-card-body">
@@ -2446,7 +2456,7 @@ function teacherCourse(c) {
                 <b>🛡️ 系統已自動備份上次分組快照</b>：如剛剛點擊了清空或重設組別，可立即點擊右側按鈕一鍵還原！
               </div>
               <button class="btn btn-undo" data-act="restore-snapshot" style="padding:0.45rem 1.1rem;font-weight:700;margin:0;">
-                ↩️ 回到上一步 (復原分組狀態) Undo
+                ↩️ 回到上一步（復原分組狀態）
               </button>
             </div>
           ` : ''}
@@ -2460,10 +2470,10 @@ function teacherCourse(c) {
     ${c.groups.length ? `
       <div class="select-del-groups-box" style="margin-top:1.5rem;padding:1.2rem;background:#fffaf0;border:1.5px solid #fdebd0;border-radius:8px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-          <strong style="color:#d35400;">🗑️ 勾選刪除特定分組組別 Select groups to delete</strong>
+          <strong style="color:#d35400;">🗑️ 勾選刪除特定分組組別</strong>
           <div style="display:flex;gap:0.5rem;">
-            <button class="tab-btn" type="button" data-act="select-all-del-groups">全選 All</button>
-            <button class="tab-btn" type="button" data-act="unselect-all-del-groups">取消全選 None</button>
+            <button class="tab-btn" type="button" data-act="select-all-del-groups">全選</button>
+            <button class="tab-btn" type="button" data-act="unselect-all-del-groups">取消全選</button>
             <button class="btn btn-danger" type="button" data-act="del-selected-groups" style="padding:0.4rem 0.9rem;font-size:0.85rem;margin:0;">刪除勾選組別</button>
           </div>
         </div>
@@ -2513,8 +2523,8 @@ function teacherCourse(c) {
                   <td>${count} / ${cap(c)} 人</td>
                   <td>
                     ${!g.allowEdit ? '<span class="status-badge is-locked">未開放（依全體時限）</span>'
-                      : isGroupEditActive ? '<span class="status-badge can-edit">開放挑選中 Open</span>'
-                      : '<span class="status-badge under-threshold">已逾專屬截止時間 Closed</span>'}
+                      : isGroupEditActive ? '<span class="status-badge can-edit">開放挑選中</span>'
+                      : '<span class="status-badge under-threshold">已逾專屬截止時間</span>'}
                   </td>
                   <td>
                     ${g.editDeadline ? `<span style="font-weight:600;color:${isGroupEditActive ? '#166534' : '#991b1b'};">${esc(g.editDeadline.replace('T', ' '))}</span>` : (g.allowEdit ? '<span style="color:#64748b;">永久開放（無期限）</span>' : '<span style="color:#94a3b8">-</span>')}
@@ -2545,22 +2555,22 @@ function teacherCourse(c) {
 
   <div class="roster-row">
     <div class="teacher-section">
-      <h2>修課名單 Roster</h2>
+      <h2>修課名單</h2>
       <div class="form-group">
-        <label>匯入文字檔 Import .txt / .csv（每行：學號 姓名）</label>
+        <label>匯入文字檔 .txt / .csv（每行：學號 姓名）</label>
         <input type="file" accept=".txt,.csv" data-act="import-file">
-        <div class="file-path">格式範例 Format: <code>410123 王小明</code> 或 <code>410123,王小明</code>；標題列（學號 / 姓名）會自動略過。</div>
+        <div class="file-path">格式範例：<code>410123 王小明</code> 或 <code>410123,王小明</code>；標題列（學號 / 姓名）會自動略過。</div>
       </div>
       <form data-act="add-student" class="form-row">
         <div class="form-group"><label>學號 ID</label><input name="id" required></div>
-        <div class="form-group"><label>姓名 Name</label><input name="name" required></div>
-        <div class="form-group full"><button class="btn btn-primary" type="submit">新增學生 Add student</button></div>
+        <div class="form-group"><label>姓名</label><input name="name" required></div>
+        <div class="form-group full"><button class="btn btn-primary" type="submit">新增學生</button></div>
       </form>
       ${rosterTable(c)}
     </div>
 
     <div class="teacher-section unassigned-panel">
-      <h2>未分組名單 Unassigned (${total - assigned})</h2>
+      <h2>未分組名單（${total - assigned}）</h2>
       ${unassignedList(c)}
     </div>
   </div>
@@ -2568,24 +2578,24 @@ function teacherCourse(c) {
   <!-- 最新異動動態預覽卡片 -->
   <div class="teacher-section logs-preview-box" style="margin-top:2rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-      <h2 style="margin:0;font-size:1.2rem;">📜 最新分組異動紀錄 <small>Recent Activity</small></h2>
+      <h2 style="margin:0;font-size:1.2rem;">📜 最新分組異動紀錄</h2>
       <button class="btn btn-secondary" data-act="view-course-logs" style="padding:0.35rem 0.85rem;font-size:0.85rem;margin:0;">
-        查看完整日誌 (${(c.logs || []).length} 筆) →
+        查看完整分組異動日誌 →
       </button>
     </div>
-    ${(c.logs && c.logs.length) ? `
+    ${groupLogs.length ? `
       <div class="table-wrap">
         <table class="roster" style="background:#fff;margin:0;">
           <thead>
             <tr>
-              <th style="width:150px;">時間 Timestamp</th>
-              <th style="width:120px;">類別 Action</th>
-              <th style="width:140px;">操作者 Operator</th>
-              <th>詳細異動說明 Detail</th>
+              <th style="width:150px;">時間</th>
+              <th style="width:120px;">類別</th>
+              <th style="width:140px;">操作者</th>
+              <th>詳細異動說明</th>
             </tr>
           </thead>
           <tbody>
-            ${c.logs.slice(0, 5).map(l => `
+            ${groupLogs.slice(0, 5).map(l => `
             <tr>
               <td style="font-size:0.82rem;color:#475569;font-family:monospace;white-space:nowrap;">${formatLogTime(l.createdAt)}</td>
               <td>${renderLogBadge(l.actionType)}</td>
@@ -2648,6 +2658,15 @@ function formatActionTypeLabel(type) {
     case 'attendance-session-delete': return '老師刪除點名時段';
     case 'attendance-unlock': return '老師開放/關閉點名補登';
     case 'attendance-delegate': return '老師指派/取消跨組代理點名';
+    case 'attendance-revoke': return '老師撤銷缺曠紀錄';
+    case 'password-change': return '學生修改密碼';
+    case 'password-reset': return '老師重設學生密碼';
+    case 'survey-period-set': return '老師設定問卷時段';
+    case 'survey-submit': return '學生填寫/修改問卷';
+    case 'survey-edit': return '老師修改學生問卷';
+    case 'survey-delete': return '老師刪除學生問卷';
+    case 'survey-logs-clear':
+    case 'survey-logs-clear-all': return '老師清除問卷日誌';
     default: return type;
   }
 }
@@ -2680,6 +2699,11 @@ function renderLogBadge(type) {
     case 'attendance-unlock':
     case 'attendance-delegate':
       return '<span class="log-badge tag-teacher">📋 點名管理</span>';
+    case 'attendance-revoke':
+      return '<span class="log-badge tag-teacher">↩️ 撤銷缺曠</span>';
+    case 'password-change':
+    case 'password-reset':
+      return '<span class="log-badge tag-vice">🔑 密碼變更</span>';
     default:
       if (type.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit', 'restore-group'].includes(type)) {
         return '<span class="log-badge tag-teacher">🛠️ 老師操作</span>';
@@ -2688,12 +2712,60 @@ function renderLogBadge(type) {
   }
 }
 
-function teacherLogsBlock(c) {
+/* 異動日誌依管理區分類：點名、問卷各自歸入其管理頁，其餘（分組、組長、老師調整、密碼、系統）歸入分組管理 */
+function logCategoryOf(type) {
+  const t = String(type || '');
+  if (t.startsWith('attendance')) return 'attendance';
+  if (t.startsWith('survey')) return 'survey';
+  return 'group';
+}
+
+const GROUP_TEACHER_TYPES = ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit', 'restore-group'];
+/* 各分類下的細項篩選：[值, 標籤, 判斷式] */
+const LOG_SUB_FILTERS = {
+  group: [
+    ['pick', '＋ 組長加入組員', t => t === 'pick'],
+    ['drop', '－ 組長釋出組員', t => t === 'drop'],
+    ['leader', '👑 組長/副組長身分變更', t => ['claim-leader', 'unclaim-leader', 'toggle-vice', 'peer-eval'].includes(t)],
+    ['teacher', '🛠️ 老師管理調整', t => t.startsWith('teacher') || GROUP_TEACHER_TYPES.includes(t)],
+    ['system', '🤖 系統自動處理', t => ['auto-assign', 'deadline-dissolve', 'restore-group'].includes(t)],
+    ['password', '🔑 密碼變更', t => t.startsWith('password')],
+  ],
+  attendance: [
+    ['mark', '📋 組長/副組長點名', t => t === 'attendance-mark' || t === 'attendance-correct'],
+    ['revoke', '↩️ 老師撤銷缺曠', t => t === 'attendance-revoke'],
+    ['admin', '🛠️ 老師點名設定', t => ['attendance-session-save', 'attendance-session-delete', 'attendance-unlock', 'attendance-delegate'].includes(t)],
+  ],
+  survey: [],
+};
+const LOG_PANEL_META = {
+  group: {
+    title: '📜 分組異動日誌',
+    desc: '記載組長加入/釋出組員、身分設定、密碼變更、老師分組調整與系統自動分配等操作歷程。',
+    empty: '當組長挑選、釋出組員或老師調整分組時，系統將自動於此留下操作歷程。',
+    file: '分組異動日誌',
+  },
+  attendance: {
+    title: '📜 點名異動日誌',
+    desc: '記載組長/副組長點名與修正、老師撤銷缺曠、點名時段設定、補登開放與跨組代理等操作歷程。',
+    empty: '當組長或副組長點名、或老師調整點名設定時，系統將自動於此留下操作歷程。',
+    file: '點名異動日誌',
+  },
+  survey: {
+    title: '📜 問卷設定異動日誌',
+    desc: '記載老師設定問卷開放時段、清除問卷日誌等管理操作（學生填寫與修改內容請見上方「問卷異動日誌」分頁）。',
+    empty: '當老師調整問卷開放時段或清除問卷日誌時，系統將自動於此留下操作歷程。',
+    file: '問卷設定異動日誌',
+  },
+};
+
+function activityLogPanel(c, category) {
+  const meta = LOG_PANEL_META[category];
   if (!c) {
     return `
     <div class="teacher-section">
-      <h2>📜 學生分組異動日誌 <small>Activity Logs</small></h2>
-      <p class="file-path">請先從左側點選或建立課程，即可檢視該課程的學生分組異動日誌。</p>
+      <h2>${meta.title}</h2>
+      <p class="file-path">請先從左側點選或建立課程，即可檢視該課程的異動日誌。</p>
     </div>`;
   }
 
@@ -2702,63 +2774,52 @@ function teacherLogsBlock(c) {
     setTimeout(() => loadCourseLogs(c.id), 0);
   }
 
-  const logs = fullLogsByCourse[c.id] || c.logs || [];
-  const pickCount = logs.filter(l => l.actionType === 'pick').length;
-  const dropCount = logs.filter(l => l.actionType === 'drop').length;
+  const logs = (fullLogsByCourse[c.id] || c.logs || []).filter(l => logCategoryOf(l.actionType) === category);
+  const subFilters = LOG_SUB_FILTERS[category];
+  const activeSub = subFilters.find(f => f[0] === logActionFilter);
   const todayCount = logs.filter(l => isSameDay(l.createdAt, Date.now())).length;
 
   const kw = (logSearchText || '').trim().toLowerCase();
   const filtered = logs.filter(l => {
-    if (logActionFilter === 'pick' && l.actionType !== 'pick') return false;
-    if (logActionFilter === 'drop' && l.actionType !== 'drop') return false;
-    if (logActionFilter === 'leader' && !['claim-leader', 'unclaim-leader', 'toggle-vice', 'peer-eval'].includes(l.actionType)) return false;
-    if (logActionFilter === 'teacher' && !(l.actionType.startsWith('teacher') || ['make-groups', 'make-remaining-groups', 'clear-groups', 'restore-snapshot', 'del-groups', 'add-group', 'toggle-group-edit', 'restore-group'].includes(l.actionType))) return false;
-    if (logActionFilter === 'system' && !['auto-assign', 'deadline-dissolve', 'restore-group'].includes(l.actionType)) return false;
-    if (logActionFilter === 'attendance' && !l.actionType.startsWith('attendance')) return false;
-
+    if (activeSub && !activeSub[2](l.actionType)) return false;
     if (kw) {
       const matchText = `${l.detail} ${l.operatorName} ${l.operatorId} ${l.targetName} ${l.targetId} ${l.groupName} ${formatLogTime(l.createdAt)}`.toLowerCase();
       if (!matchText.includes(kw)) return false;
     }
     return true;
   });
+  const isFiltering = !!(kw || activeSub);
 
   return `
   <div class="teacher-section logs-admin-box">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.2rem;">
       <div>
-        <h2 style="margin:0;">📜 學生分組異動日誌 <small>${esc(courseLabel(c))}</small></h2>
-        <p class="file-path" style="margin:0.25rem 0 0 0;">
-          即時記載組長加入/釋出組員、身分設定、老師調整與系統排程等所有操作歷程與時間軌跡。
-        </p>
+        <h2 style="margin:0;">${meta.title} <small>${esc(courseLabel(c))}</small></h2>
+        <p class="file-path" style="margin:0.25rem 0 0 0;">${meta.desc}</p>
       </div>
       <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-        <button class="btn btn-secondary" data-act="back-to-course" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;">
-          🔙 返回分組管理
-        </button>
         <button class="btn btn-secondary" data-act="refresh-course-logs" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logsLoading ? 'disabled' : ''}>
           ${logsLoading ? '⏳ 載入中...' : '🔄 重新整理日誌'}
         </button>
-        <button class="btn btn-success" data-act="export-logs-csv" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
-          📥 匯出異動日誌 CSV
+        <button class="btn btn-success" data-act="export-logs-csv" data-category="${category}" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
+          📥 匯出${meta.file} CSV
         </button>
-        <button class="btn btn-danger" data-act="clear-course-logs" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
-          🗑️ 清空日誌紀錄
+        <button class="btn btn-danger" data-act="clear-course-logs" data-category="${category}" style="padding:0.45rem 0.9rem;font-size:0.85rem;margin:0;" ${logs.length ? '' : 'disabled'}>
+          🗑️ 清空${meta.file}
         </button>
       </div>
     </div>
 
     ${logsLoading ? `
       <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:0.6rem 0.9rem;border-radius:8px;margin-bottom:1.2rem;font-size:0.86rem;">
-        ⏳ 正在向伺服器按需載入本課程完整異動紀錄 Loading logs on demand...
+        ⏳ 正在向伺服器載入本課程完整異動紀錄...
       </div>` : ''}
 
     <!-- 統計指標卡片 -->
     <div class="stats" style="margin:0 0 1.5rem 0;">
-      <div class="stat"><div class="value">${logs.length}</div><div class="label">總異動筆數 Total</div></div>
-      <div class="stat"><div class="value" style="color:#16a34a;">${pickCount}</div><div class="label">組長加入組員 Picks</div></div>
-      <div class="stat"><div class="value" style="color:#dc2626;">${dropCount}</div><div class="label">組長釋出組員 Drops</div></div>
-      <div class="stat"><div class="value" style="color:#2563eb;">${todayCount}</div><div class="label">今日最新異動 Today</div></div>
+      <div class="stat"><div class="value">${logs.length}</div><div class="label">總異動筆數</div></div>
+      ${subFilters.slice(0, 2).map((f, i) => `<div class="stat"><div class="value" style="color:${i ? '#dc2626' : '#16a34a'};">${logs.filter(l => f[2](l.actionType)).length}</div><div class="label">${f[1].replace(/^\S+\s/, '')}</div></div>`).join('')}
+      <div class="stat"><div class="value" style="color:#2563eb;">${todayCount}</div><div class="label">今日最新異動</div></div>
     </div>
 
     <!-- 搜尋與過濾列 -->
@@ -2767,24 +2828,20 @@ function teacherLogsBlock(c) {
         <label style="font-weight:600;font-size:0.85rem;color:#475569;">🔍 搜尋：</label>
         <input type="text" data-act="search-logs" value="${esc(logSearchText)}" placeholder="輸入姓名、學號、組別或關鍵字..." style="padding:0.35rem 0.6rem;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:4px;width:240px;">
       </div>
+      ${subFilters.length ? `
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <label style="font-weight:600;font-size:0.85rem;color:#475569;">類別篩選：</label>
         <select data-act="filter-log-action" style="padding:0.35rem 0.6rem;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:4px;background:#fff;">
-          <option value="all" ${logActionFilter === 'all' ? 'selected' : ''}>全部動作類別 All (${logs.length})</option>
-          <option value="pick" ${logActionFilter === 'pick' ? 'selected' : ''}>＋ 組長加入組員 (${pickCount})</option>
-          <option value="drop" ${logActionFilter === 'drop' ? 'selected' : ''}>－ 組長釋出組員 (${dropCount})</option>
-          <option value="leader" ${logActionFilter === 'leader' ? 'selected' : ''}>👑 組長/副組長身分變更</option>
-          <option value="teacher" ${logActionFilter === 'teacher' ? 'selected' : ''}>🛠️ 老師管理調整</option>
-          <option value="system" ${logActionFilter === 'system' ? 'selected' : ''}>🤖 系統自動處理</option>
-          <option value="attendance" ${logActionFilter === 'attendance' ? 'selected' : ''}>📋 點名相關</option>
+          <option value="all" ${!activeSub ? 'selected' : ''}>全部動作類別（${logs.length}）</option>
+          ${subFilters.map(f => `<option value="${f[0]}" ${activeSub && activeSub[0] === f[0] ? 'selected' : ''}>${f[1]}（${logs.filter(l => f[2](l.actionType)).length}）</option>`).join('')}
         </select>
-      </div>
-      ${(kw || logActionFilter !== 'all') ? `
+      </div>` : ''}
+      ${isFiltering ? `
         <button class="tab-btn" data-act="reset-log-filter" style="padding:0.3rem 0.6rem;font-size:0.8rem;margin-left:auto;">
-          重設篩選 Reset
+          重設篩選
         </button>
       ` : ''}
-      <span style="font-size:0.82rem;color:#64748b;margin-left:${(kw || logActionFilter !== 'all') ? '0' : 'auto'};">
+      <span style="font-size:0.82rem;color:#64748b;margin-left:${isFiltering ? '0' : 'auto'};">
         顯示 ${filtered.length} / 共 ${logs.length} 筆
       </span>
     </div>
@@ -2795,12 +2852,12 @@ function teacherLogsBlock(c) {
       <table class="roster logs-table" style="background:#fff;">
         <thead>
           <tr>
-            <th style="width:150px;">時間 Timestamp</th>
-            <th style="width:120px;">動作類別 Action</th>
-            <th style="width:130px;">操作者 Operator</th>
-            <th style="width:95px;">相關組別 Group</th>
-            <th style="width:125px;">對象學生 Target</th>
-            <th>詳細異動說明 Detail</th>
+            <th style="width:150px;">時間</th>
+            <th style="width:120px;">動作類別</th>
+            <th style="width:130px;">操作者</th>
+            <th style="width:95px;">相關組別</th>
+            <th style="width:125px;">對象學生</th>
+            <th>詳細異動說明</th>
           </tr>
         </thead>
         <tbody>
@@ -2831,18 +2888,18 @@ function teacherLogsBlock(c) {
     <div style="text-align:center;padding:3rem 1rem;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;color:#64748b;">
       <p style="font-size:1.1rem;margin-bottom:0.5rem;">📭 目前無符合條件的異動紀錄</p>
       <p style="font-size:0.85rem;margin:0;">
-        ${logs.length ? '請嘗試更換搜尋關鍵字或調整篩選類別。' : '當組長挑選、釋出組員或老師調整分組時，系統將自動於此留下精準的時間與操作歷程。'}
+        ${logs.length ? '請嘗試更換搜尋關鍵字或調整篩選類別。' : meta.empty}
       </p>
     </div>`}
   </div>`;
 }
 
-/* ===== 後台：點名管理 Attendance（Điểm danh）===== */
+/* ===== 後台：點名管理 ===== */
 function teacherAttendanceBlock(c) {
   if (!c) {
     return `
     <div class="teacher-section">
-      <h2>📋 點名管理 Attendance <small>Điểm danh</small></h2>
+      <h2>📋 點名管理</h2>
       <p class="file-path">請先從左側點選或建立課程，即可設定該課程的點名時段。</p>
     </div>`;
   }
@@ -2855,20 +2912,21 @@ function teacherAttendanceBlock(c) {
   const noticeBanner = `
   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1.15rem;font-size:0.88rem;color:#1e3a8a;line-height:1.5;">
     💡 <b>一般日常點名已自動啟用</b>：每逢上課當日，系統會自動為組長或副組長開放該日之「一般日常點名」，登入即可直接逐一確認組員出缺席，老師<b>無需</b>事先在此新增日常時段。<br>
+    ↩️ <b>撤銷缺曠</b>：於下方「組員缺席排行榜」點選缺席次數即可檢視明細，並可逐筆撤銷缺曠紀錄（改為出席），撤銷動作會記錄於本頁最下方的點名異動日誌。<br>
     📌 <b>重要集會／額外點名</b>：若遇重要集會、系週會、成果展示或期中報告，老師可使用下方表單新增點名時段並<b>加註點名名稱</b>，組長或副組長將於前台專區進行額外點名。超過當天需老師於操作欄開放補登權限才能修改。
   </div>`;
 
   const sessionForm = `
     <form data-act="save-attendance-session" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:1rem;">
       <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">
-        ${editing ? '✏️ 編輯點名時段 Edit Session' : '➕ 新增重要集會／額外點名時段 Add Special Session'}
+        ${editing ? '✏️ 編輯點名時段' : '➕ 新增重要集會／額外點名時段'}
       </div>
-      <div class="form-group"><label>點名日期 Date（Ngày điểm danh）</label><input type="date" name="date" value="${esc(editing ? editing.date : today)}" required></div>
-      <div class="form-group"><label>點名時段 Time slot（Khung giờ）</label><input name="timeSlot" value="${esc(editing ? editing.timeSlot : '')}" placeholder="例如：第3-4節"></div>
-      <div class="form-group"><label>點名名稱／重要集會備註 Name（Tên buổi / Sự kiện）</label><input name="name" value="${esc(editing ? editing.name : '')}" placeholder="例如：系週會、重要集會、期中專案報告"></div>
+      <div class="form-group"><label>點名日期</label><input type="date" name="date" value="${esc(editing ? editing.date : today)}" required></div>
+      <div class="form-group"><label>點名時段</label><input name="timeSlot" value="${esc(editing ? editing.timeSlot : '')}" placeholder="例如：第3-4節"></div>
+      <div class="form-group"><label>點名名稱／重要集會備註</label><input name="name" value="${esc(editing ? editing.name : '')}" placeholder="例如：系週會、重要集會、期中專案報告"></div>
       <div class="form-group full">
-        <button class="btn btn-primary" type="submit">${editing ? '儲存修改 Save' : '新增重要集會時段 Add session'}</button>
-        ${editing ? `<button class="btn btn-secondary" type="button" data-act="cancel-edit-attendance-session">取消編輯 Cancel</button>` : ''}
+        <button class="btn btn-primary" type="submit">${editing ? '儲存修改' : '新增重要集會時段'}</button>
+        ${editing ? `<button class="btn btn-secondary" type="button" data-act="cancel-edit-attendance-session">取消編輯</button>` : ''}
       </div>
     </form>`;
 
@@ -2889,10 +2947,10 @@ function teacherAttendanceBlock(c) {
       <td><b>${displayName}</b></td>
       <td>
         ${isToday
-          ? '<span class="status-badge can-edit">當日開放編輯 Open</span>'
+          ? '<span class="status-badge can-edit">當日開放編輯</span>'
           : allUnlock
           ? `<span class="status-badge can-edit">已開放全部組別補登${allUnlock.deadline ? `（至 ${esc(allUnlock.deadline.replace('T', ' '))}）` : ''}</span>`
-          : '<span class="status-badge is-locked">已鎖定 Locked</span>'}
+          : '<span class="status-badge is-locked">已鎖定</span>'}
       </td>
       <td style="min-width:260px;">
         <div style="display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;">
@@ -2923,7 +2981,7 @@ function teacherAttendanceBlock(c) {
       const recs = attendanceRecordsFor(c, s.id).filter(r => r.groupId === g.id);
       const absentRecs = recs.filter(r => r.status === 'absent');
       const label = attendanceSessionLabel(s) || s.date;
-      if (!recs.length) return `<div style="color:#94a3b8;font-size:0.85rem;">${esc(label)}：尚未點名 Not taken</div>`;
+      if (!recs.length) return `<div style="color:#94a3b8;font-size:0.85rem;">${esc(label)}：尚未點名</div>`;
       if (!absentRecs.length) return `<div style="color:#166534;font-size:0.85rem;">${esc(label)}：✅ 全員到齊</div>`;
       return `<div style="font-size:0.85rem;">${esc(label)}：${absentRecs.map(r => {
         const st = c.students.find(x => x.id === r.studentId);
@@ -2980,7 +3038,7 @@ function teacherAttendanceBlock(c) {
 
   return `
   <div class="teacher-section">
-    <h2>📋 點名管理 Attendance <small>${esc(courseLabel(c))} · Điểm danh</small></h2>
+    <h2>📋 點名管理 <small>${esc(courseLabel(c))}</small></h2>
     ${noticeBanner}
     ${sessionForm}
     ${sessions.length ? `
@@ -2993,7 +3051,7 @@ function teacherAttendanceBlock(c) {
   </div>
 
   <div class="teacher-section">
-    <h2>目前組長／副組長列表 <small>Current leaders &amp; vice leaders</small></h2>
+    <h2>目前組長／副組長列表</h2>
     ${c.groups.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
@@ -3021,7 +3079,7 @@ function teacherAttendanceBlock(c) {
 
   <div class="teacher-section attendance-progress-dashboard">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
-      <h2 style="margin:0;">📊 各組點名完成進度即時看板 <small>Group Roll Call Completion Progress</small></h2>
+      <h2 style="margin:0;">📊 各組點名完成進度即時看板</h2>
       <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
         <label style="font-weight:600;font-size:0.85rem;color:#334155;">選擇點名時段：</label>
         <select data-act="attendance-progress-session" style="font-weight:600;padding:0.35rem 0.6rem;border-radius:6px;border:1px solid #cbd5e1;">
@@ -3031,7 +3089,7 @@ function teacherAttendanceBlock(c) {
     </div>
 
     ${!progressSession ? '<p class="file-path" style="margin-top:1rem;">尚無點名時段。</p>' : `
-      <!-- 進度統計總覽條 Progress Summary Bar -->
+      <!-- 進度統計總覽條 -->
       <div class="progress-summary-bar">
         <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
           <span style="font-size:0.92rem;font-weight:750;color:#1e293b;">時段：${esc(attendanceSessionLabel(progressSession))}</span>
@@ -3048,7 +3106,6 @@ function teacherAttendanceBlock(c) {
       <div class="progress-subpanel" style="margin-top:1.25rem;">
         <h3 style="font-size:1.05rem;color:#b91c1c;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.6rem;">
           <span>🔴 尚未完成點名之組別（含組長與副組長姓名）</span>
-          <small style="font-size:0.8rem;color:#64748b;font-weight:normal;">Incomplete Groups</small>
         </h3>
         ${incomplete.length ? `
         <div class="table-wrap">
@@ -3106,7 +3163,6 @@ function teacherAttendanceBlock(c) {
       <div class="progress-subpanel" style="margin-top:1.5rem;">
         <h3 style="font-size:1.05rem;color:#166534;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.6rem;">
           <span>🟢 已完成點名之組別（含點名人員姓名、學號、身分與完成時間）</span>
-          <small style="font-size:0.8rem;color:#64748b;font-weight:normal;">Completed Groups</small>
         </h3>
         ${completed.length ? `
         <div class="table-wrap">
@@ -3151,7 +3207,7 @@ function teacherAttendanceBlock(c) {
   <div class="teacher-section marker-leaderboard-section">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
       <div>
-        <h2 style="margin:0;">🏆 各組點名人員任務執行表現學期排行榜 <small>Semester Roll Call Marker Leaderboard</small></h2>
+        <h2 style="margin:0;">🏆 各組點名人員任務執行表現學期排行榜</h2>
         <p style="margin:0.25rem 0 0;font-size:0.83rem;color:#64748b;">
           統計整學期各組負責點名幹部（組長、副組長、代理人）的任務執行表現。評比指標：<b>點名完成次數</b>（越多次越好）、<b>搶先第一完成次數</b>、以及<b>平均點名時刻</b>（越早完成越好）。
         </p>
@@ -3222,10 +3278,10 @@ function teacherAttendanceBlock(c) {
   </div>
 
   <div class="teacher-section">
-    <h2>組員缺席排行榜 <small>Absence leaderboard</small></h2>
+    <h2>組員缺席排行榜</h2>
     <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
       <select data-act="attendance-stat-scope">
-        <option value="all" ${attendanceStatScope === 'all' ? 'selected' : ''}>整個學期 Whole semester</option>
+        <option value="all" ${attendanceStatScope === 'all' ? 'selected' : ''}>整個學期（Cả học kỳ）</option>
         <option value="date" ${attendanceStatScope === 'date' ? 'selected' : ''}>依日期（${esc(attendanceStatDate || todayDateStr())}）</option>
       </select>
     </div>
@@ -3278,18 +3334,18 @@ function teacherPasswordBlock(c) {
 
   return `
   <div class="teacher-section">
-    <h2>更改管理者密碼 <small>Change admin password</small></h2>
+    <h2>更改管理者密碼</h2>
     <form data-act="change-password" class="pw-form">
-      <div class="form-group"><label>目前密碼 Current</label><input type="password" name="current" required autocomplete="off"></div>
-      <div class="form-group"><label>新密碼 New（至少 4 碼）</label><input type="password" name="next" required minlength="4" autocomplete="off"></div>
-      <button class="btn btn-primary" type="submit">更新密碼 Update password</button>
+      <div class="form-group"><label>目前密碼</label><input type="password" name="current" required autocomplete="off"></div>
+      <div class="form-group"><label>新密碼（至少 4 碼）</label><input type="password" name="next" required minlength="4" autocomplete="off"></div>
+      <button class="btn btn-primary" type="submit">更新密碼</button>
     </form>
     <p class="file-path">更換老師管理後台密碼。預設密碼為 admin。</p>
   </div>
 
   <div class="teacher-section" style="margin-top:2rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
-      <h2 style="margin:0;">🔑 各組組長與副組長密碼管理 <small>Leader &amp; Vice-leader Passwords</small></h2>
+      <h2 style="margin:0;">🔑 各組組長與副組長密碼管理</h2>
       ${c ? `<span class="status-badge" style="background:#f1f5f9;color:#334155;">目前課程：<b>${esc(c.year)} ${esc(c.subject)}</b></span>` : ''}
     </div>
     <p class="file-path" style="margin:0 0 1rem;color:#475569;">
@@ -3303,12 +3359,12 @@ function teacherPasswordBlock(c) {
         <table class="roster" style="background:#fff;">
           <thead>
             <tr>
-              <th>組別 Group</th>
-              <th>職位 Role</th>
-              <th>學號 ID</th>
-              <th>姓名 Name</th>
-              <th>密碼狀態 Status</th>
-              <th style="width:210px;">密碼管理操作 Actions</th>
+              <th>組別</th>
+              <th>職位</th>
+              <th>學號</th>
+              <th>姓名</th>
+              <th>密碼狀態</th>
+              <th style="width:210px;">密碼管理操作</th>
             </tr>
           </thead>
           <tbody>
@@ -3341,12 +3397,12 @@ function teacherPasswordBlock(c) {
 }
 
 function rosterTable(c) {
-  if (!c.students.length) return '<p class="file-path">尚無學生 No students yet.</p>';
+  if (!c.students.length) return '<p class="file-path">尚無學生。</p>';
   const opts = s => ['<option value="">未分組 —</option>']
     .concat(c.groups.map(g => `<option value="${g.id}" ${s.groupId === g.id ? 'selected' : ''}>${esc(g.name)}</option>`))
     .join('');
   return `<div class="table-wrap"><table class="roster">
-    <thead><tr><th>學號 ID</th><th>姓名 Name</th><th>組別 Group</th><th>組長 Leader</th><th>期末考調分</th><th>動作</th></tr></thead>
+    <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th>組長</th><th>期末考調分</th><th>動作</th></tr></thead>
     <tbody>${c.students.map(s => {
       const g = c.groups.find(x => x.id === s.groupId);
       const adj = calcAdjustment(c, g, s);
@@ -3400,14 +3456,14 @@ function fallbackCopy(text, successMsg) {
 }
 
 function getSurveyStatus(c) {
-  if (!c) return { status: 'not_set', label: '尚未開放 Not Set', badgeClass: 'is-locked', timeDesc: '尚未設定時段', isOpen: false };
+  if (!c) return { status: 'not_set', label: '尚未開放<small class="vn-sub">Chưa mở</small>', badgeClass: 'is-locked', timeDesc: '尚未設定時段', isOpen: false };
   const start = c.surveyStart || '';
   const end = c.surveyEnd || '';
   const now = Date.now();
   if (start && now < parseDate(start)) {
     return {
       status: 'not_started',
-      label: '⏳ 尚未開始 Not Started（Chưa mở）',
+      label: '⏳ 尚未開始<small class="vn-sub">Chưa mở</small>',
       badgeClass: 'under-threshold',
       timeDesc: `開放時間：${start.replace('T', ' ')}`,
       isOpen: false,
@@ -3416,7 +3472,7 @@ function getSurveyStatus(c) {
   if (end && now > parseDate(end)) {
     return {
       status: 'ended',
-      label: '🔒 已截止 Closed（Đã đóng）',
+      label: '🔒 已截止<small class="vn-sub">Đã đóng</small>',
       badgeClass: 'is-locked',
       timeDesc: `截止時間：${end.replace('T', ' ')}`,
       isOpen: false,
@@ -3429,7 +3485,7 @@ function getSurveyStatus(c) {
 
   return {
     status: 'open',
-    label: '🟢 開放填寫中 Open（Đang mở）',
+    label: '🟢 開放填寫中<small class="vn-sub">Đang mở</small>',
     badgeClass: 'can-edit',
     timeDesc: desc,
     isOpen: true,
@@ -3501,147 +3557,6 @@ function renderCategoryBadge(category) {
   </span>`;
 }
 
-function publicSurveyDashboardBlock(c) {
-  if (!c) {
-    return `
-    <section class="block-section survey-dashboard-section" id="survey-dashboard-block">
-      <div class="block-header">
-        <div class="block-title-wrap">
-          <span class="step-badge" style="background:#0d9488;">問卷專區 Surveys</span>
-          <h2>問卷調查專區 Surveys <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Khu vực khảo sát）</small></h2>
-        </div>
-      </div>
-      <div class="course-selection-card" style="border-color:#99f6e4;">
-        <div class="empty-selection-guide">
-          <div class="guide-arrow" style="color:#0d9488;">👈</div>
-          <div class="guide-text">
-            <strong>請先選擇學年度分組 Please select a course（Vui lòng chọn khóa học）</strong>
-            <p>選擇左側任一項目後，將在此呈現該科目的問卷調查清單與填寫進度。（Chọn khóa học bên trái để xem tiến độ khảo sát.）</p>
-          </div>
-        </div>
-      </div>
-    </section>`;
-  }
-
-  const stats = getSurveyStats(c);
-  const status = getSurveyStatus(c);
-  const isStudent = state.session && state.session.role === 'student';
-
-  return `
-  <section class="block-section survey-dashboard-section" id="survey-dashboard-block">
-    <div class="block-header">
-      <div class="block-title-wrap">
-        <span class="step-badge" style="background:#0d9488;">問卷專區 Surveys</span>
-        <h2>問卷調查專區 Surveys &amp; Questionnaires <small style="font-weight:normal;font-size:0.88rem;color:#64748b;">（Khu vực khảo sát &amp; thăm dò）</small></h2>
-      </div>
-      <div class="survey-badge-indicator" style="display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;color:#0d9488;background:#f0fdfa;padding:0.25rem 0.7rem;border-radius:15px;border:1px solid #99f6e4;font-weight:600;">
-        <span class="link-pulse-dot" style="background:#0d9488;"></span>
-        <span>即時連動進度 Live Progress</span>
-      </div>
-    </div>
-
-    <div class="survey-dashboard-content">
-      <!-- 問卷樹狀目錄結構（預留未來擴充其他問卷，如學雜費一次繳交意願、分期繳交狀況等） -->
-      <div class="survey-tree-box">
-        <!-- 分組 1: 進行中調查 -->
-        <div class="survey-tree-group">
-          <div class="survey-tree-group-header">
-            <span class="group-folder-icon">📂</span>
-            <span class="group-folder-title">進行中調查 Active Surveys（Đang mở khảo sát）</span>
-            <span class="group-count-tag active">1</span>
-          </div>
-          <ul class="survey-tree-nav-list">
-            <li class="survey-nav-node active">
-              <div class="node-clickable">
-                <span class="node-emoji">💌</span>
-                <div class="node-info">
-                  <span class="node-main-title">生活關懷問卷</span>
-                  <span class="node-sub-title">Wellbeing Survey（Phiếu khảo sát chăm sóc cuộc sống）</span>
-                </div>
-                <span class="node-status-pill ${status.badgeClass}">${status.label}</span>
-              </div>
-            </li>
-          </ul>
-        </div>
-
-        <!-- 分組 2: 未來規劃調查（預留擴充空間） -->
-        <div class="survey-tree-group future">
-          <div class="survey-tree-group-header">
-            <span class="group-folder-icon">📁</span>
-            <span class="group-folder-title">未來規劃問卷 Upcoming Surveys（Kế hoạch khảo sát sắp tới）</span>
-            <span class="group-count-tag">2</span>
-          </div>
-          <ul class="survey-tree-nav-list">
-            <li class="survey-nav-node disabled" title="即將推出，敬請期待 Coming Soon">
-              <div class="node-clickable">
-                <span class="node-emoji">💳</span>
-                <div class="node-info">
-                  <span class="node-main-title">學雜費一次繳交意願調查</span>
-                  <span class="node-sub-title">Tuition Full Payment Intent（Khảo sát ý định nộp học phí 1 lần）</span>
-                </div>
-                <span class="node-status-pill upcoming">即將推出 Sắp ra mắt</span>
-              </div>
-            </li>
-            <li class="survey-nav-node disabled" title="即將推出，敬請期待 Coming Soon">
-              <div class="node-clickable">
-                <span class="node-emoji">📑</span>
-                <div class="node-info">
-                  <span class="node-main-title">學雜費分期繳交狀況調查</span>
-                  <span class="node-sub-title">Tuition Installment Status（Khảo sát tình trạng trả góp học phí）</span>
-                </div>
-                <span class="node-status-pill upcoming">即將推出 Sắp ra mắt</span>
-              </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <!-- 當前選中問卷之進度與互動卡片（生活關懷問卷） -->
-      <div class="public-survey-progress-card selected-survey-card" style="margin-top:0.85rem;">
-        <div class="progress-card-top">
-          <div class="progress-card-header">
-            <span class="header-icon">💌</span>
-            <div>
-              <h3 class="header-title" style="font-size:1.02rem;">
-                生活關懷問卷填寫狀況 <small style="font-weight:normal;color:#64748b;">Wellbeing Survey Status（Tiến độ khảo sát cuộc sống）</small>
-              </h3>
-              <div class="header-sub">
-                <span class="status-badge ${status.badgeClass}">${status.label}</span>
-                <span class="schedule-text">📅 ${status.timeDesc}</span>
-              </div>
-            </div>
-          </div>
-          <div class="progress-actions">
-            <button class="btn btn-secondary btn-sm" type="button" data-act="show-public-uncompleted-modal">
-              👥 查看尚未完成名單 (${stats.uncompleted} 人) / Xem danh sách chưa nộp
-            </button>
-            ${!isStudent ? `
-              <button class="btn btn-primary btn-sm" type="button" data-act="show-student-login">
-                🎓 學生登入填寫問卷 Sign In to Fill（Đăng nhập điền khảo sát）
-              </button>
-            ` : `
-              <button class="btn btn-primary btn-sm" type="button" data-act="jump-to-my-survey">
-                ✍️ 前往填寫／修改我的問卷 Fill/Edit Survey（Điền/Sửa phiếu khảo sát）
-              </button>
-            `}
-          </div>
-        </div>
-
-        <!-- 進度條 -->
-        <div class="progress-bar-wrap">
-          <div class="bar-labels">
-            <span class="bar-title">全班完成率 Class Completion（Tỷ lệ hoàn thành toàn lớp）: <b>${stats.completed}</b> / ${stats.total} 人</span>
-            <span class="bar-percent"><b>${stats.percent}%</b></span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill" style="width:${stats.percent}%;"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>`;
-}
-
 function studentSurveyPanel(c, s) {
   if (!c || !s) return '';
   const mySub = c.mySurvey;
@@ -3684,7 +3599,7 @@ function studentSurveyPanel(c, s) {
       <div class="survey-panel-title">
         <span class="survey-icon">💌</span>
         <div>
-          <h3 style="margin:0;font-size:1.15rem;color:#1e293b;">生活關懷問卷 <small style="font-weight:normal;color:#64748b;">Life Care Survey（Phiếu khảo sát Chăm sóc Cuộc sống）</small></h3>
+          <h3 style="margin:0;font-size:1.15rem;color:#1e293b;">生活關懷問卷<br><small class="vn-sub">Phiếu khảo sát chăm sóc cuộc sống</small></h3>
           <div class="survey-time-tag">
             <span class="status-badge ${status.badgeClass}">${status.label}</span>
             <span class="survey-schedule-desc">📅 ${status.timeDesc}</span>
@@ -3693,27 +3608,27 @@ function studentSurveyPanel(c, s) {
       </div>
       <div class="survey-header-status">
         ${isSubmitted
-          ? '<span class="status-badge meets-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">✅ 您已完成填寫 Submitted（Đã nộp）</span>'
-          : '<span class="status-badge under-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">⏳ 尚未填寫 Not Submitted（Chưa nộp）</span>'}
+          ? '<span class="status-badge meets-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">✅ 您已完成填寫<small class="vn-sub">Đã nộp</small></span>'
+          : '<span class="status-badge under-threshold" style="font-size:0.85rem;padding:0.35rem 0.75rem;">⏳ 尚未填寫<small class="vn-sub">Chưa nộp</small></span>'}
       </div>
     </div>
 
     ${isSubmitted ? `
       <div class="survey-submitted-notice">
         <div class="notice-main">
-          <strong>ℹ️ 您已完成此問卷填寫 You have submitted this survey（Bạn đã hoàn thành phiếu này）</strong>
-          <p>填寫紀錄已附帶時間戳記儲存。若後續個人情況有任何變動，您可以<b>隨時在此重新修改並再次送出</b>。每次修改的歷程內容均會完整記錄於異動日誌中。<br>
-          <small style="color:#64748b;">(You can modify your responses at any time. Modification history is logged. / Bạn có thể chỉnh sửa bất cứ lúc nào. Lịch sử sửa đổi sẽ được ghi lại.)</small></p>
+          <strong>ℹ️ 您已完成此問卷填寫<br><small class="vn-sub">Bạn đã hoàn thành phiếu này</small></strong>
+          <p>填寫紀錄已附帶時間戳記儲存。若後續個人情況有任何變動，您可以<b>隨時在此重新修改並再次送出</b>。每次修改的歷程內容均會完整記錄於異動日誌中。
+          <br><small class="vn-sub">Bạn có thể chỉnh sửa bất cứ lúc nào. Lịch sử sửa đổi sẽ được ghi lại.</small></p>
         </div>
         <div class="notice-meta">
-          <span>🕒 首次送出 First Submitted（Nộp lần đầu）：<b>${formatLogTime(mySub.createdAt)}</b></span>
-          <span>🔄 最後修改 Last Updated（Cập nhật cuối）：<b>${formatLogTime(mySub.updatedAt)}</b></span>
+          <span>🕒 首次送出：<b>${formatLogTime(mySub.createdAt)}</b><small class="vn-sub">Nộp lần đầu</small></span>
+          <span>🔄 最後修改：<b>${formatLogTime(mySub.updatedAt)}</b><small class="vn-sub">Cập nhật cuối</small></span>
         </div>
       </div>
     ` : `
       <div class="survey-guide-notice">
-        💡 <b>填寫說明 Guide（Hướng dẫn）：</b>本表單旨在了解同學們於就學、課程、生活、健康及打工租屋各方面的實際情況與需求，以提供即時輔導與關懷協助。學號與姓名已由系統自動帶入，請選擇符合現況的面向並簡述狀況。<br>
-        <small style="color:#64748b;">(Biểu mẫu này nhằm nắm bắt tình hình học tập và cuộc sống của sinh viên để nhà trường kịp thời hỗ trợ.)</small>
+        💡 <b>填寫說明：</b>本表單旨在了解同學們於就學、課程、生活、健康及打工租屋各方面的實際情況與需求，以提供即時輔導與關懷協助。學號與姓名已由系統自動帶入，請選擇符合現況的面向並簡述狀況。
+        <br><small class="vn-sub">Hướng dẫn: Biểu mẫu này nhằm nắm bắt tình hình học tập và cuộc sống của sinh viên để nhà trường kịp thời hỗ trợ.</small>
       </div>
     `}
 
@@ -3721,11 +3636,11 @@ function studentSurveyPanel(c, s) {
       <!-- 1 & 2: 學號與姓名（自動帶入） -->
       <div class="form-row survey-autofill-row">
         <div class="form-group">
-          <label>學號 (Mã số sinh viên) <span class="badge-autofill">🔒 自動帶入 Auto-filled</span></label>
+          <label>學號 <span class="badge-autofill">🔒 自動帶入</span><br><small class="vn-sub">Mã số sinh viên (tự động điền)</small></label>
           <input type="text" value="${esc(s.id)}" readonly disabled class="input-locked">
         </div>
         <div class="form-group">
-          <label>姓名 (Họ và tên) <span class="badge-autofill">🔒 自動帶入 Auto-filled</span></label>
+          <label>姓名 <span class="badge-autofill">🔒 自動帶入</span><br><small class="vn-sub">Họ và tên (tự động điền)</small></label>
           <input type="text" value="${esc(s.name)}" readonly disabled class="input-locked">
         </div>
       </div>
@@ -3733,7 +3648,7 @@ function studentSurveyPanel(c, s) {
       <!-- 3: 輔導面向(擇一) -->
       <div class="form-group survey-cat-group">
         <label style="font-size:0.95rem;font-weight:700;color:#1e293b;margin-bottom:0.6rem;">
-          輔導面向(擇一) Guidance category（Hướng tư vấn - chọn một） <span style="color:#dc2626;">*</span>
+          輔導面向（擇一） <span style="color:#dc2626;">*</span><br><small class="vn-sub">Hướng tư vấn - chọn một</small>
         </label>
         <div class="survey-category-picker">
           ${Object.entries(groups).map(([grpName, cats]) => `
@@ -3759,7 +3674,7 @@ function studentSurveyPanel(c, s) {
       <!-- 4: 自述目前狀況或反映問題 -->
       <div class="form-group" style="margin-top:1.25rem;">
         <label style="font-size:0.95rem;font-weight:700;color:#1e293b;margin-bottom:0.4rem;">
-          自述目前狀況或反映問題 Description / Issues（Tự thuật tình hình hiện tại hoặc phản ánh vấn đề） <span style="color:#dc2626;">*</span>
+          自述目前狀況或反映問題 <span style="color:#dc2626;">*</span><br><small class="vn-sub">Tự thuật tình hình hiện tại hoặc phản ánh vấn đề</small>
         </label>
         <textarea name="content" rows="4" style="width:100%;padding:0.75rem 0.9rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;font-size:0.92rem;line-height:1.5;" placeholder="請簡要描述您目前的學習、生活、健康狀況，或需要老師協助處理的問題... (Vui lòng mô tả ngắn gọn tình hình hiện tại hoặc những khó khăn bạn đang gặp phải cần hỗ trợ...)" ${!isEditable ? 'disabled' : ''} required>${esc(currentContent)}</textarea>
       </div>
@@ -3768,16 +3683,16 @@ function studentSurveyPanel(c, s) {
       <div class="survey-form-actions">
         ${isEditable ? `
           <button class="btn btn-primary" type="submit" style="padding:0.6rem 1.6rem;font-size:0.95rem;font-weight:600;">
-            ${isSubmitted ? '🔄 儲存修改問卷 Update Survey（Cập nhật lại khảo sát）' : '📤 送出生活關懷問卷 Submit Survey（Gửi phiếu khảo sát）'}
+            ${isSubmitted ? '🔄 儲存修改問卷<br><small class="vn-sub">Cập nhật lại khảo sát</small>' : '📤 送出生活關懷問卷<br><small class="vn-sub">Gửi phiếu khảo sát</small>'}
           </button>
         ` : `
           <button class="btn btn-secondary" type="button" disabled style="opacity:0.65;cursor:not-allowed;">
-            🔒 目前非開放時段，無法送出問卷 Not in open period
+            🔒 目前非開放時段，無法送出問卷<br><small class="vn-sub">Hiện không trong thời gian mở, không thể nộp</small>
           </button>
         `}
         ${(c.mySurveyLogs && c.mySurveyLogs.length) ? `
           <button class="btn btn-secondary" type="button" data-act="view-my-survey-logs" data-id="${esc(s.id)}" style="margin-left:0.5rem;padding:0.6rem 1.1rem;font-size:0.9rem;">
-            📜 我的修改紀錄 History (${c.mySurveyLogs.length} 筆)
+            📜 我的修改紀錄（${c.mySurveyLogs.length} 筆）<br><small class="vn-sub">Lịch sử chỉnh sửa</small>
           </button>
         ` : ''}
       </div>
@@ -3875,7 +3790,7 @@ function teacherWellbeingBlock(c) {
   if (!c) {
     return `
     <div class="teacher-section">
-      <h2>💌 生活關懷問卷管理 <small>Wellbeing Survey</small></h2>
+      <h2>💌 問卷管理</h2>
       <p class="file-path">請先從左側點選或建立課程，即可管理該課程的生活關懷問卷。</p>
     </div>`;
   }
@@ -3907,12 +3822,12 @@ function teacherWellbeingBlock(c) {
   <div class="teacher-section wellbeing-admin-section">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
       <div>
-        <h2 style="margin:0 0 0.35rem 0;">💌 生活關懷問卷管理 <small>${esc(courseLabel(c))}</small></h2>
+        <h2 style="margin:0 0 0.35rem 0;">💌 問卷管理 <small>${esc(courseLabel(c))}</small></h2>
         <p class="file-path" style="margin:0;">查閱全班生活關懷問卷回覆、追蹤尚未填寫名單、管理問卷開放時限與匯出完整紀錄。</p>
       </div>
       <div style="display:flex;gap:0.5rem;align-items:center;">
         <button class="btn btn-success btn-sm" type="button" data-act="export-survey-csv">
-          📥 匯出問卷紀錄 (Excel/CSV) Export
+          📥 匯出問卷紀錄（Excel/CSV）
         </button>
       </div>
     </div>
@@ -3933,7 +3848,7 @@ function teacherWellbeingBlock(c) {
           <input type="checkbox" name="hideUpcomingSurveys" ${c.hideUpcomingSurveys ? 'checked' : ''}>
           <span>隱藏前台尚未進行的問卷（只顯示進行中問卷）</span>
         </label>
-        <button class="btn btn-primary btn-sm" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">💾 儲存設定 Save</button>
+        <button class="btn btn-primary btn-sm" type="submit" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">💾 儲存設定</button>
         <button class="btn btn-secondary btn-sm" type="button" data-act="clear-survey-period" style="padding:0.4rem 0.85rem;font-size:0.85rem;margin:0;">♾️ 清空時限 (隨時開放)</button>
         <span class="status-badge ${status.badgeClass}" style="margin-left:auto;">${status.label} (${status.timeDesc})</span>
       </form>
@@ -3943,15 +3858,15 @@ function teacherWellbeingBlock(c) {
     <div class="stats" style="margin-bottom:1.5rem;">
       <div class="stat">
         <div class="value">${stats.total}</div>
-        <div class="label">修課學生總數 Total</div>
+        <div class="label">修課學生總數</div>
       </div>
       <div class="stat" style="border-left: 4px solid #16a34a;">
         <div class="value" style="color:#16a34a;">${stats.completed} <small style="font-size:0.9rem;color:#64748b;">(${stats.percent}%)</small></div>
-        <div class="label">已完成填寫 Completed</div>
+        <div class="label">已完成填寫</div>
       </div>
       <div class="stat" style="border-left: 4px solid ${stats.uncompleted > 0 ? '#ea580c' : '#cbd5e1'};">
         <div class="value" style="color:${stats.uncompleted > 0 ? '#ea580c' : '#64748b'};">${stats.uncompleted}</div>
-        <div class="label">尚未完成填寫 Pending</div>
+        <div class="label">尚未完成填寫</div>
       </div>
     </div>
 
@@ -3960,7 +3875,7 @@ function teacherWellbeingBlock(c) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.6rem;">
         <span style="font-weight:700;font-size:0.9rem;color:#1e293b;">📊 輔導面向回覆分佈（點選可快速篩選查看）：</span>
         ${surveyCategoryFilter !== 'all' ? `
-          <button class="tab-btn" data-act="filter-cat-chip" data-cat="all" style="font-size:0.8rem;padding:0.2rem 0.6rem;">清除篩選 Show All</button>
+          <button class="tab-btn" data-act="filter-cat-chip" data-cat="all" style="font-size:0.8rem;padding:0.2rem 0.6rem;">清除篩選</button>
         ` : ''}
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:0.45rem;">
@@ -4007,12 +3922,12 @@ function teacherWellbeingBlock(c) {
             <table class="roster">
               <thead>
                 <tr>
-                  <th>所屬組別 Group</th>
-                  <th>該組組長 Group Leader</th>
-                  <th>學號 Student ID</th>
-                  <th>姓名 Name</th>
-                  <th>問卷填寫狀態 Status</th>
-                  <th>操作 Actions</th>
+                  <th>所屬組別</th>
+                  <th>該組組長</th>
+                  <th>學號</th>
+                  <th>姓名</th>
+                  <th>問卷填寫狀態</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -4022,7 +3937,7 @@ function teacherWellbeingBlock(c) {
                   <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
                   <td><code>${esc(st.id)}</code></td>
                   <td><b>${esc(st.name)}</b></td>
-                  <td><span class="status-badge under-threshold">⏳ 尚未填寫 Pending</span></td>
+                  <td><span class="status-badge under-threshold">⏳ 尚未填寫</span></td>
                   <td style="white-space:nowrap;">
                     <button class="tab-btn" data-act="simulate-student" data-id="${esc(st.id)}" title="以此未填寫學生身分模擬登入測試問卷">🧪 模擬填寫</button>
                   </td>
@@ -4049,19 +3964,19 @@ function teacherWellbeingBlock(c) {
           <div style="display:flex;align-items:center;gap:0.4rem;">
             <label style="font-size:0.85rem;color:#64748b;">組別：</label>
             <select data-act="survey-group-filter" style="padding:0.35rem 0.6rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
-              <option value="all" ${surveyGroupFilter === 'all' ? 'selected' : ''}>全部組別 All Groups</option>
+              <option value="all" ${surveyGroupFilter === 'all' ? 'selected' : ''}>全部組別</option>
               ${c.groups.map(g => `<option value="${esc(g.id)}" ${surveyGroupFilter === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
             </select>
           </div>
           <div style="display:flex;align-items:center;gap:0.4rem;">
             <label style="font-size:0.85rem;color:#64748b;">面向：</label>
             <select data-act="survey-cat-filter" style="padding:0.35rem 0.6rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;">
-              <option value="all" ${surveyCategoryFilter === 'all' ? 'selected' : ''}>全部面向 All Categories</option>
+              <option value="all" ${surveyCategoryFilter === 'all' ? 'selected' : ''}>全部面向</option>
               ${SURVEY_CATEGORIES.map(cat => `<option value="${esc(cat)}" ${surveyCategoryFilter === cat ? 'selected' : ''}>${esc(cat)}</option>`).join('')}
             </select>
           </div>
           ${(surveyGroupFilter !== 'all' || surveyCategoryFilter !== 'all' || surveySearchText) ? `
-            <button class="tab-btn" data-act="reset-survey-filters" style="padding:0.35rem 0.7rem;font-size:0.85rem;">重設條件 Reset</button>
+            <button class="tab-btn" data-act="reset-survey-filters" style="padding:0.35rem 0.7rem;font-size:0.85rem;">重設條件</button>
           ` : ''}
         </div>
 
@@ -4070,14 +3985,14 @@ function teacherWellbeingBlock(c) {
             <table class="roster">
               <thead>
                 <tr>
-                  <th>學號 ID</th>
-                  <th>姓名 Name</th>
-                  <th>所屬組別 Group</th>
-                  <th>輔導面向 Category</th>
-                  <th>自述狀況與反映問題 Summary</th>
+                  <th>學號</th>
+                  <th>姓名</th>
+                  <th>所屬組別</th>
+                  <th>輔導面向</th>
+                  <th>自述狀況與反映問題</th>
                   <th>首次送出時間</th>
                   <th>最後更新時間</th>
-                  <th>操作 Actions</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -4108,7 +4023,7 @@ function teacherWellbeingBlock(c) {
             </table>
           </div>
         ` : `
-          <p class="file-path" style="text-align:center;padding:2rem;">查無符合條件的問卷資料 No matching submissions found.</p>
+          <p class="file-path" style="text-align:center;padding:2rem;">查無符合條件的問卷資料。</p>
         `}
       </div>
     ` : ''}
@@ -4120,7 +4035,7 @@ function teacherWellbeingBlock(c) {
           <p class="file-path" style="margin:0;">完整記錄學生填寫、重新修改以及老師編輯／刪除之所有問卷異動歷程。</p>
           ${logs.length ? `
             <button class="btn btn-neutral btn-sm" type="button" data-act="clear-course-survey-logs" style="color:#dc2626;border-color:#fca5a5;padding:0.35rem 0.85rem;font-size:0.82rem;margin:0;">
-              🗑️ 清空全班問卷日誌 Clear All
+              🗑️ 清空全班問卷日誌
             </button>
           ` : ''}
         </div>
@@ -4129,21 +4044,21 @@ function teacherWellbeingBlock(c) {
             <table class="roster">
               <thead>
                 <tr>
-                  <th>時間 Time</th>
-                  <th>動作 Action</th>
-                  <th>操作者 Operator</th>
-                  <th>對象學生 Student</th>
-                  <th>異動歷程說明 Details</th>
+                  <th>時間</th>
+                  <th>動作</th>
+                  <th>操作者</th>
+                  <th>對象學生</th>
+                  <th>異動歷程說明</th>
                 </tr>
               </thead>
               <tbody>
                 ${logs.map(l => {
                   const isTeacherOp = l.operatorRole === 'teacher';
                   const actionBadge = l.actionType === 'create'
-                    ? '<span class="status-badge meets-threshold">首次送出 Create</span>'
+                    ? '<span class="status-badge meets-threshold">首次送出</span>'
                     : l.actionType === 'delete'
-                    ? '<span class="status-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">刪除 Delete</span>'
-                    : '<span class="status-badge can-edit">修改更新 Update</span>';
+                    ? '<span class="status-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;">刪除</span>'
+                    : '<span class="status-badge can-edit">修改更新</span>';
                   return `
                   <tr>
                     <td>${formatLogTime(l.createdAt)}</td>
@@ -4164,7 +4079,7 @@ function teacherWellbeingBlock(c) {
             </table>
           </div>
         ` : `
-          <p class="file-path" style="text-align:center;padding:2rem;">目前尚無任何問卷異動日誌 No survey activity logs.</p>
+          <p class="file-path" style="text-align:center;padding:2rem;">目前尚無任何問卷異動日誌。</p>
         `}
       </div>
     ` : ''}
@@ -4225,7 +4140,7 @@ function surveyModalsHtml() {
     <div class="absence-modal-overlay" data-act="close-survey-detail-modal-bg">
       <div class="absence-modal-content" style="max-width:680px;">
         <div class="absence-modal-header">
-          <h3><span>💌</span> 生活關懷問卷明細 Survey Details</h3>
+          <h3><span>💌</span> 生活關懷問卷明細</h3>
           <button class="absence-modal-close-btn" type="button" data-act="close-survey-detail-modal">✕</button>
         </div>
         <div class="absence-modal-body">
@@ -4242,12 +4157,12 @@ function surveyModalsHtml() {
 
           ${sub ? `
             <div style="margin-bottom:1rem;">
-              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">輔導面向 Guidance Category：</label>
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">輔導面向：</label>
               <div>${renderCategoryBadge(sub.category)}</div>
             </div>
 
             <div style="margin-bottom:1.25rem;">
-              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">自述目前狀況或反映問題 Content：</label>
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.35rem;">自述目前狀況或反映問題：</label>
               <div class="survey-modal-content-box">
                 ${esc(sub.content || '')}
               </div>
@@ -4260,13 +4175,13 @@ function surveyModalsHtml() {
 
             <!-- 修改歷程日誌時間軸 -->
             <div>
-              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.5rem;">📜 歷程異動日誌 Modification History：</label>
+              <label style="font-size:0.85rem;font-weight:700;color:#64748b;display:block;margin-bottom:0.5rem;">📜 歷程異動日誌：</label>
               ${logs.length ? `
                 <div class="survey-logs-timeline">
                   ${logs.map(l => `
                     <div class="timeline-item">
                       <div class="timeline-date">${formatLogTime(l.createdAt)}</div>
-                      <div class="timeline-operator">操作者：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師</b>' : `<b>學生本人 (${esc(l.operatorName)})</b>`}</div>
+                      <div class="timeline-operator">操作者（Người thao tác）：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師（Giáo viên）</b>' : `<b>學生本人（Sinh viên）(${esc(l.operatorName)})</b>`}</div>
                       <div class="timeline-summary">${esc(l.diffSummary || '')}</div>
                     </div>
                   `).join('')}
@@ -4278,11 +4193,11 @@ function surveyModalsHtml() {
         <div class="absence-modal-footer">
           ${isTeacher && sub ? `
             <button class="btn btn-primary" type="button" data-act="teacher-edit-survey-modal" data-id="${esc(stId)}" style="margin:0;margin-right:auto;padding:0.4rem 1rem;font-size:0.85rem;">
-              ✏️ 修改內容 Edit
+              ✏️ 修改內容
             </button>
           ` : ''}
           <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;font-size:0.88rem;margin:0;" data-act="close-survey-detail-modal">
-            關閉 Close
+            關閉
           </button>
         </div>
       </div>
@@ -4296,7 +4211,7 @@ function surveyModalsHtml() {
     <div class="absence-modal-overlay" data-act="close-edit-survey-modal-bg">
       <div class="absence-modal-content" style="max-width:600px;">
         <div class="absence-modal-header">
-          <h3><span>✏️</span> 修改學生問卷資料 Edit Survey</h3>
+          <h3><span>✏️</span> 修改學生問卷資料</h3>
           <button class="absence-modal-close-btn" type="button" data-act="close-edit-survey-modal">✕</button>
         </div>
         <form data-act="teacher-edit-survey-submit">
@@ -4306,19 +4221,19 @@ function surveyModalsHtml() {
               學生：<b>${esc(studentName)}</b> (學號: ${esc(studentId)})
             </div>
             <div class="form-group" style="margin-bottom:1rem;">
-              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">輔導面向 Category：</label>
+              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">輔導面向：</label>
               <select name="category" style="width:100%;padding:0.5rem;border:1px solid #cbd5e1;border-radius:6px;font:inherit;" required>
                 ${SURVEY_CATEGORIES.map(cat => `<option value="${esc(cat)}" ${category === cat ? 'selected' : ''}>${esc(cat)}</option>`).join('')}
               </select>
             </div>
             <div class="form-group">
-              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">自述目前狀況或反映問題 Content：</label>
+              <label style="font-weight:700;display:block;margin-bottom:0.4rem;">自述目前狀況或反映問題：</label>
               <textarea name="content" rows="6" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:6px;font:inherit;" required>${esc(content)}</textarea>
             </div>
           </div>
           <div class="absence-modal-footer">
-            <button class="btn btn-secondary" type="button" data-act="close-edit-survey-modal" style="margin:0;padding:0.4rem 1rem;">取消 Cancel</button>
-            <button class="btn btn-primary" type="submit" style="margin:0;padding:0.4rem 1.4rem;">💾 儲存修改 Save</button>
+            <button class="btn btn-secondary" type="button" data-act="close-edit-survey-modal" style="margin:0;padding:0.4rem 1rem;">取消</button>
+            <button class="btn btn-primary" type="submit" style="margin:0;padding:0.4rem 1.4rem;">💾 儲存修改</button>
           </div>
         </form>
       </div>
@@ -4332,37 +4247,37 @@ function surveyModalsHtml() {
     <div class="absence-modal-overlay" data-act="close-survey-logs-modal-bg">
       <div class="absence-modal-content" style="max-width:620px;">
         <div class="absence-modal-header">
-          <h3><span>📜</span> 問卷異動日誌歷程 Survey History</h3>
+          <h3><span>📜</span> <span>問卷異動日誌歷程<br><small class="vn-sub">Lịch sử chỉnh sửa khảo sát</small></span></h3>
           <button class="absence-modal-close-btn" type="button" data-act="close-survey-logs-modal">✕</button>
         </div>
         <div class="absence-modal-body">
           <div style="background:#f8fafc;padding:0.6rem 0.85rem;border-radius:6px;margin-bottom:1rem;font-size:0.9rem;">
-            學生：<b>${esc(studentName)}</b> (${esc(studentId)})
+            學生（Sinh viên）：<b>${esc(studentName)}</b> (${esc(studentId)})
           </div>
           ${logs && logs.length ? `
             <div class="survey-logs-timeline">
               ${logs.map(l => `
                 <div class="timeline-item">
                   <div class="timeline-date">${formatLogTime(l.createdAt)}</div>
-                  <div class="timeline-operator">操作者：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師</b>' : `<b>學生本人 (${esc(l.operatorName)})</b>`}</div>
+                  <div class="timeline-operator">操作者（Người thao tác）：${l.operatorRole === 'teacher' ? '<b style="color:#7c3aed;">👨‍🏫 老師（Giáo viên）</b>' : `<b>學生本人（Sinh viên）(${esc(l.operatorName)})</b>`}</div>
                   <div class="timeline-summary">${esc(l.diffSummary || '')}</div>
                   ${l.prevCategory !== l.newCategory && (l.prevCategory || l.newCategory) ? `
                     <div style="font-size:0.8rem;color:#475569;margin-top:0.25rem;">
-                      面向異動：${esc(l.prevCategory || '無')} ➔ ${esc(l.newCategory)}
+                      面向異動（Thay đổi hướng tư vấn）：${esc(l.prevCategory || '無')} ➔ ${esc(l.newCategory)}
                     </div>
                   ` : ''}
                 </div>
               `).join('')}
             </div>
-          ` : '<p class="file-path">尚無異動紀錄。</p>'}
+          ` : '<p class="file-path">尚無異動紀錄。<br><small class="vn-sub">Chưa có lịch sử chỉnh sửa.</small></p>'}
         </div>
         <div class="absence-modal-footer">
           ${isTeacher ? `
             <button class="btn btn-neutral btn-sm" type="button" data-act="clear-student-survey-logs" data-id="${esc(studentId)}" style="margin:0;margin-right:auto;color:#dc2626;border-color:#fca5a5;padding:0.4rem 0.9rem;font-size:0.85rem;">
-              🗑️ 清除此學生修改紀錄 Clear History
+              🗑️ 清除此學生修改紀錄
             </button>
           ` : ''}
-          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-survey-logs-modal">關閉 Close</button>
+          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-survey-logs-modal">關閉<br><small class="vn-sub">Đóng</small></button>
         </div>
       </div>
     </div>`;
@@ -4374,7 +4289,7 @@ function surveyModalsHtml() {
     <div class="absence-modal-overlay" data-act="close-simulate-modal-bg">
       <div class="absence-modal-content" style="max-width:580px;">
         <div class="absence-modal-header" style="background:#fef3c7;border-bottom:1px solid #fde68a;">
-          <h3 style="color:#92400e;"><span>🧪</span> 轉換身分以學生登入測試問卷 Simulate Student</h3>
+          <h3 style="color:#92400e;"><span>🧪</span> 轉換身分以學生登入測試問卷</h3>
           <button class="absence-modal-close-btn" type="button" data-act="close-simulate-modal">✕</button>
         </div>
         <div class="absence-modal-body">
@@ -4382,7 +4297,7 @@ function surveyModalsHtml() {
             💡 選擇任一學生後，系統將立即將您轉換為該學生的真實登入身分，讓您測試填寫生活關懷問卷或組別功能。測試完成後可隨時一鍵返回老師後台，並可於後台隨時清除測試日誌。
           </div>
           <div class="form-group" style="margin-bottom:1rem;">
-            <label style="font-weight:700;display:block;margin-bottom:0.4rem;">請選擇要模擬的學生 Select Student：</label>
+            <label style="font-weight:700;display:block;margin-bottom:0.4rem;">請選擇要模擬的學生：</label>
             <select id="simulate-student-select" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;font-size:0.92rem;">
               ${c.students.map(st => {
                 const grp = st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
@@ -4395,9 +4310,9 @@ function surveyModalsHtml() {
           </div>
         </div>
         <div class="absence-modal-footer">
-          <button class="btn btn-secondary" type="button" data-act="close-simulate-modal" style="margin:0;padding:0.4rem 1rem;">取消 Cancel</button>
+          <button class="btn btn-secondary" type="button" data-act="close-simulate-modal" style="margin:0;padding:0.4rem 1rem;">取消</button>
           <button class="btn btn-primary" type="button" data-act="confirm-simulate-student" style="margin:0;padding:0.4rem 1.4rem;background:#d97706;border-color:#b45309;">
-            🚀 開始模擬登入 Start Simulation
+            🚀 開始模擬登入
           </button>
         </div>
       </div>
@@ -4411,46 +4326,46 @@ function surveyModalsHtml() {
     <div class="absence-modal-overlay" data-act="close-public-uncompleted-modal-bg">
       <div class="absence-modal-content" style="max-width:640px;">
         <div class="absence-modal-header">
-          <h3><span>📋</span> 尚未完成生活關懷問卷名單 Uncompleted List</h3>
+          <h3><span>📋</span> <span>尚未完成生活關懷問卷名單<br><small class="vn-sub">Danh sách chưa hoàn thành khảo sát</small></span></h3>
           <button class="absence-modal-close-btn" type="button" data-act="close-public-uncompleted-modal">✕</button>
         </div>
         <div class="absence-modal-body">
           <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:1rem;color:#92400e;font-size:0.88rem;">
-            全班共有 <b>${stats.uncompleted}</b> 位同學尚未完成生活關懷問卷，請組長與同組同學互相協助提醒催繳！
+            全班共有 <b>${stats.uncompleted}</b> 位同學尚未完成生活關懷問卷，請組長與同組同學互相協助提醒催繳！<br><small class="vn-sub">Còn ${stats.uncompleted} sinh viên chưa hoàn thành khảo sát, nhóm trưởng và các bạn vui lòng nhắc nhở nhau!</small>
           </div>
           ${stats.uncompletedList.length ? `
             <div class="table-wrap">
               <table class="roster">
                 <thead>
                   <tr>
-                    <th>所屬組別 Group</th>
-                    <th>組長 Leader</th>
-                    <th>姓名 Name</th>
-                    <th>狀態 Status</th>
+                    <th>所屬組別<br><small class="vn-sub">Nhóm</small></th>
+                    <th>組長<br><small class="vn-sub">Trưởng nhóm</small></th>
+                    <th>姓名<br><small class="vn-sub">Họ tên</small></th>
+                    <th>狀態<br><small class="vn-sub">Tình trạng</small></th>
                   </tr>
                 </thead>
                 <tbody>
                   ${stats.uncompletedList.map(st => `
                   <tr>
                     <td><b>${esc(st.groupName)}</b></td>
-                    <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;">（無組長）</span>'}</td>
+                    <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;">（無組長）</span><small class="vn-sub">Chưa có trưởng nhóm</small>'}</td>
                     <td><b>${esc(st.name)}</b></td>
-                    <td><span class="status-badge under-threshold">⏳ 尚未填寫</span></td>
+                    <td><span class="status-badge under-threshold">⏳ 尚未填寫<small class="vn-sub">Chưa nộp</small></span></td>
                   </tr>`).join('')}
                 </tbody>
               </table>
             </div>
           ` : `
             <div style="text-align:center;padding:1.5rem;color:#166534;background:#f0fdf4;border-radius:8px;">
-              🎉 全班同學皆已完成問卷填寫！
+              🎉 全班同學皆已完成問卷填寫！<br><small class="vn-sub">Tất cả sinh viên đã hoàn thành khảo sát!</small>
             </div>
           `}
         </div>
         <div class="absence-modal-footer">
           <button class="btn btn-primary btn-sm" type="button" data-act="copy-public-uncompleted-survey" style="margin:0;margin-right:auto;padding:0.4rem 1rem;">
-            📋 一鍵複製未完成名單 (Sao chép danh sách)
+            📋 一鍵複製未完成名單<br><small class="vn-sub">Sao chép danh sách</small>
           </button>
-          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-public-uncompleted-modal">關閉 Close</button>
+          <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;margin:0;" data-act="close-public-uncompleted-modal">關閉<br><small class="vn-sub">Đóng</small></button>
         </div>
       </div>
     </div>`;
@@ -4463,7 +4378,7 @@ function studentScreen() {
   return authScreen();
 }
 
-/* ===== 組長／副組長：點名面板 Attendance（Điểm danh）===== */
+/* ===== 組長／副組長：點名面板 ===== */
 function attendanceLeaderPanel(c, g, s, mates) {
   const sessions = attendanceSessions(c);
   const today = todayDateStr();
@@ -4474,7 +4389,7 @@ function attendanceLeaderPanel(c, g, s, mates) {
     courseId: c.id,
     date: today,
     timeSlot: '',
-    name: '一般日常點名 Daily Attendance（Điểm danh hàng ngày）',
+    name: '一般日常點名（Điểm danh hàng ngày）',
     isDaily: true,
   };
 
@@ -4494,17 +4409,17 @@ function attendanceLeaderPanel(c, g, s, mates) {
     <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.45rem 0.25rem;border-bottom:1px dashed #e2e8f0;">
       <span style="font-size:0.92rem;">
         <b>${esc(m.name)}</b> <span style="color:#64748b;font-size:0.88rem;">(${esc(m.id)})</span>
-        ${m.isLeader ? ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">👑組長 Leader（Trưởng nhóm）</span>' : m.isVice ? ' <span class="status-badge" style="background:#f0fdf4;color:#166534;font-size:0.75rem;">⭐副組長 Vice（Phó nhóm）</span>' : ''}
-        ${!st ? ' <span class="status-badge under-threshold" style="font-size:0.75rem;">尚未確認 Unconfirmed（Chưa xác nhận）</span>' : ''}
+        ${m.isLeader ? ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">👑組長<small class="vn-sub">Trưởng nhóm</small></span>' : m.isVice ? ' <span class="status-badge" style="background:#f0fdf4;color:#166534;font-size:0.75rem;">⭐副組長<small class="vn-sub">Phó nhóm</small></span>' : ''}
+        ${!st ? ' <span class="status-badge under-threshold" style="font-size:0.75rem;">尚未確認<small class="vn-sub">Chưa xác nhận</small></span>' : ''}
       </span>
       <span style="display:flex;gap:1.25rem;font-size:0.88rem;">
         <label style="cursor:pointer;display:inline-flex;align-items:center;gap:0.3rem;">
           <input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''} required>
-          <span style="color:#166534;font-weight:${st === 'present' ? '700' : 'normal'};">出席 Present（Có mặt）</span>
+          <span style="color:#166534;font-weight:${st === 'present' ? '700' : 'normal'};">出席<small class="vn-sub">Có mặt</small></span>
         </label>
         <label style="cursor:pointer;display:inline-flex;align-items:center;gap:0.3rem;">
           <input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''} required>
-          <span style="color:#dc2626;font-weight:${st === 'absent' ? '700' : 'normal'};">缺席 Absent（Vắng mặt）</span>
+          <span style="color:#dc2626;font-weight:${st === 'absent' ? '700' : 'normal'};">缺席<small class="vn-sub">Vắng mặt</small></span>
         </label>
       </span>
     </div>`;
@@ -4517,30 +4432,30 @@ function attendanceLeaderPanel(c, g, s, mates) {
       <div style="display:flex;align-items:center;gap:0.5rem;">
         <span style="font-size:1.35rem;">📅</span>
         <h4 style="margin:0;font-size:1.1rem;color:#1e3a8a;">
-          今日一般日常點名 Daily Attendance <small style="font-weight:normal;color:#64748b;">（Điểm danh hàng ngày hôm nay）</small>
+          今日一般日常點名<br><small class="vn-sub">Điểm danh hàng ngày hôm nay</small>
         </h4>
       </div>
       <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-        <span class="status-badge" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600;">日期 Date（Ngày）：${esc(today)}</span>
+        <span class="status-badge" style="background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600;">日期：${esc(today)}<small class="vn-sub">Ngày</small></span>
         ${dailyCompleted
-          ? `<span class="status-badge can-edit" style="font-size:0.85rem;">✅ 今日點名已完成 Completed（出席 Có mặt ${dailyPresentCount} / 缺席 Vắng ${dailyAbsentCount}）</span>`
+          ? `<span class="status-badge can-edit" style="font-size:0.85rem;">✅ 今日點名已完成（出席 ${dailyPresentCount} / 缺席 ${dailyAbsentCount}）<small class="vn-sub">Đã hoàn thành (Có mặt ${dailyPresentCount} / Vắng ${dailyAbsentCount})</small></span>`
           : dailyMarkedMates.length > 0
-          ? `<span class="status-badge under-threshold" style="font-size:0.85rem;">⚠️ 點名進行中 In progress（已確認 Đang điểm danh: ${dailyMarkedMates.length}/${mates.length}）</span>`
-          : `<span class="status-badge under-threshold" style="font-size:0.85rem;">⏳ 今日尚未點名 Not Yet Taken（Hôm nay chưa điểm danh）</span>`}
+          ? `<span class="status-badge under-threshold" style="font-size:0.85rem;">⚠️ 點名進行中（已確認 ${dailyMarkedMates.length}/${mates.length}）<small class="vn-sub">Đang điểm danh: ${dailyMarkedMates.length}/${mates.length}</small></span>`
+          : `<span class="status-badge under-threshold" style="font-size:0.85rem;">⏳ 今日尚未點名<small class="vn-sub">Hôm nay chưa điểm danh</small></span>`}
       </div>
     </div>
     <div style="background:#f8fafc;border-left:4px solid #2563eb;padding:0.6rem 0.85rem;margin-bottom:0.85rem;font-size:0.85rem;color:#334155;border-radius:0 6px 6px 0;">
-      💡 <b>一般日常點名無需老師在後台建立時段</b>。請組長或副組長<b>逐一確認</b>每位組員今天是否出席或缺席，確認後點選下方送出（當日可隨時重新更新修正）。<br>
-      <small style="color:#64748b;">(Daily attendance does not require teacher creation. Leaders and vice leaders please verify each member's attendance one by one. Can be updated anytime today. / Điểm danh hàng ngày không cần giáo viên tạo trước. Trưởng nhóm hoặc phó nhóm vui lòng xác nhận riêng cho từng thành viên có mặt hoặc vắng mặt hôm nay. Trong ngày có thể cập nhật lại bất kỳ lúc nào.)</small>
+      💡 <b>一般日常點名無需老師在後台建立時段</b>。請組長或副組長<b>逐一確認</b>每位組員今天是否出席或缺席，確認後點選下方送出（當日可隨時重新更新修正）。
+      <br><small class="vn-sub">Điểm danh hàng ngày không cần giáo viên tạo trước. Trưởng nhóm hoặc phó nhóm vui lòng xác nhận riêng cho từng thành viên có mặt hoặc vắng mặt hôm nay. Trong ngày có thể cập nhật lại bất kỳ lúc nào.</small>
     </div>
     <form data-act="mark-attendance" data-session="${todayDaily.id}" data-group="${g.id}" class="attendance-mark-form">
       <div class="attendance-mark-list">
         ${renderMemberRows(dailyRecByRef)}
       </div>
       <div style="margin-top:0.9rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;">
-        <span style="font-size:0.82rem;color:#64748b;">※ 請逐一為每位組員勾選出缺席後送出 Verify each member one by one（Vui lòng chọn riêng cho tất cả thành viên）。</span>
+        <span style="font-size:0.82rem;color:#64748b;">※ 請逐一為每位組員勾選出缺席後送出。<small class="vn-sub">Vui lòng chọn riêng cho tất cả thành viên rồi gửi.</small></span>
         <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.92rem;">
-          ${dailyMarkedMates.length > 0 ? '🔄 重新更新今日日常點名 Update Daily Attendance（Cập nhật lại điểm danh）' : '📋 送出今日日常點名 Submit Daily Attendance（Gửi điểm danh hàng ngày）'}
+          ${dailyMarkedMates.length > 0 ? '🔄 重新更新今日日常點名<br><small class="vn-sub">Cập nhật lại điểm danh</small>' : '📋 送出今日日常點名<br><small class="vn-sub">Gửi điểm danh hàng ngày</small>'}
         </button>
       </div>
     </form>
@@ -4559,12 +4474,12 @@ function attendanceLeaderPanel(c, g, s, mates) {
       <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
         <span style="font-size:1.35rem;">📌</span>
         <h4 style="margin:0;font-size:1.1rem;color:#b45309;">
-          重要集會與額外點名 Special Sessions &amp; Assemblies <small style="font-weight:normal;color:#78350f;">（Điểm danh sự kiện / tập trung quan trọng）</small>
+          重要集會與額外點名<br><small class="vn-sub">Điểm danh sự kiện / tập trung quan trọng</small>
         </h4>
       </div>
       <p class="file-path" style="margin:0 0 0.75rem;">
-        老師已在後台指定重要集會或額外點名時段，請組長或副組長逐一確認點名：<br>
-        <small style="color:#64748b;">(Teacher has scheduled special assembly/session attendance. Leader/vice leader please verify: / Giáo viên đã chỉ định đợt điểm danh sự kiện đặc biệt, trưởng/phó nhóm vui lòng điểm danh:)</small>
+        老師已在後台指定重要集會或額外點名時段，請組長或副組長逐一確認點名：
+        <br><small class="vn-sub">Giáo viên đã chỉ định đợt điểm danh sự kiện đặc biệt, trưởng/phó nhóm vui lòng điểm danh:</small>
       </p>
       ${activeSpecialSessions.map(session => {
         const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
@@ -4582,8 +4497,8 @@ function attendanceLeaderPanel(c, g, s, mates) {
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.6rem;">
               <b style="font-size:0.98rem;color:#9a3412;">${esc(label)}</b>
               <div style="display:flex;align-items:center;gap:0.4rem;">
-                <span class="status-badge can-edit">${isToday ? '今日可編輯 Today（Hôm nay）' : '老師已開放補登 Unlocked（Đã mở bổ sung）'}</span>
-                ${done ? `<span class="status-badge can-edit">✅ 已完成 Completed（出席 Có mặt ${presents} / 缺席 Vắng ${absents}）</span>` : ''}
+                <span class="status-badge can-edit">${isToday ? '今日可編輯<small class="vn-sub">Hôm nay</small>' : '老師已開放補登<small class="vn-sub">Đã mở bổ sung</small>'}</span>
+                ${done ? `<span class="status-badge can-edit">✅ 已完成（出席 ${presents} / 缺席 ${absents}）<small class="vn-sub">Đã hoàn thành (Có mặt ${presents} / Vắng ${absents})</small></span>` : ''}
               </div>
             </div>
             <div class="attendance-mark-list">
@@ -4591,7 +4506,7 @@ function attendanceLeaderPanel(c, g, s, mates) {
             </div>
             <div style="margin-top:0.75rem;text-align:right;">
               <button class="btn btn-primary" type="submit" style="padding:0.45rem 1.2rem;font-size:0.9rem;">
-                ${marked.length > 0 ? '🔄 重新更新此時段點名 Update Attendance（Cập nhật điểm danh）' : '📋 送出重要集會點名 Submit Attendance（Gửi điểm danh sự kiện）'}
+                ${marked.length > 0 ? '🔄 重新更新此時段點名<br><small class="vn-sub">Cập nhật điểm danh</small>' : '📋 送出重要集會點名<br><small class="vn-sub">Gửi điểm danh sự kiện</small>'}
               </button>
             </div>
           </form>
@@ -4601,8 +4516,8 @@ function attendanceLeaderPanel(c, g, s, mates) {
   } else {
     specialCard = `
     <div style="background:#fffbeb;border:1px dashed #fcd34d;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1.25rem;font-size:0.86rem;color:#92400e;">
-      📌 <b>重要集會與額外點名時段 Special Sessions &amp; Assemblies</b>：目前無老師設定的特殊集會點名時段。若遇系週會、專案評審或重要集會，老師將於後台加註名稱並新增時段，屆時將在此處開放額外點名。<br>
-      <small style="color:#b45309;">(Currently no special sessions. Teacher will create them for department assemblies or project reviews if needed. / Hiện không có đợt điểm danh sự kiện đặc biệt. Khi có sự kiện khoa hoặc đánh giá đồ án, giáo viên sẽ tạo đợt điểm danh tại đây.)</small>
+      📌 <b>重要集會與額外點名時段</b>：目前無老師設定的特殊集會點名時段。若遇系週會、專案評審或重要集會，老師將於後台加註名稱並新增時段，屆時將在此處開放額外點名。
+      <br><small class="vn-sub">Hiện không có đợt điểm danh sự kiện đặc biệt. Khi có sự kiện khoa hoặc đánh giá đồ án, giáo viên sẽ tạo đợt điểm danh tại đây.</small>
     </div>`;
   }
 
@@ -4611,7 +4526,7 @@ function attendanceLeaderPanel(c, g, s, mates) {
   if (historySessions.length > 0) {
     historySection = `
     <div style="margin-top:1.25rem;">
-      <h5 style="margin:0 0 0.5rem;color:#475569;font-size:0.95rem;">📜 歷史點名紀錄 Past Attendance Records（Lịch sử điểm danh）</h5>
+      <h5 style="margin:0 0 0.5rem;color:#475569;font-size:0.95rem;">📜 歷史點名紀錄<br><small class="vn-sub">Lịch sử điểm danh</small></h5>
       ${historySessions.map(session => {
         const recs = attendanceRecordsFor(c, session.id).filter(r => r.groupId === g.id);
         const label = attendanceSessionLabel(session) || session.date;
@@ -4625,16 +4540,16 @@ function attendanceLeaderPanel(c, g, s, mates) {
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
             <span>
               <b>${esc(label)}</b>
-              ${isDaily ? ' <span class="status-badge" style="background:#e0f2fe;color:#0369a1;font-size:0.75rem;">日常點名 Daily（Hàng ngày）</span>' : ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">重要集會 Special（Sự kiện）</span>'}
+              ${isDaily ? ' <span class="status-badge" style="background:#e0f2fe;color:#0369a1;font-size:0.75rem;">日常點名<small class="vn-sub">Hàng ngày</small></span>' : ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">重要集會<small class="vn-sub">Sự kiện</small></span>'}
             </span>
-            <span class="status-badge is-locked">已鎖定 Locked（Đã khóa）</span>
+            <span class="status-badge is-locked">已鎖定<small class="vn-sub">Đã khóa</small></span>
           </div>
           <div style="margin-top:0.25rem;color:#475569;">
-            ${!recs.length ? '尚未點名 Not taken（Chưa điểm danh）'
-              : absentNames.length ? `缺席 Absent（Vắng mặt）：${absentNames.map(esc).join('、')}`
-              : '✅ 全員到齊 All present（Đầy đủ）'}
+            ${!recs.length ? '尚未點名<small class="vn-sub">Chưa điểm danh</small>'
+              : absentNames.length ? `缺席：${absentNames.map(esc).join('、')}<small class="vn-sub">Vắng mặt</small>`
+              : '✅ 全員到齊<small class="vn-sub">Đầy đủ</small>'}
           </div>
-          <div style="margin-top:0.2rem;font-size:0.76rem;color:#94a3b8;">如需補登請聯絡老師開放權限 Ask teacher to unlock（Liên hệ giáo viên để mở lại）</div>
+          <div style="margin-top:0.2rem;font-size:0.76rem;color:#94a3b8;">如需補登請聯絡老師開放權限<small class="vn-sub">Liên hệ giáo viên để mở lại</small></div>
         </div>`;
       }).join('')}
     </div>`;
@@ -4643,11 +4558,11 @@ function attendanceLeaderPanel(c, g, s, mates) {
   return `
   <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#f8fafc;border:2px solid #cbd5e1;border-radius:12px;">
     <h3 style="margin:0 0 0.5rem;color:#1e3a8a;display:flex;align-items:center;gap:0.4rem;">
-      <span>📋</span> 點名面板 Attendance <small style="color:#64748b;font-weight:normal;">（Điểm danh）</small>
+      <span>📋</span> <span>點名面板<br><small class="vn-sub">Bảng điểm danh</small></span>
     </h3>
     <p class="file-path" style="margin:0 0 1rem;">
-      組長 Leader（Trưởng nhóm）或副組長 Vice leader（Phó nhóm）可於當天直接進行<b>一般日常點名</b>；若遇<b>重要集會</b>，亦可於下方專區進行額外點名。超過當天需老師開放補登權限。<br>
-      <small style="color:#64748b;">(Leader or vice leader can take daily attendance directly today. If special assemblies occur, take attendance in the special section below. After today, teacher permission is required to unlock. / Trưởng nhóm hoặc phó nhóm có thể tự điểm danh hàng ngày trong ngày hôm nay. Nếu có sự kiện quan trọng, hãy điểm danh ở phần sự kiện bên dưới. Qua ngày cần giáo viên mở quyền bổ sung.)</small>
+      組長或副組長可於當天直接進行<b>一般日常點名</b>；若遇<b>重要集會</b>，亦可於下方專區進行額外點名。超過當天需老師開放補登權限。
+      <br><small class="vn-sub">Trưởng nhóm hoặc phó nhóm có thể tự điểm danh hàng ngày trong ngày hôm nay. Nếu có sự kiện quan trọng, hãy điểm danh ở phần sự kiện bên dưới. Qua ngày cần giáo viên mở quyền bổ sung.</small>
     </p>
     ${dailyCard}
     ${specialCard}
@@ -4655,7 +4570,7 @@ function attendanceLeaderPanel(c, g, s, mates) {
     <div style="margin-top:1.25rem;">
       ${renderAbsenceLeaderboardCard(c, {
         title: `${esc(g.name)} 組員缺席排行榜`,
-        subTitle: 'Group absence leaderboard（Bảng xếp hạng vắng mặt của nhóm）',
+        subTitle: 'Bảng xếp hạng vắng mặt của nhóm',
         filterMates: mates,
         scopeAct: 'leader-attendance-stat-scope',
         currentScope: leaderAttendanceStatScope,
@@ -4678,13 +4593,13 @@ function attendanceDelegatePanel(c, del) {
 
   return `
   <div class="leader-eval-panel" style="margin-top:1.5rem;padding:1.25rem;background:#fdf4ff;border:2px solid #e9d5ff;border-radius:10px;">
-    <h3 style="margin:0 0 0.5rem;color:#6b21a8;">🔁 跨組代理點名 Cross-group delegate（Điểm danh hộ nhóm khác）</h3>
+    <h3 style="margin:0 0 0.5rem;color:#6b21a8;">🔁 跨組代理點名<br><small class="vn-sub">Điểm danh hộ nhóm khác</small></h3>
     <p class="file-path" style="margin:0 0 0.75rem;">
-      老師已授權您代理「${esc(del.groupName)}」於 ${esc(label)} 的點名（該組組長／副組長皆未到）。<br>
-      <small style="color:#6b21a8;">(Authorized by teacher to mark attendance for "${esc(del.groupName)}" at ${esc(label)}. / Được giáo viên ủy quyền điểm danh hộ cho "${esc(del.groupName)}" tại ${esc(label)} vì trưởng/phó nhóm vắng mặt.)</small>
+      老師已授權您代理「${esc(del.groupName)}」於 ${esc(label)} 的點名（該組組長／副組長皆未到）。
+      <br><small class="vn-sub">Được giáo viên ủy quyền điểm danh hộ cho "${esc(del.groupName)}" tại ${esc(label)} vì trưởng/phó nhóm vắng mặt.</small>
     </p>
     ${!editable ? `
-      <p class="file-path" style="color:#991b1b;">此授權已失效或已逾期。This authorization is no longer active.（Ủy quyền này đã hết hạn hoặc không còn hiệu lực.）</p>
+      <p class="file-path" style="color:#991b1b;">此授權已失效或已逾期。<br><small class="vn-sub">Ủy quyền này đã hết hạn hoặc không còn hiệu lực.</small></p>
     ` : `
     <form data-act="mark-attendance" data-session="${session.id}" data-group="${del.groupId}" class="attendance-mark-form">
       <div class="attendance-mark-list">
@@ -4695,17 +4610,17 @@ function attendanceDelegatePanel(c, del) {
           <div class="attendance-row" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.3rem 0;border-bottom:1px dashed #e2e8f0;">
             <span>
               ${esc(m.name)} (${esc(m.id)})
-              ${m.isLeader ? ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">👑組長 Leader（Trưởng nhóm）</span>' : m.isVice ? ' <span class="status-badge" style="background:#f0fdf4;color:#166534;font-size:0.75rem;">⭐副組長 Vice（Phó nhóm）</span>' : ''}
-              ${!st ? ' <span class="status-badge under-threshold" style="font-size:0.75rem;">尚未確認 Unconfirmed（Chưa xác nhận）</span>' : ''}
+              ${m.isLeader ? ' <span class="status-badge" style="background:#fef3c7;color:#92400e;font-size:0.75rem;">👑組長<small class="vn-sub">Trưởng nhóm</small></span>' : m.isVice ? ' <span class="status-badge" style="background:#f0fdf4;color:#166534;font-size:0.75rem;">⭐副組長<small class="vn-sub">Phó nhóm</small></span>' : ''}
+              ${!st ? ' <span class="status-badge under-threshold" style="font-size:0.75rem;">尚未確認<small class="vn-sub">Chưa xác nhận</small></span>' : ''}
             </span>
             <span style="display:flex;gap:0.75rem;font-size:0.85rem;">
-              <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''} required> 出席 Present（Có mặt）</label>
-              <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''} required> 缺席 Absent（Vắng mặt）</label>
+              <label><input type="radio" name="att_${esc(key)}" value="present" ${st === 'present' ? 'checked' : ''} required> 出席<small class="vn-sub">Có mặt</small></label>
+              <label><input type="radio" name="att_${esc(key)}" value="absent" ${st === 'absent' ? 'checked' : ''} required> 缺席<small class="vn-sub">Vắng mặt</small></label>
             </span>
           </div>`;
         }).join('')}
       </div>
-      <button class="btn btn-primary" type="submit" style="margin-top:0.75rem;padding:0.4rem 1.1rem;font-size:0.88rem;">送出點名 Submit Attendance（Gửi điểm danh）</button>
+      <button class="btn btn-primary" type="submit" style="margin-top:0.75rem;padding:0.4rem 1.1rem;font-size:0.88rem;">送出點名<br><small class="vn-sub">Gửi điểm danh</small></button>
     </form>`}
   </div>`;
 }
@@ -4729,7 +4644,7 @@ function teacherPreviewBanner() {
           ✍️ 前往問卷表單
         </button>
         <button class="btn btn-primary btn-sm" data-act="exit-simulation" style="padding:0.35rem 0.95rem;font-size:0.85rem;margin:0;background:#f59e0b;border-color:#d97706;font-weight:700;color:#ffffff;">
-          ↩️ 結束測試，返回老師後台 Exit
+          ↩️ 結束測試，返回老師後台
         </button>
       </div>
     </div>`;
@@ -4751,7 +4666,7 @@ function teacherPreviewBanner() {
         切換為${isLeader ? '一般學生視角' : '組長登入視角'}
       </button>
       <button class="btn btn-primary" data-act="switch-preview" data-mode="admin" style="padding:0.35rem 0.9rem;font-size:0.85rem;margin:0;">
-        ⚙️ 返回老師後台 Exit Preview
+        ⚙️ 返回老師後台
       </button>
     </div>
   </div>`;
@@ -4760,13 +4675,15 @@ function teacherPreviewBanner() {
 /* ===== 缺席明細 Modal 彈窗元件 ===== */
 function absenceDetailModalHtml() {
   if (!viewingAbsenceModal) return '';
-  const { studentName, studentId, details } = viewingAbsenceModal;
+  const { studentKey, studentName, studentId, details } = viewingAbsenceModal;
+  // 僅老師後台（非預覽模式）可撤銷缺曠紀錄，撤銷會寫入點名異動日誌
+  const canRevoke = state.session && state.session.role === 'teacher' && teacherPreviewMode === 'admin';
   return `
   <div class="absence-modal-overlay" data-act="close-absence-modal-bg">
     <div class="absence-modal-content">
       <div class="absence-modal-header">
-        <h3><span>📋</span> 缺席明細 Absence Details</h3>
-        <button class="absence-modal-close-btn" type="button" data-act="close-absence-modal" title="關閉 Close">✕</button>
+        <h3><span>📋</span> <span>缺席明細<br><small class="vn-sub">Chi tiết vắng mặt</small></span></h3>
+        <button class="absence-modal-close-btn" type="button" data-act="close-absence-modal" title="關閉 / Đóng">✕</button>
       </div>
       <div class="absence-modal-body">
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.4rem;">
@@ -4775,7 +4692,7 @@ function absenceDetailModalHtml() {
             <span style="color:#64748b;font-size:0.85rem;margin-left:0.35rem;">(${esc(studentId)})</span>
           </div>
           <span style="font-size:0.85rem;font-weight:700;color:#dc2626;background:#fee2e2;padding:0.15rem 0.5rem;border-radius:999px;">
-            共計缺席 ${details.length} 次
+            共計缺席 ${details.length} 次<small class="vn-sub">Tổng cộng vắng ${details.length} lần</small>
           </span>
         </div>
         ${details.length ? `
@@ -4786,18 +4703,19 @@ function absenceDetailModalHtml() {
                 <div style="flex:1;">
                   <div class="absence-detail-name">${esc(d.activityName)}</div>
                   <div style="margin-top:0.2rem;font-size:0.78rem;color:#64748b;">
-                    ${d.isDaily ? '<span class="absence-detail-tag">日常點名 Daily</span>' : '<span class="absence-detail-tag" style="background:#fef3c7;color:#92400e;">重要集會 Special</span>'}
-                    ${d.markedByName ? `<span style="margin-left:0.4rem;">點名者：${esc(d.markedByName)}</span>` : ''}
+                    ${d.isDaily ? '<span class="absence-detail-tag">日常點名（Hàng ngày）</span>' : '<span class="absence-detail-tag" style="background:#fef3c7;color:#92400e;">重要集會（Sự kiện）</span>'}
+                    ${d.markedByName ? `<span style="margin-left:0.4rem;">點名者（Người điểm danh）：${esc(d.markedByName)}</span>` : ''}
                   </div>
                 </div>
+                ${canRevoke ? `<button class="tab-btn" type="button" data-act="revoke-absence" data-session="${esc(d.sessionId)}" data-student="${esc(studentKey)}" title="撤銷此筆缺曠紀錄（改為出席，並記錄於點名異動日誌）" style="align-self:center;padding:0.2rem 0.55rem;font-size:0.78rem;color:#b91c1c;border-color:#fca5a5;">↩️ 撤銷缺曠</button>` : ''}
               </div>
             `).join('')}
           </div>
-        ` : '<p class="file-path" style="text-align:center;color:#166534;">✅ 該學生目前無任何缺席紀錄。</p>'}
+        ` : '<p class="file-path" style="text-align:center;color:#166534;">✅ 該學生目前無任何缺席紀錄。<br><small class="vn-sub">Sinh viên này hiện không có ghi nhận vắng mặt.</small></p>'}
       </div>
       <div class="absence-modal-footer">
         <button class="btn btn-secondary" style="padding:0.4rem 1.1rem;font-size:0.88rem;margin:0;" data-act="close-absence-modal">
-          關閉 Close
+          關閉<br><small class="vn-sub">Đóng</small>
         </button>
       </div>
     </div>
@@ -4863,7 +4781,7 @@ function exportCSV(c) {
   download(csv, `${c.year || 'grouping'}_${c.subject || 'data'}_grading.csv`);
 }
 
-async function exportLogsCSV(c) {
+async function exportLogsCSV(c, category) {
   let logs = fullLogsByCourse[c.id];
   if (!logs || !logs.length) {
     try {
@@ -4874,13 +4792,13 @@ async function exportLogsCSV(c) {
       }
     } catch (_) {}
   }
-  logs = logs || c.logs || [];
+  logs = (logs || c.logs || []).filter(l => logCategoryOf(l.actionType) === category);
   const rows = [['時間', '動作類別', '操作者身分', '操作者學號', '操作者姓名', '組別', '對象學號', '對象姓名', '詳細說明']];
   logs.forEach(l => {
     rows.push([
       formatLogTime(l.createdAt),
       formatActionTypeLabel(l.actionType),
-      l.operatorRole === 'leader' ? '組長' : l.operatorRole === 'teacher' ? '老師' : l.operatorRole === 'system' ? '系統' : l.operatorRole,
+      l.operatorRole === 'leader' ? '組長' : l.operatorRole === 'vice' ? '副組長' : l.operatorRole === 'teacher' ? '老師' : l.operatorRole === 'system' ? '系統' : l.operatorRole === 'student' ? '學生' : l.operatorRole,
       l.operatorId || '',
       l.operatorName || '',
       l.groupName || '',
@@ -4890,7 +4808,7 @@ async function exportLogsCSV(c) {
     ]);
   });
   const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_分組異動日誌.csv`);
+  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_${LOG_PANEL_META[category].file}.csv`);
 }
 
 function download(content, type, filename) {
@@ -4920,7 +4838,7 @@ function parseRoster(text) {
 
 async function importText(c, text) {
   const { rows, skipped } = parseRoster(text);
-  if (!rows.length) return alert('檔案沒有可匯入的資料 Nothing to import');
+  if (!rows.length) return alert('檔案沒有可匯入的資料');
   const res = await act('teacher:add-students', { courseId: c.id, students: rows });
   if (!res) return;
   const dup = rows.length - res.added;
@@ -4929,7 +4847,7 @@ async function importText(c, text) {
 
 /* ===== Event delegation ===== */
 const app = document.getElementById('app');
-const needCourse = () => { const c = cur(); if (!c) { alert('請先選擇或建立課程 Select a course first'); return null; } return c; };
+const needCourse = () => { const c = cur(); if (!c) { alert('請先選擇或建立課程'); return null; } return c; };
 
 app.addEventListener('submit', e => {
   const a = e.target.dataset.act;
@@ -4942,7 +4860,7 @@ app.addEventListener('submit', e => {
   }
   if (a === 'login-student') {
     const c = cur();
-    if (!c) return alert('請先選擇課程 Select a course first（Vui lòng chọn khóa học trước）');
+    if (!c) return alert('請先選擇課程\nVui lòng chọn khóa học trước');
     const name = (f.name ? f.name.value : '').trim();
     const password = (f.password ? f.password.value : (f.sid ? f.sid.value : '')).trim();
     return act('login-student', { courseId: c.id, name, password },
@@ -4968,7 +4886,7 @@ app.addEventListener('submit', e => {
   if (a === 'change-password') {
     const next = f.next.value;
     return act('teacher:change-password', { current: f.current.value, next },
-      { after: () => alert('密碼已更新 Password updated') });
+      { after: () => alert('密碼已更新') });
   }
   if (a === 'save-course') {
     const c = cur();
@@ -4981,7 +4899,7 @@ app.addEventListener('submit', e => {
       deadline: f.deadline ? f.deadline.value : (c ? (c.deadline || '') : ''),
       notice: f.notice ? f.notice.value : '',
     }, {
-      after: () => alert('分組設定與注意事項已儲存完成！\nGrouping setup and notice saved successfully.'),
+      after: () => alert('分組設定與注意事項已儲存完成！'),
     }).then(data => {
       if (data && data.courseId && data.courseId !== state.currentId) {
         state.currentId = data.courseId;
@@ -5004,7 +4922,7 @@ app.addEventListener('submit', e => {
       deadline: deadlineVal,
       notice: c.notice !== undefined ? c.notice : '',
     }, {
-      after: () => alert('分組截止時間已更新 Grouping deadline updated'),
+      after: () => alert('分組截止時間已更新'),
     });
   }
   if (a === 'set-all-eval') {
@@ -5032,9 +4950,9 @@ app.addEventListener('submit', e => {
         comment: inp ? inp.value.trim() : '',
       };
     });
-    if (!confirm(`確定送出組員貢獻度評分？送出後您（組長）將獲得 ${maxB} 分加分，組員加分也將即時生效。\n\nConfirm submit peer evaluation? You (Leader) will receive +${maxB} bonus points, and member bonuses will take effect immediately.\n\nXác nhận gửi đánh giá đóng góp? Bạn (Trưởng nhóm) sẽ nhận được +${maxB} điểm thưởng và điểm thưởng của thành viên sẽ có hiệu lực ngay lập tức.`)) return;
+    if (!confirm(`確定送出組員貢獻度評分？送出後您（組長）將獲得 ${maxB} 分加分，組員加分也將即時生效。\n\nXác nhận gửi đánh giá đóng góp? Bạn (Trưởng nhóm) sẽ nhận được +${maxB} điểm thưởng và điểm thưởng của thành viên sẽ có hiệu lực ngay lập tức.`)) return;
     return act('submit-peer-eval', { evaluations },
-      { after: () => alert(`期末評分已成功送出！組長已獲得 ${maxB} 分加分，組員加分亦已同步更新。\n\nPeer evaluation submitted successfully! (+${maxB} bonus points for Leader)\n\nĐã gửi đánh giá thành công! Trưởng nhóm nhận +${maxB} điểm thưởng.`) });
+      { after: () => alert(`期末評分已成功送出！組長已獲得 ${maxB} 分加分，組員加分亦已同步更新。\n\nĐã gửi đánh giá thành công! Trưởng nhóm nhận +${maxB} điểm thưởng.`) });
   }
   if (a === 'add-student') {
     const c = needCourse(); if (!c) return;
@@ -5060,36 +4978,36 @@ app.addEventListener('submit', e => {
     const fd = new FormData(f);
     const missing = mates.filter(m => !fd.get(`att_${keyOf(m)}`));
     if (missing.length > 0) {
-      return alert(`尚有 ${missing.length} 位組員尚未確認出缺席，請組長／副組長逐一確認每位組員是否出席或缺席：\n${missing.map(m => m.name + ' (' + m.id + ')').join('、')}\n\nSome members have not been verified. Leader/vice leader please check each member one by one.\n\nCòn ${missing.length} thành viên chưa xác nhận điểm danh. Trưởng/Phó nhóm vui lòng kiểm tra từng người.`);
+      return alert(`尚有 ${missing.length} 位組員尚未確認出缺席，請組長／副組長逐一確認每位組員是否出席或缺席：\n${missing.map(m => m.name + ' (' + m.id + ')').join('、')}\n\nCòn ${missing.length} thành viên chưa xác nhận điểm danh. Trưởng/Phó nhóm vui lòng kiểm tra từng người.`);
     }
     const records = mates
       .map(m => ({ studentId: keyOf(m), status: fd.get(`att_${keyOf(m)}`) }))
       .filter(r => r.status === 'present' || r.status === 'absent');
     return act('mark-attendance', { sessionId, groupId, records },
-      { after: () => alert('點名已送出 Attendance submitted（Đã gửi điểm danh thành công）') });
+      { after: () => alert('點名已送出\nĐã gửi điểm danh thành công') });
   }
   if (a === 'submit-survey') {
     const c = cur(), s = me();
     if (!c || !s) return;
     const catEl = f.querySelector('input[name="category"]:checked');
     if (!catEl || !catEl.value) {
-      return alert('請選擇一個輔導面向！\nPlease select a guidance category.\nVui lòng chọn một hướng tư vấn!');
+      return alert('請選擇一個輔導面向！\nVui lòng chọn một hướng tư vấn!');
     }
     const content = (f.content ? f.content.value : '').trim();
     if (!content) {
-      return alert('請填寫自述狀況或反映問題！\nPlease fill in your status or feedback.\nVui lòng nhập nội dung tự thuật hoặc phản ánh!');
+      return alert('請填寫自述狀況或反映問題！\nVui lòng nhập nội dung tự thuật hoặc phản ánh!');
     }
     const isEdit = !!c.mySurvey;
     const confirmMsg = isEdit
-      ? '確定要送出修改的生活關懷問卷嗎？\n您的修改紀錄將會記錄於日誌中。\n\nConfirm update survey?\nYour modification will be logged.\n\nXác nhận cập nhật khảo sát?'
-      : '確定送出生活關懷問卷？\n\nConfirm submit survey?\n\nXác nhận gửi khảo sát?';
+      ? '確定要送出修改的生活關懷問卷嗎？\n您的修改紀錄將會記錄於日誌中。\n\nXác nhận cập nhật khảo sát?'
+      : '確定送出生活關懷問卷？\n\nXác nhận gửi khảo sát?';
     if (!confirm(confirmMsg)) return;
 
     return act('submit-survey', { category: catEl.value, content }, {
       after: () => {
         alert(isEdit
-          ? '🎉 生活關懷問卷已成功更新！感謝您的反映。\nSurvey updated successfully!\nCập nhật khảo sát thành công!'
-          : '🎉 生活關懷問卷已成功送出！感謝您的填寫。\nSurvey submitted successfully!\nGửi khảo sát thành công!');
+          ? '🎉 生活關懷問卷已成功更新！感謝您的反映。\nCập nhật khảo sát thành công!'
+          : '🎉 生活關懷問卷已成功送出！感謝您的填寫。\nGửi khảo sát thành công!');
       }
     });
   }
@@ -5173,8 +5091,20 @@ app.addEventListener('click', e => {
       else if (matchingRec && matchingRec.studentName) studentName = matchingRec.studentName;
     }
     const details = getStudentAbsenceList(c, studentKey);
-    viewingAbsenceModal = { studentName, studentId, details };
+    viewingAbsenceModal = { studentKey, studentName, studentId, details };
     return render();
+  }
+  if (a === 'revoke-absence') {
+    if (!c || !viewingAbsenceModal) return;
+    const { studentKey, studentName } = viewingAbsenceModal;
+    if (!confirm(`確定要撤銷【${studentName}】於此時段的缺曠紀錄嗎？\n\n撤銷後該筆紀錄改為「出席」，並會記錄於點名異動日誌中。`)) return;
+    return act('teacher:revoke-absence', { courseId: c.id, sessionId: btn.dataset.session, studentId: btn.dataset.student }, {
+      after: () => {
+        delete fullLogsByCourse[c.id];
+        const fresh = cur();
+        if (viewingAbsenceModal && fresh) viewingAbsenceModal.details = getStudentAbsenceList(fresh, studentKey);
+      }
+    });
   }
   if (a === 'switch-preview') {
     teacherPreviewMode = btn.dataset.mode || 'admin';
@@ -5223,6 +5153,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     state.currentId = courseId;
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
+  if (teacherView !== newView) { logActionFilter = 'all'; logSearchText = ''; }
   teacherView = newView;
   localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
 
@@ -5347,12 +5278,13 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'back-to-course') { return setTeacherView('course'); }
   if (a === 'history-back') { window.history.back(); return; }
   if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; return render(); }
-  if (a === 'export-logs-csv') { return c && exportLogsCSV(c); }
+  if (a === 'export-logs-csv') { return c && exportLogsCSV(c, btn.dataset.category); }
   if (a === 'clear-course-logs') {
     if (!c) return;
-    if (!confirm(`確定要清空「${courseLabel(c)}」的所有異動日誌紀錄嗎？\n\n此動作將清除所有過往軌跡且無法復原！`)) return;
+    const category = btn.dataset.category;
+    if (!confirm(`確定要清空「${courseLabel(c)}」的${LOG_PANEL_META[category].file}嗎？\n\n此動作將清除該類所有過往軌跡且無法復原！`)) return;
     delete fullLogsByCourse[c.id];
-    return act('teacher:clear-logs', { courseId: c.id });
+    return act('teacher:clear-logs', { courseId: c.id, category });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
     const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings') ? teacherView : 'course';
@@ -5374,7 +5306,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'make-groups') {
     if (!c) return;
-    if (!c.students.length) return alert('請先匯入學生名單 Import roster first');
+    if (!c.students.length) return alert('請先匯入學生名單');
     const n = Math.max(1, Math.ceil(c.students.length / Math.max(1, c.groupSize || 4)));
     if (!confirm(`確定要【重新計算並建立全新空組別】？\n\n📌 動作說明：\n1. 將清除現有所有分組，全班 ${c.students.length} 位學生退回未分組狀態。\n2. 系統將依每組 ${c.groupSize || 4} 人，重新產生 ${n} 個全新的空白組別（第 1 ~ 第 ${n} 組）。\n3. 學生名單與登入帳號完整保留。\n\n系統已自動建立備份快照，稍後如有需要可點擊「回到上一步」復原。確定執行？`)) return;
     return act('teacher:make-groups', { courseId: c.id });
@@ -5382,7 +5314,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'make-remaining-groups') {
     if (!c) return;
     const unassigned = c.students.filter(s => !s.groupId);
-    if (!unassigned.length) return alert('目前所有學生皆已分組，無未分組學生 No unassigned students');
+    if (!unassigned.length) return alert('目前所有學生皆已分組，無未分組學生');
     const needCount = Math.max(1, Math.ceil(unassigned.length / Math.max(1, c.groupSize)));
     if (!confirm(`目前有 ${unassigned.length} 位未分組學生，預計依每組 ${c.groupSize} 人建立 ${needCount} 個新組別。\n\n已建立之現有組別與成員將完全保留，確定建立？`)) return;
     return act('teacher:make-remaining-groups', { courseId: c.id });
@@ -5396,7 +5328,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'add-group') { if (!c) return; return act('teacher:add-group', { courseId: c.id }); }
   if (a === 'clear-groups') {
     if (!c) return;
-    if (!c.groups.length) return alert('本科目目前已無任何組別 No groups to clear');
+    if (!c.groups.length) return alert('本科目目前已無任何組別');
     if (!confirm(`⚠️ 確定要【清空所有組別（組別數歸 0）】？\n\n📌 動作說明：\n1. 將刪除現有的全部 ${c.groups.length} 個組別，組別數將變為 0 組（不會自動產生任何新組別）。\n2. 全班學生全數退回未分組狀態。\n3. 學生名單與登入帳號完整保留。\n\n系統已自動建立備份快照，稍後如有需要可點擊「回到上一步」復原。確定執行？`)) return;
     return act('teacher:clear-groups', { courseId: c.id });
   }
@@ -5411,14 +5343,14 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'del-selected-groups') {
     if (!c) return;
     const checked = Array.from(document.querySelectorAll('input[name="del_group_cb"]:checked')).map(cb => cb.value);
-    if (!checked.length) return alert('請先勾選欲刪除的組別 Please select at least one group');
+    if (!checked.length) return alert('請先勾選欲刪除的組別');
     if (!confirm(`確定要刪除勾選的 ${checked.length} 個組別？\n\n被刪組別的組員將退回未分組名單，其餘組別與修課名單不受影響。`)) return;
     return act('teacher:del-groups', { courseId: c.id, groupIds: checked });
   }
   if (a === 'auto-assign') {
     if (!c) return;
     const unassignedList = c.students.filter(s => !s.groupId);
-    if (!unassignedList.length) return alert('目前所有學生皆已分組，無未分組學生 No unassigned students');
+    if (!unassignedList.length) return alert('目前所有學生皆已分組，無未分組學生');
     const min = minCap(c);
     const completedCount = c.groups.filter(g => members(c, g.id).length >= min).length;
     const incompleteCount = c.groups.length - completedCount;
@@ -5469,12 +5401,12 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
 
   if (a === 'claim-leader') return act('claim-leader');
   if (a === 'unclaim-leader') {
-    if (!confirm('確定取消組長身分？\nAre you sure you want to step down as leader?\nBạn có chắc muốn từ chức trưởng nhóm không?')) return;
+    if (!confirm('確定取消組長身分？\nBạn có chắc muốn từ chức trưởng nhóm không?')) return;
     return act('unclaim-leader');
   }
   if (a === 'toggle-vice') return act('toggle-vice', { studentId: id });
   if (a === 'drop') {
-    if (!confirm('確定要將該組員移出？\n移出後該成員將釋出回到「未分配的成員名單」中。\n\nAre you sure you want to remove this member? They will return to unassigned list.\n\nBạn có chắc muốn loại thành viên này khỏi nhóm? Thành viên sẽ quay về danh sách chưa có nhóm.')) return;
+    if (!confirm('確定要將該組員移出？\n移出後該成員將釋出回到「未分配的成員名單」中。\n\nBạn có chắc muốn loại thành viên này khỏi nhóm? Thành viên sẽ quay về danh sách chưa có nhóm.')) return;
     return act('drop', { studentId: id });
   }
   if (a === 'teacher-set-student-pw') {
@@ -5485,7 +5417,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (newPw === null) return;
     const trimmed = newPw.trim();
     if (trimmed.length < 4) {
-      return alert('新密碼長度至少需 4 碼！\nPassword must be at least 4 characters.');
+      return alert('新密碼長度至少需 4 碼！');
     }
     return act('teacher:change-student-password', {
       courseId: c.id,
@@ -5493,20 +5425,20 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       next: trimmed,
       resetToDefault: false,
     }, {
-      after: () => alert(`✅ 已成功為【${sname}】設定新密碼！\nPassword updated successfully.`),
+      after: () => alert(`✅ 已成功為【${sname}】設定新密碼！`),
     });
   }
   if (a === 'teacher-reset-student-pw') {
     if (!c) return;
     const sid = btn.dataset.id;
     const sname = btn.dataset.name;
-    if (!confirm(`確定要將【${sname} (${sid})】的登入密碼重設回「預設學號 (${sid})」嗎？\nReset password back to student ID?`)) return;
+    if (!confirm(`確定要將【${sname} (${sid})】的登入密碼重設回「預設學號 (${sid})」嗎？`)) return;
     return act('teacher:change-student-password', {
       courseId: c.id,
       studentId: sid,
       resetToDefault: true,
     }, {
-      after: () => alert(`✅ 已成功將【${sname}】的登入密碼重設為預設學號：${sid}\nPassword reset to student ID.`),
+      after: () => alert(`✅ 已成功將【${sname}】的登入密碼重設為預設學號：${sid}`),
     });
   }
   if (a === 'teacher-manage-student-pw') {
@@ -5743,7 +5675,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     const mates = g ? members(c, g.id) : [];
     const uncompletedMates = mates.filter(m => !m.surveyCompleted);
     if (!uncompletedMates.length) {
-      return alert('🎉 本組所有組員皆已完成問卷填寫！\nAll members in this group have completed the survey.\nCả nhóm đã hoàn thành!');
+      return alert('🎉 本組所有組員皆已完成問卷填寫！\nCả nhóm đã hoàn thành!');
     }
     const text = `📢【生活關懷問卷填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n組別：${g.name}\n\n目前本組尚有以下同學尚未填寫生活關懷問卷，請撥空儘速登入系統完成填寫：\n${uncompletedMates.map((m, i) => `${i + 1}. ${m.name} (${m.id})`).join('\n')}\n\n👉 請至分組系統登入填寫，謝謝大家配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
     copyTextToClipboard(text, '已複製本組未填寫名單提醒文字！可直接貼至 LINE / Zalo 群組催繳。\nĐã sao chép nội dung nhắc nhở!');
@@ -5763,7 +5695,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (!c) return;
     const stats = getSurveyStats(c);
     if (!stats.uncompletedCount) {
-      return alert('🎉 本課程全班同學皆已完成問卷填寫！\nAll students have completed the survey.');
+      return alert('🎉 本課程全班同學皆已完成問卷填寫！\nTất cả sinh viên đã hoàn thành khảo sát!');
     }
     const text = `📢【生活關懷問卷未填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n未完成人數：${stats.uncompletedCount} 人\n\n尚未填寫同學名單：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] ${st.name}`).join('\n')}\n\n請尚未填寫的同學撥空登入完成問卷，謝謝配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
     copyTextToClipboard(text, '已複製未完成名單！可貼至群組提醒。\nĐã sao chép danh sách!');
@@ -5943,7 +5875,7 @@ window.addEventListener('hashchange', () => {
     apply(await apiGet());
   } catch (err) {
     document.getElementById('app').innerHTML =
-      `<div class="container"><div class="teacher-section"><h2>連線失敗 Connection error</h2>
+      `<div class="container"><div class="teacher-section"><h2>連線失敗<br><small class="vn-sub">Lỗi kết nối</small></h2>
        <p class="file-path">${String(err.message)}　請重新整理頁面。</p></div></div>`;
     return;
   }

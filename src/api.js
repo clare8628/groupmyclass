@@ -72,17 +72,17 @@ export async function handleAction(request, env, db, body) {
 
   /* ---- 登入／登出 ---- */
   if (action === 'login-teacher') {
-    if (await sha256(String(body.password || '')) !== await teacherHash(db)) return bad('密碼錯誤 Wrong password', 401);
+    if (await sha256(String(body.password || '')) !== await teacherHash(db)) return bad('密碼錯誤', 401);
     const token = await makeToken(db, env, { role: 'teacher' });
     return ok({ session: { role: 'teacher' } }, { 'set-cookie': sessionCookie(token) });
   }
   if (action === 'login-student') {
     const c = course(body.courseId);
-    if (!c) return bad('課程不存在 Course not found', 404);
+    if (!c) return bad('課程不存在', 404);
     const inputAccount = String(body.name || body.account || '').trim();
     const inputPassword = String(body.password || body.sid || '').trim();
     if (!inputAccount || !inputPassword) {
-      return bad('請輸入學生姓名與密碼 Please enter name and password（Vui lòng nhập họ tên cùng mật khẩu）', 400);
+      return bad('請輸入學生姓名與密碼（Vui lòng nhập họ tên cùng mật khẩu）', 400);
     }
     // 依姓名尋找學生（若有多位同名學生，搭配學號密碼比對）
     const matchingByName = c.students.filter(x => x.name.trim() === inputAccount);
@@ -104,7 +104,7 @@ export async function handleAction(request, env, db, body) {
       // 容錯支援：若學生誤輸入學號，亦允許對應以維持最佳操作體驗
       s = c.students.find(x => x.id === inputAccount);
     }
-    if (!s) return bad('找不到該學生姓名，或不在本課程修課名單中 Student not found in this course（Không tìm thấy họ tên sinh viên trong khóa học này）', 401);
+    if (!s) return bad('找不到該學生姓名，或不在本課程修課名單中（Không tìm thấy họ tên sinh viên trong khóa học này）', 401);
 
     // 驗證密碼：若有自訂密碼 hash 則比對雜湊；若尚未自訂則預設密碼為學號
     let valid = false;
@@ -114,13 +114,13 @@ export async function handleAction(request, env, db, body) {
       valid = inputPassword === s.id;
     }
     if (!valid) {
-      return bad('密碼錯誤 Wrong password（Mật khẩu không đúng. Mật khẩu mặc định là mã SV, nếu đã đổi hãy nhập mật khẩu mới; nếu quên hãy nhờ giáo viên đặt lại）', 401);
+      return bad('密碼錯誤（Mật khẩu không đúng. Mật khẩu mặc định là mã SV, nếu đã đổi hãy nhập mật khẩu mới; nếu quên hãy nhờ giáo viên đặt lại）', 401);
     }
     const token = await makeToken(db, env, { role: 'student', id: s.id, courseId: c.id });
     return ok({ session: { role: 'student', id: s.id, courseId: c.id } }, { 'set-cookie': sessionCookie(token) });
   }
   if (action === 'exit-simulation') {
-    if (!session || session.simulatedBy !== 'teacher') return bad('非模擬身分 Not in simulation mode', 400);
+    if (!session || session.simulatedBy !== 'teacher') return bad('非模擬身分', 400);
     const token = await makeToken(db, env, { role: 'teacher' });
     return ok({ session: { role: 'teacher' } }, { 'set-cookie': sessionCookie(token) });
   }
@@ -128,7 +128,7 @@ export async function handleAction(request, env, db, body) {
 
   /* ---- 老師 ---- */
   if (action.startsWith('teacher:')) {
-    if (!session || session.role !== 'teacher') return bad('需要老師權限 Teacher only', 403);
+    if (!session || session.role !== 'teacher') return bad('需要老師權限', 403);
     const op = action.slice(8);
 
     if (op === 'get-logs') {
@@ -147,15 +147,15 @@ export async function handleAction(request, env, db, body) {
     }
     if (op === 'change-student-password') {
       const c = course(body.courseId);
-      if (!c) return bad('課程不存在 Course not found', 404);
+      if (!c) return bad('課程不存在', 404);
       const studentId = String(body.studentId || '').trim();
       const s = c.students.find(x => x.id === studentId);
-      if (!s) return bad('找不到該學生 Student not found', 404);
+      if (!s) return bad('找不到該學生', 404);
       const resetToDefault = !!body.resetToDefault;
       let newHash = '';
       if (!resetToDefault) {
         const next = String(body.next || '').trim();
-        if (next.length < 4) return bad('新密碼至少需 4 碼 Password must be at least 4 chars', 400);
+        if (next.length < 4) return bad('新密碼至少需 4 碼', 400);
         newHash = await sha256(next);
       }
       await db.prepare('UPDATE students SET password_hash=? WHERE course_id=? AND id=?')
@@ -557,7 +557,7 @@ export async function handleAction(request, env, db, body) {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const unassignedStudents = c.students.filter(x => !x.groupId);
-      if (!unassignedStudents.length) return bad('目前沒有未分組學生 No unassigned students', 400);
+      if (!unassignedStudents.length) return bad('目前沒有未分組學生', 400);
 
       const min = minCap(c);
       const max = cap(c);
@@ -769,7 +769,44 @@ export async function handleAction(request, env, db, body) {
     if (op === 'clear-logs') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
-      await db.prepare('DELETE FROM activity_logs WHERE course_id = ?').bind(c.id).run();
+      // 日誌依管理頁分類清除：attendance* → 點名、survey* → 問卷、其餘 → 分組；未帶 category 則全部清除
+      const where = {
+        attendance: " AND action_type LIKE 'attendance%'",
+        survey: " AND action_type LIKE 'survey%'",
+        group: " AND action_type NOT LIKE 'attendance%' AND action_type NOT LIKE 'survey%'",
+      }[body.category] || '';
+      await db.prepare('DELETE FROM activity_logs WHERE course_id = ?' + where).bind(c.id).run();
+      return ok();
+    }
+    if (op === 'revoke-absence') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const s = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
+      if (!s) return bad('點名時段不存在', 404);
+      const st = await resolveStudent(db, env, c, body.studentId);
+      if (!st) return bad('找不到該學生', 404);
+      const rec = (c.attendanceRecords || []).find(r => r.sessionId === s.id && r.studentId === st.id);
+      if (!rec || rec.status !== 'absent') return bad('該學生於此時段沒有缺曠紀錄', 400);
+      const g = c.groups.find(x => x.id === rec.groupId);
+      const isDaily = isDailySession(s);
+      const label = `${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${s.name && !isDaily ? `「${s.name}」` : (isDaily ? '「一般日常點名」' : '')}`;
+      // 撤銷＝改為出席，保留原點名者與建立時間，確保各組點名完成進度不受影響
+      await db.batch([
+        db.prepare('UPDATE attendance_records SET status=?, updated_at=? WHERE course_id=? AND session_id=? AND student_id=?')
+          .bind('present', Date.now(), c.id, s.id, st.id),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId: rec.groupId || '',
+          groupName: g ? g.name : '',
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-revoke',
+          targetId: st.id,
+          targetName: st.name,
+          detail: `老師撤銷 ${st.name} (${st.id}) 於${label}的缺曠紀錄（原點名者：${rec.markedByName || '未記錄'}），改為出席`,
+        }),
+      ]);
       return ok();
     }
     if (op === 'save-survey-period') {
@@ -911,10 +948,10 @@ export async function handleAction(request, env, db, body) {
     }
     if (op === 'simulate-student') {
       const c = course(body.courseId);
-      if (!c) return bad('課程不存在 Course not found', 404);
+      if (!c) return bad('課程不存在', 404);
       const studentId = String(body.studentId || '').trim();
       const st = c.students.find(s => s.id === studentId);
-      if (!st) return bad('找不到該學生 Student not found', 404);
+      if (!st) return bad('找不到該學生', 404);
       const token = await makeToken(db, env, {
         role: 'student',
         id: st.id,
@@ -925,11 +962,11 @@ export async function handleAction(request, env, db, body) {
         session: { role: 'student', id: st.id, courseId: c.id, simulatedBy: 'teacher' }
       }, { 'set-cookie': sessionCookie(token) });
     }
-    return bad('未知操作 Unknown action: ' + op, 400);
+    return bad('未知操作：' + op, 400);
   }
 
   /* ---- 學生（全體學生均可填寫生活關懷問卷，組長/副組長具額外權限） ---- */
-  if (!session || session.role !== 'student') return bad('請先登入 Sign in first', 401);
+  if (!session || session.role !== 'student') return bad('請先登入', 401);
   const c = course(session.courseId);
   if (!c) return bad('課程不存在', 404);
   const self = c.students.find(s => s.id === session.id);
@@ -943,22 +980,22 @@ export async function handleAction(request, env, db, body) {
     const end = c.surveyEnd || '';
     const now = Date.now();
     if (start && now < parseDate(start)) {
-      return bad('問卷尚未開放填寫 Survey is not open yet（Chưa đến thời gian mở khảo sát：' + start.replace('T', ' ') + '）', 400);
+      return bad('問卷尚未開放填寫（Chưa đến thời gian mở khảo sát：' + start.replace('T', ' ') + '）', 400);
     }
     if (end && now > parseDate(end)) {
-      return bad('問卷填寫已截止 Survey has ended（Đã quá hạn điền phiếu khảo sát：' + end.replace('T', ' ') + '）', 400);
+      return bad('問卷填寫已截止（Đã quá hạn điền phiếu khảo sát：' + end.replace('T', ' ') + '）', 400);
     }
     const category = String(body.category || '').trim();
     const content = String(body.content || '').trim();
-    if (!category) return bad('請選擇輔導面向 Please select a guidance category（Vui lòng chọn hướng tư vấn）', 400);
-    if (!content) return bad('請填寫自述目前狀況或反映問題 Please describe your situation or issue（Vui lòng mô tả tình hình hoặc phản ánh vấn đề）', 400);
+    if (!category) return bad('請選擇輔導面向（Vui lòng chọn hướng tư vấn）', 400);
+    if (!content) return bad('請填寫自述目前狀況或反映問題（Vui lòng mô tả tình hình hoặc phản ánh vấn đề）', 400);
 
     const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, self.id).first();
     const prevCat = existing ? (existing.category || '') : '';
     const prevContent = existing ? (existing.content || '') : '';
 
     if (existing && prevCat === category && prevContent === content) {
-      return ok({ message: '內容未變更 No changes' });
+      return ok({ message: '內容未變更（Không có thay đổi）' });
     }
 
     const diffParts = [];
@@ -1000,11 +1037,11 @@ export async function handleAction(request, env, db, body) {
   }
 
   if (action === 'change-student-password') {
-    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼 Leader or vice leader only（Chỉ nhóm trưởng hoặc nhóm phó mới có thể đổi mật khẩu）', 403);
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可修改個人密碼（Chỉ nhóm trưởng hoặc nhóm phó mới có thể đổi mật khẩu）', 403);
     const current = String(body.current || '').trim();
     const next = String(body.next || '').trim();
-    if (!current) return bad('請輸入目前密碼 Please enter current password（Vui lòng nhập mật khẩu hiện tại）', 400);
-    if (next.length < 4) return bad('新密碼長度至少需 4 碼 Password must be at least 4 characters（Mật khẩu mới phải có ít nhất 4 ký tự）', 400);
+    if (!current) return bad('請輸入目前密碼（Vui lòng nhập mật khẩu hiện tại）', 400);
+    if (next.length < 4) return bad('新密碼長度至少需 4 碼（Mật khẩu mới phải có ít nhất 4 ký tự）', 400);
 
     // 驗證目前密碼：若尚未修改過，預設密碼為學號
     let currentValid = false;
@@ -1013,7 +1050,7 @@ export async function handleAction(request, env, db, body) {
     } else {
       currentValid = current === self.id;
     }
-    if (!currentValid) return bad('目前密碼不正確 Incorrect current password（Mật khẩu hiện tại không đúng. Lần đầu đổi hãy dùng mã SV）', 401);
+    if (!currentValid) return bad('目前密碼不正確（Mật khẩu hiện tại không đúng. Lần đầu đổi hãy dùng mã SV）', 401);
 
     const newHash = await sha256(next);
     await db.prepare('UPDATE students SET password_hash=? WHERE course_id=? AND id=?')
@@ -1037,7 +1074,7 @@ export async function handleAction(request, env, db, body) {
   }
 
   if (action === 'claim-leader') {
-    if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長 Deadline passed（Đã hết hạn chia nhóm, không thể đăng ký làm nhóm trưởng）', 403);
+    if (deadlinePassed(c)) return bad('已超過分組截止時間，無法再登記為組長（Đã hết hạn chia nhóm, không thể đăng ký làm nhóm trưởng）', 403);
     let gid = self.groupId;
     let gName = '';
     const stmts = [];
@@ -1057,7 +1094,7 @@ export async function handleAction(request, env, db, body) {
       const g = c.groups.find(x => x.id === gid);
       gName = g ? g.name : '';
     }
-    if (membersOf(c, gid).some(m => m.isLeader && m.id !== self.id)) return bad('本組已有組長 This group already has a leader（Nhóm này đã có nhóm trưởng）', 409);
+    if (membersOf(c, gid).some(m => m.isLeader && m.id !== self.id)) return bad('本組已有組長（Nhóm này đã có nhóm trưởng）', 409);
     stmts.push(db.prepare('UPDATE students SET group_id=?, is_leader=1, is_vice=0, auto_assigned=0 WHERE course_id=? AND id=?')
       .bind(gid, c.id, self.id));
     stmts.push(makeLogStmt(db, {
@@ -1076,7 +1113,7 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'unclaim-leader') {
-    if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分 Deadline passed（Đã hết hạn chia nhóm, không thể hủy quyền nhóm trưởng）', 403);
+    if (!canEdit) return bad('已超過分組截止時間，無法取消組長身分（Đã hết hạn chia nhóm, không thể hủy quyền nhóm trưởng）', 403);
     const g = c.groups.find(x => x.id === self.groupId);
     const gName = g ? g.name : '';
     const vice = membersOf(c, self.groupId).find(m => m.isVice && m.id !== self.id);
@@ -1118,10 +1155,10 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'submit-peer-eval') {
-    if (!self.isLeader) return bad('僅組長可進行評分 Leader only（Chỉ nhóm trưởng mới có thể đánh giá）', 403);
-    if (!myGroup) return bad('尚未加入組別 Not in a group（Chưa vào nhóm）', 400);
-    if (!myGroup.peerEvalOpen) return bad('老師尚未開放本組組長評分權限 Peer evaluation is not open（Giáo viên chưa mở quyền đánh giá cho nhóm này）', 403);
-    if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分 Deadline passed（Đã quá hạn đánh giá, không thể nộp điểm）', 403);
+    if (!self.isLeader) return bad('僅組長可進行評分（Chỉ nhóm trưởng mới có thể đánh giá）', 403);
+    if (!myGroup) return bad('尚未加入組別（Chưa vào nhóm）', 400);
+    if (!myGroup.peerEvalOpen) return bad('老師尚未開放本組組長評分權限（Giáo viên chưa mở quyền đánh giá cho nhóm này）', 403);
+    if (evalDeadlinePassed(myGroup)) return bad('組長評分截止時間已過，無法再提交評分（Đã quá hạn đánh giá, không thể nộp điểm）', 403);
 
     const evaluations = Array.isArray(body.evaluations) ? body.evaluations : [];
     const maxB = Number(c.maxBonus) > 0 ? Number(c.maxBonus) : 10;
@@ -1151,24 +1188,24 @@ export async function handleAction(request, env, db, body) {
     return ok();
   }
   if (action === 'mark-attendance') {
-    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名 Leader or vice leader only（Chỉ nhóm trưởng hoặc nhóm phó mới có thể điểm danh）', 403);
+    if (!self.isLeader && !self.isVice) return bad('僅組長或副組長可執行點名（Chỉ nhóm trưởng hoặc nhóm phó mới có thể điểm danh）', 403);
     const today = todayDateStr();
     let session = (c.attendanceSessions || []).find(x => x.id === body.sessionId);
     if (!session && (body.sessionId === `daily-${today}` || body.sessionId === 'daily')) {
       session = { id: `daily-${today}`, courseId: c.id, date: today, timeSlot: '', name: '一般日常點名', isDaily: true, createdAt: Date.now() };
     }
-    if (!session) return bad('點名時段不存在 Session not found（Buổi điểm danh không tồn tại）', 404);
+    if (!session) return bad('點名時段不存在（Buổi điểm danh không tồn tại）', 404);
 
     const targetGroupId = body.groupId ? String(body.groupId) : self.groupId;
-    if (!targetGroupId) return bad('尚未加入組別 Not in a group（Chưa vào nhóm）', 400);
+    if (!targetGroupId) return bad('尚未加入組別（Chưa vào nhóm）', 400);
 
     let isDelegate = false;
     if (targetGroupId !== self.groupId) {
       isDelegate = (c.attendanceDelegates || []).some(d => d.sessionId === session.id && d.groupId === targetGroupId && d.delegateId === self.id);
-      if (!isDelegate) return bad('您未被授權代理該組點名 Not authorized to mark for this group（Bạn chưa được ủy quyền điểm danh nhóm này）', 403);
+      if (!isDelegate) return bad('您未被授權代理該組點名（Bạn chưa được ủy quyền điểm danh nhóm này）', 403);
     }
     if (!isDelegate && !isAttendanceEditable(session, c.attendanceUnlocks || [], targetGroupId)) {
-      return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限 Locked, ask teacher to unlock（Đã qua ngày, bản điểm danh đã khóa, cần nhờ giáo viên mở quyền）', 403);
+      return bad('已超過當日，點名紀錄已鎖定，需老師開放補登權限（Đã qua ngày, bản điểm danh đã khóa, cần nhờ giáo viên mở quyền）', 403);
     }
 
     // 確保點名時段已持久化至資料庫（特別是當日自動生成的日常點名時段）
@@ -1328,5 +1365,5 @@ export async function handleAction(request, env, db, body) {
     ]);
     return ok();
   }
-  return bad('未知操作 Unknown action: ' + action, 400);
+  return bad('未知操作：' + action, 400);
 }
