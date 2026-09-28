@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.81.20260928.230202';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.82.20260928.234746';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -59,7 +59,7 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
 };
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
-let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組系統）| 'attendance'（點名系統）| 'survey'（問卷系統）| 'password'（修改個人密碼）
+let publicSubView = getInitialPublicSubView(); // 前台主要顯示區域：'dashboard'（首頁）| 'groups'（分組子系統）| 'attendance'（點名子系統）| 'survey'（問卷子系統）| 'password'（修改個人密碼）
 let teacherView = getInitialTeacherView();   // 後台主區：'course' | 'settings' | 'eval' | 'logs' | 'attendance'
 let teacherPreviewMode = localStorage.getItem(PREVIEW_KEY) || 'admin';  // 老師預覽模式：'admin' | 'public' | 'leader'
 let logActionFilter = 'all';  // 異動日誌細項過濾：'all' 或 LOG_SUB_FILTERS 中目前分類的值（切換管理頁時重設）
@@ -1035,7 +1035,7 @@ function nav() {
   </nav>`;
 }
 
-/* context：'groups'（分組子系統：申請擔任組長）| 'attendance'（點名系統：組長／副組長點名）——說明文字只聚焦該子系統功能 */
+/* context：'groups'（分組子系統：申請擔任組長）| 'attendance'（點名子系統：組長／副組長點名）——說明文字只聚焦該子系統功能 */
 function loginCard(context = 'groups') {
   if (loginMode === 'student') {
     const c = cur();
@@ -1381,14 +1381,14 @@ function renderSubsystemLauncherCards(c) {
       </button>
     </div>
 
-    <!-- 2. 點名系統 -->
+    <!-- 2. 點名子系統 -->
     <div class="subsystem-launcher-card card-attendance" style="background:#fff7ed;border-color:#fed7aa;">
       <div>
         <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.35rem;">
           <span style="font-size:1.35rem;">📋</span>
           <div>
-            <strong style="font-size:1.05rem;color:#c2410c;">點名系統</strong>
-            <br><small class="vn-sub">Hệ thống điểm danh</small>
+            <strong style="font-size:1.05rem;color:#c2410c;">點名子系統</strong>
+            <br><small class="vn-sub">Hệ thống con điểm danh</small>
           </div>
         </div>
         <div style="font-size:0.86rem;color:#7c2d12;margin-bottom:0.75rem;line-height:1.5;">
@@ -1398,7 +1398,7 @@ function renderSubsystemLauncherCards(c) {
         </div>
       </div>
       <button class="btn btn-secondary btn-sm" data-act="nav-public-subview" data-view="attendance" style="justify-content:center;font-weight:600;background:#ffedd5;color:#9a3412;border-color:#fdba74;">
-        進入點名系統 ➔<br><small class="vn-sub">Vào hệ thống điểm danh</small>
+        進入點名子系統 ➔<br><small class="vn-sub">Vào hệ thống con điểm danh</small>
       </button>
     </div>
 
@@ -1689,7 +1689,7 @@ function renderPublicGroupsSection(c) {
   </div>`;
 }
 
-/* ---- 點名系統子頁面 ---- */
+/* ---- 點名子系統子頁面 ---- */
 function renderPublicAttendanceSection(c) {
   const s = me();
   const isLeaderOrVice = s && (s.isLeader || s.isVice);
@@ -1700,7 +1700,7 @@ function renderPublicAttendanceSection(c) {
   <div class="attendance-standalone-page">
     <div class="block-identifier-tag">
       <span class="block-tag-code">[Block D]</span>
-      <span class="block-tag-name">主要內容顯示區（點名系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống điểm danh)</small></span>
+      <span class="block-tag-name">主要內容顯示區（點名子系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống con điểm danh)</small></span>
     </div>
 
     <div class="subsystem-header-bar">
@@ -1708,8 +1708,8 @@ function renderPublicAttendanceSection(c) {
       <div class="subsystem-title-tag">
         <span class="subsystem-icon">📋</span>
         <div>
-          <strong>點名系統</strong>
-          <br><small class="vn-sub">Hệ thống điểm danh</small>
+          <strong>點名子系統</strong>
+          <br><small class="vn-sub">Hệ thống con điểm danh</small>
         </div>
       </div>
       ${s ? `
@@ -2094,8 +2094,8 @@ function courseTreePublic() {
                     <button class="tree-subnode-btn" data-act="nav-public-subview" data-view="attendance" data-course="${c.id}" title="查看點名現況、組長今日點名與缺席統計">
                       <span class="subnode-icon">📋</span>
                       <span class="subnode-name">
-                        點名系統
-                        <br><small class="vn-sub">Hệ thống điểm danh</small>
+                        點名子系統
+                        <br><small class="vn-sub">Hệ thống con điểm danh</small>
                       </span>
                     </button>
                   </li>
