@@ -3,7 +3,7 @@ import {
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq, parseDate,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
-  isDailySession, todayDateStr, getStateVersion, invalidateStateCache, getCourseLogs,
+  isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 
@@ -17,13 +17,16 @@ async function ensureSessionInDb(db, courseId, s) {
   `).bind(s.id, courseId, s.date, s.timeSlot || '', s.name || (isDaily ? '一般日常點名' : ''), s.createdAt || Date.now()).run();
 }
 
-/* GET /api/state — 公開讀取全部課程／名單／分組（具備 ETag 條件快取與 304 防護） */
+/* GET /api/state — 公開讀取全部課程／名單／分組（ETag 條件快取與 304 防護）
+   ETag = 全域資料版本 + 5 分鐘時間桶（讓截止時間、今日點名等時間相關欄位定期刷新）+ 身分 + 程式版本；
+   資料未變時僅讀取 1 列 data_rev 即回 304。 */
+const ETAG_TIME_BUCKET_MS = 5 * 60 * 1000;
 export async function handleState(request, env, db) {
   const session = await readSession(db, env, request);
-  const version = APP_VERSION;
-  const stateVer = getStateVersion();
-  const sessionKey = session ? `${session.role}:${session.id || ''}:${session.courseId || ''}` : 'anon';
-  const etag = `W/"${stateVer}-${sessionKey}-${version}"`;
+  const rev = await getDataRev(db);
+  const bucket = Math.floor(Date.now() / ETAG_TIME_BUCKET_MS);
+  const sessionKey = session ? `${session.role}:${session.id || ''}:${session.courseId || ''}:${session.simulatedBy || ''}` : 'anon';
+  const etag = `W/"${rev}-${bucket}-${sessionKey}-${APP_VERSION}"`;
 
   const ifNoneMatch = request.headers.get('if-none-match');
   if (ifNoneMatch && ifNoneMatch === etag) {
@@ -36,7 +39,7 @@ export async function handleState(request, env, db) {
     });
   }
 
-  const courses = await applyDeadline(db, await loadState(db));
+  const courses = await applyDeadline(db, await loadState(db, rev));
   return json(
     { courses: await publicize(db, env, courses, session), session, version: APP_VERSION },
     200,
@@ -51,8 +54,9 @@ export async function handleAction(request, env, db, body) {
   const session = await readSession(db, env, request);
   const courses = await loadState(db);
   const course = id => courses.find(c => c.id === id);
+  const readOnly = ['login-teacher', 'login-student', 'exit-simulation', 'logout', 'teacher:simulate-student'].includes(action);
   const ok = async (extra = {}, headers = {}) => {
-    invalidateStateCache();
+    if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
     return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, ...extra }, 200, headers);
   };
@@ -133,7 +137,8 @@ export async function handleAction(request, env, db, body) {
 
     if (op === 'get-logs') {
       const courseId = body.courseId ? String(body.courseId) : '';
-      const logs = await getCourseLogs(db, courseId, 500);
+      if (!courseId) return bad('缺少課程', 400);
+      const logs = await getCourseLogs(db, courseId);
       return json({ ok: true, logs });
     }
 
@@ -289,7 +294,6 @@ export async function handleAction(request, env, db, body) {
         detail: '老師依「原始編組不動」最高分組規則恢復原始第3組，並將原第三組成員（組長：宋阮芳草，組員：阮秒玲、鄧葉英、范黎薇、李氏玉）加回第3組',
       }));
       await db.batch(stmts);
-      invalidateStateCache();
       return ok();
     }
     if (op === 'add-students') {
@@ -770,12 +774,8 @@ export async function handleAction(request, env, db, body) {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       // 日誌依管理頁分類清除：attendance* → 點名、survey* → 問卷、其餘 → 分組；未帶 category 則全部清除
-      const where = {
-        attendance: " AND action_type LIKE 'attendance%'",
-        survey: " AND action_type LIKE 'survey%'",
-        group: " AND action_type NOT LIKE 'attendance%' AND action_type NOT LIKE 'survey%'",
-      }[body.category] || '';
-      await db.prepare('DELETE FROM activity_logs WHERE course_id = ?' + where).bind(c.id).run();
+      const where = LOG_CATEGORY_WHERE[body.category];
+      await db.prepare('DELETE FROM activity_logs WHERE course_id = ?' + (where ? ` AND ${where}` : '')).bind(c.id).run();
       return ok();
     }
     if (op === 'revoke-absence') {
@@ -805,6 +805,54 @@ export async function handleAction(request, env, db, body) {
           targetId: st.id,
           targetName: st.name,
           detail: `老師撤銷 ${st.name} (${st.id}) 於${label}的缺曠紀錄（原點名者：${rec.markedByName || '未記錄'}），改為出席`,
+        }),
+      ]);
+      return ok();
+    }
+    if (op === 'set-attendance-record') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const sessionId = String(body.sessionId || '');
+      let s = (c.attendanceSessions || []).find(x => x.id === sessionId);
+      // 老師可為任一過去日期補建一般日常點名時段
+      const m = !s && sessionId.match(/^daily-(\d{4}-\d{2}-\d{2})$/);
+      if (m && m[1] <= todayDateStr()) {
+        s = { id: sessionId, date: m[1], timeSlot: '', name: '一般日常點名', isDaily: true, createdAt: Date.now() };
+      }
+      if (!s) return bad('點名時段不存在', 404);
+      const st = await resolveStudent(db, env, c, body.studentId);
+      if (!st) return bad('找不到該學生', 404);
+      const status = body.status === 'absent' ? 'absent' : body.status === 'present' ? 'present' : '';
+      if (!status) return bad('出缺席狀態錯誤', 400);
+      const rec = (c.attendanceRecords || []).find(r => r.sessionId === s.id && r.studentId === st.id);
+      if (rec && rec.status === status) return ok();
+      await ensureSessionInDb(db, c.id, s);
+      const groupId = rec ? rec.groupId : (st.groupId || '');
+      const g = c.groups.find(x => x.id === groupId);
+      const isDaily = isDailySession(s);
+      const label = `${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${isDaily ? '「一般日常點名」' : (s.name ? `「${s.name}」` : '')}`;
+      const zh = x => x === 'absent' ? '缺席' : '出席';
+      const now = Date.now();
+      // 修改既有紀錄保留原點名者（不影響各組點名完成進度與幹部表現統計）；新增紀錄以老師為點名者
+      await db.batch([
+        rec
+          ? db.prepare('UPDATE attendance_records SET status=?, updated_at=? WHERE course_id=? AND session_id=? AND student_id=?')
+            .bind(status, now, c.id, s.id, st.id)
+          : db.prepare(`INSERT INTO attendance_records (course_id, session_id, student_id, group_id, status, marked_by_id, marked_by_name, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?)`).bind(c.id, s.id, st.id, groupId, status, 'teacher', '老師', now, now),
+        makeLogStmt(db, {
+          courseId: c.id,
+          groupId,
+          groupName: g ? g.name : '',
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-teacher-edit',
+          targetId: st.id,
+          targetName: st.name,
+          detail: rec
+            ? `老師修改 ${st.name} (${st.id}) 於${label}的點名紀錄，由「${zh(rec.status)}」改為「${zh(status)}」（原點名者：${rec.markedByName || '未記錄'}）`
+            : `老師補登 ${st.name} (${st.id}) 於${label}的點名紀錄為「${zh(status)}」`,
         }),
       ]);
       return ok();

@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.82.20260928.234746';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.83.20260929.211624';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -83,6 +83,32 @@ let editingSurveyModal = null;      // 老師修改學生問卷彈窗
 let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
 let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
 let simulatingStudentModal = false; // 老師模擬學生身分登入測試彈窗
+let listPages = {};                 // 各異動日誌列表目前頁碼（每頁 15 筆），key：'log-group' | 'log-attendance' | 'log-survey' | 'survey-logs'
+let attendanceEditSessionId = '';   // 老師「依日期調閱／修改點名紀錄」所選時段
+const PREVIEW_GROUP_KEY = 'groupmyclass_teacher_preview_group';
+let previewLeaderGroupId = localStorage.getItem(PREVIEW_GROUP_KEY) || ''; // 老師組長登入模式所選組別（空白＝第 1 組）
+const LIST_PAGE_SIZE = 15;
+const resetLogPages = () => { ['log-group', 'log-attendance', 'log-survey'].forEach(k => { listPages[k] = 1; }); };
+
+/* 列表分頁：回傳本頁資料與分頁列 HTML */
+function paginate(key, items) {
+  const total = Math.max(1, Math.ceil(items.length / LIST_PAGE_SIZE));
+  const page = Math.min(Math.max(1, listPages[key] || 1), total);
+  listPages[key] = page;
+  const start = (page - 1) * LIST_PAGE_SIZE;
+  const btn = (p, label, disabled) => `<button class="pagination-btn" type="button" data-act="set-list-page" data-key="${key}" data-page="${p}" ${disabled ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>${label}</button>`;
+  const pager = items.length > LIST_PAGE_SIZE ? `
+    <div class="leaderboard-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;padding:0.75rem 0.25rem 0.25rem;border-top:1px solid #f1f5f9;margin-top:0.75rem;">
+      <div style="font-size:0.85rem;color:#64748b;">顯示第 <b>${start + 1} - ${Math.min(start + LIST_PAGE_SIZE, items.length)}</b> 筆（共 <b>${items.length}</b> 筆，頁次 <b>${page} / ${total}</b>）</div>
+      <div style="display:flex;align-items:center;gap:0.35rem;flex-wrap:wrap;">
+        ${btn(1, '⏮ 第一頁', page <= 1)}
+        ${btn(page - 1, '◀ 上一頁', page <= 1)}
+        ${btn(page + 1, '下一頁 ▶', page >= total)}
+        ${btn(total, '最末頁 ⏭', page >= total)}
+      </div>
+    </div>` : '';
+  return { rows: items.slice(start, start + LIST_PAGE_SIZE), pager };
+}
 
 /* 生活關懷問卷常數 */
 const SURVEY_CATEGORIES = [
@@ -251,18 +277,23 @@ const unassigned = c => c.students.filter(s => !s.groupId);
 const findStudent = (c, id) => c.students.find(s => s.id === id || s.ref === id);
 const keyOf = s => s.ref || s.id;   // 送給後端的識別碼
 const leaderOf = (c, gid) => members(c, gid).find(s => s.isLeader);
+const previewLeaderGroup = c => c.groups.find(g => g.id === previewLeaderGroupId) || c.groups[0] || null;
 function me() {
   const c = cur();
   if (!c) return null;
   if (state.session && state.session.role === 'student') return findStudent(c, state.session.id);
-  // 若老師處於組長預覽模式，模擬當前課程的第一位組長或成員
+  // 若老師處於組長預覽模式，模擬所選組別（未選＝第 1 組）的組長；該組無組長則以第一位組員代入
   if (state.session && state.session.role === 'teacher' && teacherPreviewMode === 'leader') {
-    const lead = c.students.find(s => s.isLeader && s.groupId);
+    const g = previewLeaderGroup(c);
+    if (!g) {
+      const anyStudent = c.students[0];
+      return anyStudent ? { ...anyStudent, isLeader: true } : { id: 'preview-lead', name: '預覽組長(測試)', isLeader: true, groupId: null };
+    }
+    const lead = c.students.find(s => s.groupId === g.id && s.isLeader);
     if (lead) return lead;
-    // 若尚未有組長，則找任一有組別的學生或第一位學生模擬
-    const anyStudent = c.students.find(s => s.groupId) || c.students[0];
-    if (anyStudent) return { ...anyStudent, isLeader: true };
-    return { id: 'preview-lead', name: '預覽組長(測試)', isLeader: true, groupId: c.groups[0]?.id || null };
+    const anyMember = c.students.find(s => s.groupId === g.id);
+    if (anyMember) return { ...anyMember, isLeader: true };
+    return { id: 'preview-lead', name: '預覽組長(測試)', isLeader: true, groupId: g.id };
   }
   return null;
 }
@@ -2659,6 +2690,7 @@ function formatActionTypeLabel(type) {
     case 'attendance-unlock': return '老師開放/關閉點名補登';
     case 'attendance-delegate': return '老師指派/取消跨組代理點名';
     case 'attendance-revoke': return '老師撤銷缺曠紀錄';
+    case 'attendance-teacher-edit': return '老師修改點名紀錄';
     case 'password-change': return '學生修改密碼';
     case 'password-reset': return '老師重設學生密碼';
     case 'survey-period-set': return '老師設定問卷時段';
@@ -2701,6 +2733,8 @@ function renderLogBadge(type) {
       return '<span class="log-badge tag-teacher">📋 點名管理</span>';
     case 'attendance-revoke':
       return '<span class="log-badge tag-teacher">↩️ 撤銷缺曠</span>';
+    case 'attendance-teacher-edit':
+      return '<span class="log-badge tag-teacher">✏️ 老師修改點名</span>';
     case 'password-change':
     case 'password-reset':
       return '<span class="log-badge tag-vice">🔑 密碼變更</span>';
@@ -2733,7 +2767,7 @@ const LOG_SUB_FILTERS = {
   ],
   attendance: [
     ['mark', '📋 組長/副組長點名', t => t === 'attendance-mark' || t === 'attendance-correct'],
-    ['revoke', '↩️ 老師撤銷缺曠', t => t === 'attendance-revoke'],
+    ['revoke', '↩️ 老師撤銷缺曠／修改點名', t => t === 'attendance-revoke' || t === 'attendance-teacher-edit'],
     ['admin', '🛠️ 老師點名設定', t => ['attendance-session-save', 'attendance-session-delete', 'attendance-unlock', 'attendance-delegate'].includes(t)],
   ],
   survey: [],
@@ -2789,6 +2823,7 @@ function activityLogPanel(c, category) {
     return true;
   });
   const isFiltering = !!(kw || activeSub);
+  const { rows: pageRows, pager } = paginate('log-' + category, filtered);
 
   return `
   <div class="teacher-section logs-admin-box">
@@ -2861,7 +2896,7 @@ function activityLogPanel(c, category) {
           </tr>
         </thead>
         <tbody>
-          ${filtered.map(l => `
+          ${pageRows.map(l => `
           <tr>
             <td style="font-size:0.82rem;color:#475569;font-family:monospace;white-space:nowrap;">
               ${formatLogTime(l.createdAt)}
@@ -2884,7 +2919,8 @@ function activityLogPanel(c, category) {
           </tr>`).join('')}
         </tbody>
       </table>
-    </div>` : `
+    </div>
+    ${pager}` : `
     <div style="text-align:center;padding:3rem 1rem;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;color:#64748b;">
       <p style="font-size:1.1rem;margin-bottom:0.5rem;">📭 目前無符合條件的異動紀錄</p>
       <p style="font-size:0.85rem;margin:0;">
@@ -2972,34 +3008,58 @@ function teacherAttendanceBlock(c) {
     </tr>`;
   }).join('');
 
-  /* ---- 2. 依日期查看各組缺席紀錄 ---- */
+  /* ---- 2. 依日期調閱／修改點名紀錄 ---- */
   if (!attendanceStatDate) attendanceStatDate = today;
-  const dailySessions = sessions.filter(s => s.date === attendanceStatDate);
-  const dailyRows = c.groups.map(g => {
+  const dateSessions = sessions.filter(s => s.date === attendanceStatDate);
+  // 該日若無一般日常點名，提供虛擬時段供老師補建紀錄
+  if (!dateSessions.some(isDailySession)) {
+    dateSessions.unshift({ id: `daily-${attendanceStatDate}`, date: attendanceStatDate, timeSlot: '', name: '一般日常點名', isDaily: true });
+  }
+  const editSession = dateSessions.find(s => s.id === attendanceEditSessionId) || dateSessions[0];
+  const editRecs = {};
+  attendanceRecordsFor(c, editSession.id).forEach(r => { editRecs[r.studentId] = r; });
+  const statusSelect = (st, rec) => `
+    <select data-act="teacher-set-attendance" data-session="${esc(editSession.id)}" data-student="${esc(st.id)}" style="padding:0.25rem 0.4rem;font-size:0.82rem;border-radius:6px;${rec ? (rec.status === 'absent' ? 'background:#fee2e2;color:#991b1b;' : 'background:#dcfce7;color:#166534;') : ''}">
+      ${rec ? '' : '<option value="" selected>— 未點名 —</option>'}
+      <option value="present" ${rec && rec.status === 'present' ? 'selected' : ''}>✅ 出席</option>
+      <option value="absent" ${rec && rec.status === 'absent' ? 'selected' : ''}>❌ 缺席</option>
+    </select>`;
+  const editRows = c.groups.map(g => {
     const mates = members(c, g.id);
-    const perSession = dailySessions.map(s => {
-      const recs = attendanceRecordsFor(c, s.id).filter(r => r.groupId === g.id);
-      const absentRecs = recs.filter(r => r.status === 'absent');
-      const label = attendanceSessionLabel(s) || s.date;
-      if (!recs.length) return `<div style="color:#94a3b8;font-size:0.85rem;">${esc(label)}：尚未點名</div>`;
-      if (!absentRecs.length) return `<div style="color:#166534;font-size:0.85rem;">${esc(label)}：✅ 全員到齊</div>`;
-      return `<div style="font-size:0.85rem;">${esc(label)}：${absentRecs.map(r => {
-        const st = c.students.find(x => x.id === r.studentId);
-        if (!st) return '';
-        const corrected = r.createdAt && r.updatedAt && r.updatedAt !== r.createdAt;
-        const timeNote = corrected
-          ? `點名 ${formatLogTime(r.createdAt)}／修正 ${formatLogTime(r.updatedAt)}`
-          : `點名 ${formatLogTime(r.updatedAt)}`;
-        return `<span class="attendance-absent-tag" title="${esc(timeNote)}">${esc(st.name)} (${esc(st.id)}) 缺席</span>`;
-      }).join(' ')}</div>`;
+    if (!mates.length) return '';
+    return mates.map((st, i) => {
+      const rec = editRecs[st.id];
+      return `
+      <tr>
+        ${i === 0 ? `<td rowspan="${mates.length}"><b>${esc(g.name)}</b></td>` : ''}
+        <td>${esc(st.id)}</td>
+        <td><b>${esc(st.name)}</b>${st.isLeader ? ' 👑' : st.isVice ? ' ⭐' : ''}</td>
+        <td>${statusSelect(st, rec)}</td>
+        <td style="font-size:0.8rem;color:#64748b;">${rec ? `${esc(rec.markedByName || '-')}／${esc(formatLogTime(rec.updatedAt))}` : '-'}</td>
+      </tr>`;
     }).join('');
-    return `
-    <tr>
-      <td><b>${esc(g.name)}</b></td>
-      <td>${mates.length} 人</td>
-      <td>${perSession || '<span style="color:#94a3b8;">當日無點名時段</span>'}</td>
-    </tr>`;
   }).join('');
+  const attendanceEditPanel = `
+  <div class="teacher-section">
+    <h2>📅 依日期調閱／修改點名紀錄</h2>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">選擇日期與點名時段即可調閱各組點名結果，老師可直接修改任一學生的出缺席狀態（不受當日鎖定限制），每筆修改皆記錄於本頁下方點名異動日誌。</p>
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.85rem;">
+      <label style="font-weight:600;font-size:0.88rem;">日期：<input type="date" data-act="attendance-stat-date" value="${esc(attendanceStatDate)}" max="${esc(today)}" style="padding:0.3rem 0.5rem;"></label>
+      <label style="font-weight:600;font-size:0.88rem;">時段：
+        <select data-act="attendance-edit-session" style="padding:0.3rem 0.5rem;">
+          ${dateSessions.map(s => `<option value="${esc(s.id)}" ${s.id === editSession.id ? 'selected' : ''}>${esc(attendanceSessionLabel(s) || s.date)}</option>`).join('')}
+        </select>
+      </label>
+      <span style="font-size:0.82rem;color:#64748b;">已點名 ${Object.keys(editRecs).length} 人／缺席 ${Object.values(editRecs).filter(r => r.status === 'absent').length} 人</span>
+    </div>
+    ${editRows ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>組別</th><th>學號</th><th>姓名</th><th>出缺席</th><th>最後點名者／時間</th></tr></thead>
+        <tbody>${editRows}</tbody>
+      </table>
+    </div>` : '<p class="file-path">尚未建立組別或組員。</p>'}
+  </div>`;
 
   /* ---- 3. 各組點名完成進度即時看板（含未完成組別與已完成組別） ---- */
   const progressSession = attendanceProgressSessionId
@@ -3049,6 +3109,8 @@ function teacherAttendanceBlock(c) {
       </table>
     </div>` : '<p class="file-path">尚未設定任何點名時段。</p>'}
   </div>
+
+  ${attendanceEditPanel}
 
   <div class="teacher-section">
     <h2>目前組長／副組長列表</h2>
@@ -3799,6 +3861,7 @@ function teacherWellbeingBlock(c) {
   const status = getSurveyStatus(c);
   const submissions = c.surveySubmissions || [];
   const logs = c.surveyLogs || [];
+  const surveyLogPage = paginate('survey-logs', logs);
 
   // 篩選已填寫名單
   let filteredSubmissions = submissions.slice();
@@ -4052,7 +4115,7 @@ function teacherWellbeingBlock(c) {
                 </tr>
               </thead>
               <tbody>
-                ${logs.map(l => {
+                ${surveyLogPage.rows.map(l => {
                   const isTeacherOp = l.operatorRole === 'teacher';
                   const actionBadge = l.actionType === 'create'
                     ? '<span class="status-badge meets-threshold">首次送出</span>'
@@ -4078,6 +4141,7 @@ function teacherWellbeingBlock(c) {
               </tbody>
             </table>
           </div>
+          ${surveyLogPage.pager}
         ` : `
           <p class="file-path" style="text-align:center;padding:2rem;">目前尚無任何問卷異動日誌。</p>
         `}
@@ -4662,6 +4726,13 @@ function teacherPreviewBanner() {
       </span>
     </div>
     <div class="preview-bar-right">
+      ${isLeader && c && c.groups.length ? `
+      <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.85rem;font-weight:600;">
+        組別：
+        <select data-act="preview-leader-group" style="padding:0.3rem 0.5rem;font-size:0.85rem;border-radius:6px;">
+          ${c.groups.map(g => `<option value="${esc(g.id)}" ${previewLeaderGroup(c).id === g.id ? 'selected' : ''}>${esc(g.name)}</option>`).join('')}
+        </select>
+      </label>` : ''}
       <button class="btn btn-secondary" data-act="switch-preview" data-mode="${isLeader ? 'public' : 'leader'}" style="padding:0.35rem 0.8rem;font-size:0.85rem;margin:0;">
         切換為${isLeader ? '一般學生視角' : '組長登入視角'}
       </button>
@@ -5061,6 +5132,11 @@ app.addEventListener('click', e => {
     exportMarkerLeaderboardCSV(c);
     return;
   }
+  if (a === 'set-list-page') {
+    const page = parseInt(btn.dataset.page, 10);
+    if (page > 0) { listPages[btn.dataset.key] = page; return render(); }
+    return;
+  }
   if (a === 'set-attendance-leaderboard-page') {
     const page = parseInt(btn.dataset.page, 10);
     if (page && page > 0) {
@@ -5153,7 +5229,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     state.currentId = courseId;
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
-  if (teacherView !== newView) { logActionFilter = 'all'; logSearchText = ''; }
+  if (teacherView !== newView) { logActionFilter = 'all'; logSearchText = ''; resetLogPages(); }
   teacherView = newView;
   localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
 
@@ -5277,7 +5353,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'back-to-course') { return setTeacherView('course'); }
   if (a === 'history-back') { window.history.back(); return; }
-  if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; return render(); }
+  if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; resetLogPages(); return render(); }
   if (a === 'export-logs-csv') { return c && exportLogsCSV(c, btn.dataset.category); }
   if (a === 'clear-course-logs') {
     if (!c) return;
@@ -5753,6 +5829,7 @@ app.addEventListener('change', e => {
   if (!c) return;
   if (a === 'filter-log-action') {
     logActionFilter = t.value;
+    resetLogPages();
     return render();
   }
   if (a === 'assign-student') return act('teacher:assign-student', { courseId: c.id, studentId: id, groupId: t.value || null });
@@ -5768,7 +5845,19 @@ app.addEventListener('change', e => {
     if (deadline === null) return;
     return act('teacher:set-attendance-unlock', { courseId: c.id, sessionId: id, groupId, allow: true, deadline: deadline.trim() });
   }
-  if (a === 'attendance-stat-date') { attendanceStatDate = t.value; attendanceLeaderboardPage = 1; return render(); }
+  if (a === 'preview-leader-group') {
+    previewLeaderGroupId = t.value;
+    try { localStorage.setItem(PREVIEW_GROUP_KEY, previewLeaderGroupId); } catch (_) {}
+    return render();
+  }
+  if (a === 'attendance-stat-date') { attendanceStatDate = t.value; attendanceEditSessionId = ''; attendanceLeaderboardPage = 1; return render(); }
+  if (a === 'attendance-edit-session') { attendanceEditSessionId = t.value; return render(); }
+  if (a === 'teacher-set-attendance') {
+    if (!t.value) return;
+    return act('teacher:set-attendance-record', { courseId: c.id, sessionId: t.dataset.session, studentId: t.dataset.student, status: t.value }, {
+      after: () => { delete fullLogsByCourse[c.id]; }
+    });
+  }
   if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; attendanceLeaderboardPage = 1; return render(); }
   if (a === 'public-attendance-stat-scope') { publicAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
   if (a === 'leader-attendance-stat-scope') { leaderAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
@@ -5788,6 +5877,7 @@ app.addEventListener('input', e => {
   if (!a) return;
   if (a === 'search-logs') {
     logSearchText = t.value;
+    resetLogPages();
     render();
     const input = document.querySelector('input[data-act="search-logs"]');
     if (input) {

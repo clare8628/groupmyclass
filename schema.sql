@@ -158,3 +158,5 @@ CREATE TABLE IF NOT EXISTS survey_logs (
 CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, student_id, created_at DESC);
 
 
+CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_survey_logs_created ON survey_logs(created_at);

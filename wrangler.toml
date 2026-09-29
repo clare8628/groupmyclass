@@ -10,3 +10,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "groupmyclass"
 database_id = "ffb52212-2ce5-4335-a9d3-6cf70e43a732"
+
+# 每日 03:00（台北）清除超過六個月的點名／問卷異動紀錄
+[triggers]
+crons = ["0 19 * * *"]

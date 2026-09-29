@@ -72,6 +72,27 @@ export const sessionCookie = (token, maxAge = 12 * 3600) =>
 export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0';
 
 /* ===== 狀態讀取 ===== */
+/* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
+const SCHEMA_REV = '2026-09-29';
+let _schemaReady = false;
+async function ensureSchema(db) {
+  if (_schemaReady) return;
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'schema_rev'").first().catch(() => null);
+  if (!row || row.value !== SCHEMA_REV) {
+    await ensureGroupSchema(db);
+    await ensureAttendanceSchema(db);
+    await ensureSurveySchema(db);
+    await ensureGroup3Restored(db);
+    await ensurePanReleased(db);
+    try {
+      await db.prepare('CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at)').run();
+      await db.prepare('CREATE INDEX IF NOT EXISTS idx_survey_logs_created ON survey_logs(created_at)').run();
+    } catch (_) {}
+    await db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_rev', ?)").bind(SCHEMA_REV).run();
+  }
+  _schemaReady = true;
+}
+
 let _ensuredGroupSchema = false;
 async function ensureGroupSchema(db) {
   if (_ensuredGroupSchema) return;
@@ -315,7 +336,7 @@ export async function ensureGroup3Restored(db) {
         detail: '依「原始編組不動」最高分組規則恢復原始第3組，並將原第三組成員（組長：宋阮芳草，組員：阮秒玲、鄧葉英、范黎薇、李氏玉）加回第3組',
       }));
       await db.batch(stmts);
-      invalidateStateCache();
+      await markDataChanged(db);
     }
     _checkedGroup3Restored = true;
   } catch (err) {
@@ -337,7 +358,7 @@ export async function ensurePanReleased(db) {
         INSERT INTO activity_logs (course_id, group_id, group_name, operator_role, operator_id, operator_name, action_type, target_id, target_name, detail, created_at)
         VALUES (?, '', '', 'system', 'system', '系統', 'fix-unassign', '41461D47', '潘氏哥詩', '系統修正：恢復組員 潘氏哥詩 (41461D47) 至未分組名單（先前因截止自動分組重複觸發而誤分派至第3組）', ?)
       `).bind(student.course_id, Date.now()).run();
-      invalidateStateCache();
+      await markDataChanged(db);
     }
     _checkedPanReleased = true;
   } catch (err) {
@@ -504,64 +525,83 @@ export function calcAdjustment(c, g, s) {
   }
 }
 
-/* ===== D1 快取防護與狀態版本控制 ===== */
-let _cachedRawCourses = null;
-let _cachedRawTime = 0;
-let _cachedRecentLogs = null;
-let _stateVersion = 1;
-const RAW_CACHE_TTL = 4000; // 4 秒內重複查詢直接由 Worker 記憶體提供，大幅收斂 D1 尖峰併發讀取
+/* ===== D1 讀取節流：以 settings.data_rev 作為全域資料版本 =====
+   每次寫入遞增 data_rev；各 isolate 只要版本未變就重用記憶體中的原始資料列，
+   輪詢只需讀 1 列（data_rev），並可跨 isolate 正確回應 304。 */
+const RAW_CACHE_MAX_AGE = 10 * 60 * 1000; // 保險：即使版本未變，10 分鐘後仍重讀（例如有人直接以 wrangler 改資料庫）
+let _raw = null;          // { rev, time, rows }
+let _recentLogs = null;   // { rev, logs }
 
-export function getStateVersion() {
-  return _stateVersion;
+export async function getDataRev(db) {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'data_rev'").first().catch(() => null);
+  return row ? String(row.value) : '0';
 }
 
-export function invalidateStateCache() {
-  _cachedRawCourses = null;
-  _cachedRawTime = 0;
-  _cachedRecentLogs = null;
-  _stateVersion++;
-}
-
-/* 按需讀取指定課程或全站異動日誌 */
-export async function getCourseLogs(db, courseId = null, limit = 500) {
+/* 資料已異動：遞增全域版本並清除本 isolate 快取 */
+export async function markDataChanged(db) {
+  _raw = null;
+  _recentLogs = null;
   try {
-    const query = courseId
-      ? 'SELECT * FROM activity_logs WHERE course_id = ? ORDER BY created_at DESC LIMIT ?'
-      : 'SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?';
-    const stmt = courseId ? db.prepare(query).bind(courseId, limit) : db.prepare(query).bind(limit);
-    const rows = await stmt.all();
-    return (rows.results || []).map(log => ({
-      id: log.id,
-      courseId: log.course_id,
-      groupId: log.group_id,
-      groupName: log.group_name,
-      operatorRole: log.operator_role,
-      operatorId: log.operator_id,
-      operatorName: log.operator_name,
-      actionType: log.action_type,
-      targetId: log.target_id,
-      targetName: log.target_name,
-      detail: log.detail,
-      createdAt: log.created_at,
-    }));
+    await db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('data_rev', '1')
+      ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1
+    `).run();
+  } catch (err) {
+    console.error('Failed to bump data_rev:', err);
+  }
+}
+
+/* 日誌分類（與前台 logCategoryOf 一致）：attendance* → 點名、survey* → 問卷、其餘 → 分組 */
+export const LOG_CATEGORY_WHERE = {
+  attendance: "action_type LIKE 'attendance%'",
+  survey: "action_type LIKE 'survey%'",
+  group: "action_type NOT LIKE 'attendance%' AND action_type NOT LIKE 'survey%'",
+};
+
+const mapLog = log => ({
+  id: log.id,
+  courseId: log.course_id,
+  groupId: log.group_id,
+  groupName: log.group_name,
+  operatorRole: log.operator_role,
+  operatorId: log.operator_id,
+  operatorName: log.operator_name,
+  actionType: log.action_type,
+  targetId: log.target_id,
+  targetName: log.target_name,
+  detail: log.detail,
+  createdAt: log.created_at,
+});
+
+/* 按需讀取指定課程異動日誌：三類各取最近 limit 筆，避免大量點名日誌擠掉分組／問卷日誌 */
+export async function getCourseLogs(db, courseId, limit = 1000) {
+  try {
+    const rows = await db.batch(Object.values(LOG_CATEGORY_WHERE).map(where =>
+      db.prepare(`SELECT * FROM activity_logs WHERE course_id = ? AND ${where} ORDER BY created_at DESC LIMIT ?`).bind(courseId, limit)));
+    return rows.flatMap(r => r.results || []).sort((a, b) => b.created_at - a.created_at).map(mapLog);
   } catch (err) {
     console.error('Failed to get course logs:', err);
     return [];
   }
 }
 
-export async function loadState(db) {
-  const now = Date.now();
-  if (_cachedRawCourses && (now - _cachedRawTime < RAW_CACHE_TTL)) {
-    return structuredClone(_cachedRawCourses);
-  }
+/* 自動刪除超過六個月的點名與問卷異動紀錄（由 Cron Trigger 每日執行） */
+export const LOG_RETENTION_MS = 183 * 24 * 3600 * 1000;
+export async function cleanupOldLogs(db, now = Date.now()) {
+  const cutoff = now - LOG_RETENTION_MS;
+  const [a, s] = await db.batch([
+    db.prepare(`DELETE FROM activity_logs WHERE created_at < ? AND (${LOG_CATEGORY_WHERE.attendance} OR ${LOG_CATEGORY_WHERE.survey})`).bind(cutoff),
+    db.prepare('DELETE FROM survey_logs WHERE created_at < ?').bind(cutoff),
+  ]);
+  const deleted = ((a.meta && a.meta.changes) || 0) + ((s.meta && s.meta.changes) || 0);
+  if (deleted) await markDataChanged(db);
+  return deleted;
+}
 
-  await ensureGroupSchema(db);
-  await ensureAttendanceSchema(db);
-  await ensureSurveySchema(db);
-  await ensureGroup3Restored(db);
-  await ensurePanReleased(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs] = await Promise.all([
+async function loadRows(db, rev) {
+  const now = Date.now();
+  if (_raw && _raw.rev === rev && now - _raw.time < RAW_CACHE_MAX_AGE) return _raw.rows;
+  const rows = await Promise.all([
     db.prepare('SELECT * FROM courses ORDER BY year DESC, created_at ASC').all(),
     db.prepare('SELECT * FROM groups ORDER BY seq ASC').all(),
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
@@ -573,6 +613,15 @@ export async function loadState(db) {
     db.prepare('SELECT * FROM survey_submissions').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC').all().catch(() => ({ results: [] })),
   ]);
+  _raw = { rev, time: now, rows };
+  return rows;
+}
+
+/* 讀取全部課程狀態；原始資料列依 data_rev 快取，時間相關欄位（今日點名、調分）每次重新計算 */
+export async function loadState(db, rev = null) {
+  await ensureSchema(db);
+  if (rev === null) rev = await getDataRev(db);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs] = await loadRows(db, rev);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
@@ -674,8 +723,6 @@ export async function loadState(db) {
 
     return courseObj;
   });
-  _cachedRawCourses = structuredClone(processedCourses);
-  _cachedRawTime = now;
   return processedCourses;
 }
 
@@ -730,7 +777,7 @@ export async function applyDeadline(db, courses) {
   }
   if (stmts.length) {
     await db.batch(stmts);
-    invalidateStateCache();
+    await markDataChanged(db);
   }
   return courses;
 }
@@ -761,25 +808,13 @@ export async function studentRef(db, env, courseId, id, preloadedKey = null) {
 
 export async function publicize(db, env, courses, session) {
   if (session && session.role === 'teacher') {
-    let recentLogs = _cachedRecentLogs;
-    if (!recentLogs || (Date.now() - _cachedRawTime >= RAW_CACHE_TTL)) {
+    const rev = _raw ? _raw.rev : null;
+    let recentLogs = _recentLogs && _recentLogs.rev === rev ? _recentLogs.logs : null;
+    if (!recentLogs) {
       try {
         const logRows = await db.prepare('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 15').all();
-        recentLogs = (logRows.results || []).map(log => ({
-          id: log.id,
-          courseId: log.course_id,
-          groupId: log.group_id,
-          groupName: log.group_name,
-          operatorRole: log.operator_role,
-          operatorId: log.operator_id,
-          operatorName: log.operator_name,
-          actionType: log.action_type,
-          targetId: log.target_id,
-          targetName: log.target_name,
-          detail: log.detail,
-          createdAt: log.created_at,
-        }));
-        _cachedRecentLogs = recentLogs;
+        recentLogs = (logRows.results || []).map(mapLog);
+        _recentLogs = { rev, logs: recentLogs };
       } catch (_) {}
     }
     const logsByCourse = {};
