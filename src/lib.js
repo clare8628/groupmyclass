@@ -587,15 +587,83 @@ export async function getCourseLogs(db, courseId, limit = 1000) {
 
 /* 自動刪除超過六個月的點名與問卷異動紀錄（由 Cron Trigger 每日執行） */
 export const LOG_RETENTION_MS = 183 * 24 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+/* 可自動清除的三類日誌：點名異動、問卷設定異動（activity_logs）、問卷填寫異動（survey_logs） */
+const PURGE_TARGETS = [
+  { key: 'attendance', label: '點名異動日誌', table: 'activity_logs', where: LOG_CATEGORY_WHERE.attendance },
+  { key: 'survey', label: '問卷設定異動日誌', table: 'activity_logs', where: LOG_CATEGORY_WHERE.survey },
+  { key: 'surveyFill', label: '問卷填寫異動日誌', table: 'survey_logs', where: '1=1' },
+];
 export async function cleanupOldLogs(db, now = Date.now()) {
   const cutoff = now - LOG_RETENTION_MS;
-  const [a, s] = await db.batch([
-    db.prepare(`DELETE FROM activity_logs WHERE created_at < ? AND (${LOG_CATEGORY_WHERE.attendance} OR ${LOG_CATEGORY_WHERE.survey})`).bind(cutoff),
-    db.prepare('DELETE FROM survey_logs WHERE created_at < ?').bind(cutoff),
+  const res = await db.batch(PURGE_TARGETS.map(t =>
+    db.prepare(`DELETE FROM ${t.table} WHERE created_at < ? AND ${t.where}`).bind(cutoff)));
+  const out = { total: 0 };
+  PURGE_TARGETS.forEach((t, i) => { out[t.key] = (res[i].meta && res[i].meta.changes) || 0; out.total += out[t.key]; });
+  if (out.total) await markDataChanged(db);
+  return out;
+}
+
+/* ===== 系統運行紀錄：記錄每次排程執行結果，供老師後台檢視 ===== */
+const SYSTEM_RUNS_DDL = `CREATE TABLE IF NOT EXISTS system_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, status TEXT NOT NULL,
+  started_at INTEGER NOT NULL, finished_at INTEGER NOT NULL, detail TEXT NOT NULL DEFAULT '')`;
+const SYSTEM_RUNS_KEEP = 180;
+
+export async function runScheduledCleanup(db, now = Date.now()) {
+  await db.prepare(SYSTEM_RUNS_DDL).run();
+  let status = 'ok', detail;
+  try {
+    detail = await cleanupOldLogs(db, now);
+  } catch (err) {
+    status = 'error';
+    detail = { error: String((err && err.message) || err) };
+  }
+  await db.batch([
+    db.prepare('INSERT INTO system_runs (job, status, started_at, finished_at, detail) VALUES (?, ?, ?, ?, ?)')
+      .bind('log-cleanup', status, now, Date.now(), JSON.stringify(detail)),
+    db.prepare('DELETE FROM system_runs WHERE id NOT IN (SELECT id FROM system_runs ORDER BY id DESC LIMIT ?)').bind(SYSTEM_RUNS_KEEP),
   ]);
-  const deleted = ((a.meta && a.meta.changes) || 0) + ((s.meta && s.meta.changes) || 0);
-  if (deleted) await markDataChanged(db);
-  return deleted;
+  return { status, detail };
+}
+
+/* Cron "0 19 * * *"（UTC）＝ 台北 03:00；回傳 t 之後的第一次排程時間 */
+const CRON_OFFSET_MS = 5 * 3600 * 1000; // UTC 19:00 + 5h = 日界
+export function nextCleanupAt(t) {
+  return (Math.floor((t + CRON_OFFSET_MS) / DAY_MS) + 1) * DAY_MS - CRON_OFFSET_MS;
+}
+
+/* 老師後台：系統運行紀錄與即將自動移除的日誌（按需讀取，不影響輪詢） */
+export async function getSystemStatus(db, courseId, now = Date.now(), windowDays = 30) {
+  await db.prepare(SYSTEM_RUNS_DDL).run();
+  const horizon = now - LOG_RETENTION_MS + windowDays * DAY_MS;
+  // 以「排程日」分組：過期時間落在同一排程日者，將於同一次排程被移除
+  const bucket = `(created_at + ${LOG_RETENTION_MS + CRON_OFFSET_MS}) / ${DAY_MS}`;
+  const stmts = [db.prepare('SELECT * FROM system_runs ORDER BY id DESC LIMIT 30')];
+  PURGE_TARGETS.forEach(t => {
+    stmts.push(db.prepare(`SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM ${t.table} WHERE course_id = ? AND ${t.where}`).bind(courseId));
+    stmts.push(db.prepare(`SELECT ${bucket} AS k, COUNT(*) AS n FROM ${t.table} WHERE course_id = ? AND ${t.where} AND created_at < ? GROUP BY k ORDER BY k`).bind(courseId, horizon));
+  });
+  const res = await db.batch(stmts);
+  const nextRunAt = nextCleanupAt(now);
+  const runs = (res[0].results || []).map(r => {
+    let detail = {};
+    try { detail = JSON.parse(r.detail || '{}'); } catch (_) {}
+    return { id: r.id, job: r.job, status: r.status, startedAt: r.started_at, finishedAt: r.finished_at, detail };
+  });
+  const categories = PURGE_TARGETS.map((t, i) => {
+    const sum = (res[1 + i * 2].results || [])[0] || {};
+    const upcoming = (res[2 + i * 2].results || []).map(r => ({
+      deleteAt: Math.max(nextRunAt, (r.k + 1) * DAY_MS - CRON_OFFSET_MS), count: r.n,
+    }));
+    return {
+      key: t.key, label: t.label, total: sum.n || 0,
+      oldest: sum.oldest || null,
+      oldestDeleteAt: sum.oldest ? Math.max(nextRunAt, nextCleanupAt(sum.oldest + LOG_RETENTION_MS)) : null,
+      upcoming,
+    };
+  });
+  return { now, retentionDays: Math.round(LOG_RETENTION_MS / DAY_MS), windowDays, nextRunAt, runs, categories };
 }
 
 async function loadRows(db, rev) {

@@ -160,3 +160,13 @@ CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, stud
 
 CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_survey_logs_created ON survey_logs(created_at);
+
+-- 系統運行紀錄：每日排程（自動清除逾期日誌）之執行結果，保留最近 180 筆
+CREATE TABLE IF NOT EXISTS system_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  job         TEXT NOT NULL,                 -- 'log-cleanup'
+  status      TEXT NOT NULL,                 -- 'ok' | 'error'
+  started_at  INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  detail      TEXT NOT NULL DEFAULT ''       -- JSON：各類刪除筆數或錯誤訊息
+);

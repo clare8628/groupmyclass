@@ -3,7 +3,7 @@ import {
   loadState, cap, minCap, membersOf, deadlinePassed, shuffle, teacherHash, nextSeq, parseDate,
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
-  isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE,
+  isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 
@@ -140,6 +140,11 @@ export async function handleAction(request, env, db, body) {
       if (!courseId) return bad('缺少課程', 400);
       const logs = await getCourseLogs(db, courseId);
       return json({ ok: true, logs });
+    }
+
+    if (op === 'system-status') {
+      const courseId = body.courseId ? String(body.courseId) : '';
+      return json({ ok: true, status: await getSystemStatus(db, courseId) });
     }
 
     if (op === 'change-password') {

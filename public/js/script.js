@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.83.20260929.211624';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.84.20260930.134712';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -9,7 +9,7 @@ const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目�
 function parseViewFromHash() {
   const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
   // 老師後台視圖
-  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
+  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
   // 前台子系統視圖
   if (['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(h)) return { type: 'public', view: h };
   // 相容舊 hash
@@ -27,11 +27,11 @@ function parseSubViewFromHash() {
 function getInitialTeacherView() {
   const parsed = parseViewFromHash();
   if (parsed && parsed.type === 'teacher') return parsed.view;
-  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(window.history.state.teacherView)) {
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(window.history.state.teacherView)) {
     return window.history.state.teacherView;
   }
   const saved = localStorage.getItem(TEACHER_VIEW_KEY);
-  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing'].includes(saved)) {
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(saved)) {
     return saved;
   }
   return 'course';
@@ -71,6 +71,7 @@ let leaderAttendanceStatScope = 'all'; // 組長後台缺席統計範圍：預�
 let attendanceStatDate = '';        // 缺席統計所選日期，預設為今天
 let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
+let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席天數「超過」此值者列入關懷名單
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
@@ -163,6 +164,28 @@ async function loadCourseLogs(courseId, force = false) {
     console.error('載入日誌失敗:', e);
   } finally {
     logsLoading = false;
+    render();
+  }
+}
+
+/* 系統運行紀錄按需快取（以課程為單位；僅進入該頁時讀取，不影響輪詢） */
+let systemStatusByCourse = {};
+let systemStatusLoading = false;
+let systemStatusError = '';
+
+async function loadSystemStatus(courseId, force = false) {
+  const key = courseId || '';
+  if ((systemStatusByCourse[key] && !force) || systemStatusLoading) return;
+  systemStatusLoading = true;
+  systemStatusError = '';
+  render();
+  try {
+    const res = await apiPost('teacher:system-status', { courseId: key });
+    if (res && res.status) systemStatusByCourse[key] = res.status;
+  } catch (e) {
+    systemStatusError = String(e.message || e);
+  } finally {
+    systemStatusLoading = false;
     render();
   }
 }
@@ -680,6 +703,40 @@ function attendanceAbsentCounts(c, date, filterStudentIds = null) {
     counts[key] = (counts[key] || 0) + 1;
   });
   return counts;
+}
+
+/* 缺席關懷名單：整學期缺席天數（不同日期）超過門檻之學生，依缺席天數由多到少排序 */
+function careAbsenceList(c, threshold) {
+  const counts = attendanceAbsentCounts(c, null);
+  const list = [];
+  Object.entries(counts).forEach(([key, n]) => {
+    const details = getStudentAbsenceList(c, key);
+    const dates = [...new Set(details.map(d => d.date))].sort();
+    if (dates.length <= threshold) return;
+    const rec = (c.attendanceRecords || []).find(r => r.studentId === key || r.ref === key);
+    const sid = rec && rec.studentId ? rec.studentId : key;
+    const st = c.students.find(x => x.id === sid || (x.ref && x.ref === key));
+    const g = st && st.groupId ? c.groups.find(x => x.id === st.groupId) : null;
+    list.push({
+      key, id: st ? st.id : sid, name: st ? st.name : ((rec && rec.studentName) || sid),
+      groupName: g ? g.name : '未分組', count: n, days: dates.length,
+      lastDate: dates[dates.length - 1] || '',
+    });
+  });
+  return list.sort((a, b) => b.days - a.days || b.count - a.count ||
+    String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+}
+
+/* 導師關懷訊息（中越雙語），供複製至 LINE 私訊 */
+function careMessageText(c, x) {
+  return `${x.name} 同學你好：\n` +
+    `我是「${courseLabel(c)}」的導師。系統紀錄顯示你本學期目前已缺席 ${x.count} 次（共 ${x.days} 天，最近一次為 ${x.lastDate}）。\n` +
+    `老師很關心你的近況，是不是身體不舒服、打工或生活上遇到了什麼困難呢？如果有任何需要協助的地方，歡迎直接回覆這則訊息或找老師聊聊，我們一起想辦法。\n` +
+    `期待在課堂上見到你，加油！💪\n\n` +
+    `Chào em ${x.name},\n` +
+    `Thầy/Cô là giáo viên chủ nhiệm lớp "${courseLabel(c)}". Theo hệ thống, học kỳ này em đã vắng mặt ${x.count} lần (${x.days} ngày, gần nhất vào ngày ${x.lastDate}).\n` +
+    `Thầy/Cô rất quan tâm đến tình hình của em. Em có gặp vấn đề về sức khỏe, công việc làm thêm hay khó khăn gì trong cuộc sống không? Nếu cần hỗ trợ, em cứ trả lời tin nhắn này hoặc gặp Thầy/Cô để trao đổi nhé.\n` +
+    `Mong sớm gặp lại em trên lớp. Cố lên em nhé! 💪`;
 }
 
 /* 取得特定學生的缺席明細（依日期排序，列出日期、活動/時段名稱、更新時間） */
@@ -2188,6 +2245,9 @@ function courseTree() {
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
         </li>
+        <li class="${teacherView === 'system' ? 'active' : ''}">
+          <button data-act="sys-system">🖥️ 系統運行紀錄<span class="count">排程執行紀錄與日誌自動移除提示</span></button>
+        </li>
       </ul>
     </div>
   </aside>`;
@@ -2226,10 +2286,102 @@ function teacherScreen() {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
   } else if (teacherView === 'wellbeing') {
     main = teacherSubpageNav('問卷管理', c) + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
+  } else if (teacherView === 'system') {
+    main = teacherSubpageNav('系統運行紀錄', c) + teacherSystemBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
   return `<div class="layout">${courseTree()}<main>${main}</main></div>`;
+}
+
+/* ---- 老師後台：系統運行紀錄（每日排程自動清除逾期日誌之執行結果與即將移除提示） ---- */
+function daysUntil(ts, now) {
+  return Math.max(0, Math.ceil((ts - now) / 86400000));
+}
+function formatDateOnly(ts) {
+  return formatLogTime(ts).slice(0, 10);
+}
+
+function teacherSystemBlock(c) {
+  const key = c ? c.id : '';
+  const st = systemStatusByCourse[key];
+  if (!st && !systemStatusLoading && !systemStatusError) setTimeout(() => loadSystemStatus(key), 0);
+  if (!st) {
+    return `<div class="teacher-section"><h2>🖥️ 系統運行紀錄</h2>
+      <p class="file-path">${systemStatusError ? `載入失敗：${esc(systemStatusError)}　<button class="btn btn-sm" data-act="refresh-system-status">重新載入</button>` : '載入中…'}</p></div>`;
+  }
+  const now = Date.now();
+  const lastRun = st.runs[0];
+  const soon = st.categories.filter(x => x.upcoming.length && daysUntil(x.upcoming[0].deleteAt, now) <= 7);
+  const runDeleted = r => r.detail || {};
+
+  const catRows = st.categories.map(x => {
+    const upcomingTotal = x.upcoming.reduce((n, u) => n + u.count, 0);
+    return `
+      <tr>
+        <td><b>${esc(x.label)}</b></td>
+        <td style="text-align:center;">${x.total} 筆</td>
+        <td>${x.oldest ? formatLogTime(x.oldest) : '—'}</td>
+        <td>${x.oldestDeleteAt ? `${formatDateOnly(x.oldestDeleteAt)} 03:00（<b>${daysUntil(x.oldestDeleteAt, now)}</b> 天後）` : '—'}</td>
+        <td>${upcomingTotal ? `
+          <b style="color:#b45309;">${upcomingTotal} 筆</b>
+          <details style="margin-top:0.25rem;"><summary style="cursor:pointer;font-size:0.8rem;color:#64748b;">依移除日期</summary>
+            <ul style="margin:0.35rem 0 0;padding-left:1.1rem;font-size:0.82rem;">
+              ${x.upcoming.map(u => `<li>${formatDateOnly(u.deleteAt)}（${daysUntil(u.deleteAt, now)} 天後）：${u.count} 筆</li>`).join('')}
+            </ul>
+          </details>` : '<span style="color:#16a34a;">無</span>'}</td>
+      </tr>`;
+  }).join('');
+
+  const runRows = st.runs.map(r => {
+    const d = runDeleted(r);
+    return `
+      <tr>
+        <td style="font-family:monospace;white-space:nowrap;">${formatLogTime(r.startedAt)}</td>
+        <td>自動清除逾期日誌</td>
+        <td>${r.status === 'ok' ? '<span style="color:#16a34a;font-weight:700;">✅ 成功</span>' : `<span style="color:#b91c1c;font-weight:700;">❌ 失敗</span><div style="font-size:0.78rem;color:#b91c1c;">${esc(d.error || '')}</div>`}</td>
+        <td style="text-align:center;">${r.status === 'ok' ? `${d.attendance || 0} / ${d.survey || 0} / ${d.surveyFill || 0}` : '—'}</td>
+        <td style="text-align:center;">${Math.max(0, r.finishedAt - r.startedAt)} ms</td>
+      </tr>`;
+  }).join('');
+
+  return `
+  <div class="teacher-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+      <h2 style="margin:0;">🖥️ 系統運行紀錄</h2>
+      <button class="btn btn-secondary btn-sm" data-act="refresh-system-status" ${systemStatusLoading ? 'disabled' : ''}>🔄 ${systemStatusLoading ? '更新中…' : '重新整理'}</button>
+    </div>
+    <p class="file-path" style="margin-top:0.75rem;line-height:1.7;">
+      🧹 <b>自動清除規則</b>：點名異動、問卷設定異動、問卷填寫異動日誌保留 <b>${st.retentionDays}</b> 天（約六個月），系統每日 <b>03:00（台北時間）</b> 自動移除逾期紀錄；分組異動日誌不會自動刪除。<br>
+      ⏰ 下次執行：<b>${formatLogTime(st.nextRunAt).slice(0, 16)}</b>　｜　上次執行：${lastRun ? `<b>${formatLogTime(lastRun.startedAt)}</b>（${lastRun.status === 'ok' ? '成功' : '失敗'}）` : '尚無執行紀錄'}
+    </p>
+    ${soon.length ? `
+    <div style="background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:8px;padding:0.75rem 1rem;margin-top:0.5rem;font-size:0.9rem;line-height:1.7;">
+      ⚠️ <b>7 天內將自動移除</b>：${soon.map(x => `${esc(x.label)} ${x.upcoming.filter(u => daysUntil(u.deleteAt, now) <= 7).reduce((n, u) => n + u.count, 0)} 筆（最快 ${daysUntil(x.upcoming[0].deleteAt, now)} 天後）`).join('；')}。如需保留，請先至對應管理頁匯出或截圖。
+    </div>` : ''}
+  </div>
+
+  <div class="teacher-section">
+    <h2>即將自動移除的日誌 <small>${c ? esc(courseLabel(c)) : '（請先選擇課程）'}・未來 ${st.windowDays} 天</small></h2>
+    ${c ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>日誌類別</th><th style="text-align:center;">目前筆數</th><th>最舊紀錄時間</th><th>最舊紀錄移除時間</th><th>${st.windowDays} 天內將移除</th></tr></thead>
+        <tbody>${catRows}</tbody>
+      </table>
+    </div>` : '<p class="file-path">請先從左側點選課程，即可檢視該課程日誌的移除時程。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>排程執行紀錄 <small>最近 ${st.runs.length} 次</small></h2>
+    ${st.runs.length ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>執行時間</th><th>工作</th><th>狀態</th><th style="text-align:center;">刪除筆數<br><small>點名 / 問卷設定 / 問卷填寫</small></th><th style="text-align:center;">耗時</th></tr></thead>
+        <tbody>${runRows}</tbody>
+      </table>
+    </div>` : '<p class="file-path">尚無執行紀錄；排程每日 03:00（台北時間）執行後即會顯示於此（全系統共用，含所有課程）。</p>'}
+  </div>`;
 }
 
 function teacherNoCourse() {
@@ -3072,6 +3224,9 @@ function teacherAttendanceBlock(c) {
   /* ---- 4. 點名人員任務執行表現學期排行榜 ---- */
   const markerLeaderboard = calcRollCallPerformance(c);
 
+  /* ---- 缺席關懷名單（整學期缺席天數超過門檻） ---- */
+  const careList = careAbsenceList(c, careAbsenceThreshold);
+
   /* ---- 5. 組員缺席排行榜（支援每頁 15 筆分頁瀏覽） ---- */
   const counts = attendanceAbsentCounts(c, attendanceStatScope === 'date' ? attendanceStatDate : null);
   const leaderboardAll = Object.entries(counts)
@@ -3337,6 +3492,39 @@ function teacherAttendanceBlock(c) {
       </table>
     </div>
     ` : '<p class="file-path">目前整學期尚無點名執行紀錄。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>💌 缺席關懷 <small>準備導師 LINE 關心訊息</small></h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+      <label style="font-size:0.9rem;color:#475569;">整學期缺席超過
+        <input type="number" min="0" max="99" value="${careAbsenceThreshold}" data-act="care-absence-threshold" style="width:4.5rem;margin:0 0.25rem;"> 天的學生（共 <b>${careList.length}</b> 位）
+      </label>
+      ${careList.length ? `<button class="btn btn-primary btn-sm" type="button" data-act="copy-all-care-messages" style="margin:0;">📋 一鍵複製全部關懷訊息</button>` : ''}
+    </div>
+    ${careList.length ? `
+    <div class="table-wrap">
+      <table class="roster" style="background:#fff;">
+        <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th style="text-align:center;">缺席天數</th><th style="text-align:center;">缺席次數</th><th>最近缺席</th><th>關懷訊息</th></tr></thead>
+        <tbody>${careList.map(x => `
+          <tr>
+            <td>${esc(x.id)}</td>
+            <td><b>${esc(x.name)}</b></td>
+            <td>${esc(x.groupName)}</td>
+            <td style="text-align:center;">${x.days} 天</td>
+            <td style="text-align:center;">
+              <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(x.key)}" data-name="${esc(x.name)}" data-id="${esc(x.id)}" title="點選查看缺席日期與對應活動明細">⚠️ ${x.count} 次</button>
+            </td>
+            <td>${esc(x.lastDate)}</td>
+            <td>
+              <button class="btn btn-sm" type="button" data-act="copy-care-message" data-student="${esc(x.key)}" style="margin:0;">💬 複製 LINE 訊息</button>
+              <details style="margin-top:0.35rem;"><summary style="cursor:pointer;font-size:0.8rem;color:#64748b;">預覽</summary>
+                <pre class="care-message-preview" style="white-space:pre-wrap;font-family:inherit;font-size:0.8rem;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:0.5rem;margin:0.35rem 0 0;max-width:28rem;">${esc(careMessageText(c, x))}</pre>
+              </details>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>` : `<p class="file-path">目前沒有整學期缺席超過 ${careAbsenceThreshold} 天的學生。</p>`}
   </div>
 
   <div class="teacher-section">
@@ -3835,14 +4023,14 @@ function leaderSurveyStatusPanel(c, g, s, mates) {
       </table>
     </div>
 
-    <!-- 催繳輔助按鈕 -->
+    <!-- 催填輔助按鈕 -->
     <div style="margin-top:0.85rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
       <span style="font-size:0.82rem;color:#0f766e;">
-        💡 提示：組長或副組長可掌握本組填寫進度，點選右方按鈕可複製提醒名單至群組催繳。<br>
+        💡 提示：組長或副組長可掌握本組填寫進度，點選右方按鈕可複製提醒名單至群組催填。<br>
         <small class="vn-sub">Nhóm trưởng/nhóm phó có thể sao chép nhắc nhở gửi vào nhóm chat.</small>
       </span>
       <button class="btn btn-secondary btn-sm" type="button" data-act="copy-leader-uncompleted-survey" style="padding:0.4rem 1rem;font-size:0.85rem;margin:0;">
-        📋 一鍵複製本組未填寫催繳名單<br><small class="vn-sub">Sao chép danh sách chưa nộp</small>
+        📋 一鍵複製本組未填寫催填名單<br><small class="vn-sub">Sao chép danh sách chưa nộp</small>
       </button>
     </div>
   </div>`;
@@ -3977,7 +4165,7 @@ function teacherWellbeingBlock(c) {
             全班共有 <b>${stats.uncompleted}</b> 位學生尚未完成填寫問卷。
           </div>
           <button class="btn btn-primary btn-sm" type="button" data-act="copy-teacher-uncompleted-survey" style="padding:0.4rem 1.1rem;font-size:0.85rem;margin:0;">
-            📋 一鍵複製未完成催繳名單 (含組別與組長)
+            📋 一鍵複製未完成催填名單 (含組別與組長)
           </button>
         </div>
         ${stats.uncompletedList.length ? `
@@ -4395,7 +4583,7 @@ function surveyModalsHtml() {
         </div>
         <div class="absence-modal-body">
           <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:0.65rem 0.85rem;margin-bottom:1rem;color:#92400e;font-size:0.88rem;">
-            全班共有 <b>${stats.uncompleted}</b> 位同學尚未完成生活關懷問卷，請組長與同組同學互相協助提醒催繳！<br><small class="vn-sub">Còn ${stats.uncompleted} sinh viên chưa hoàn thành khảo sát, nhóm trưởng và các bạn vui lòng nhắc nhở nhau!</small>
+            全班共有 <b>${stats.uncompleted}</b> 位同學尚未完成生活關懷問卷，請組長與同組同學互相協助提醒催填！<br><small class="vn-sub">Còn ${stats.uncompleted} sinh viên chưa hoàn thành khảo sát, nhóm trưởng và các bạn vui lòng nhắc nhở nhau!</small>
           </div>
           ${stats.uncompletedList.length ? `
             <div class="table-wrap">
@@ -5316,6 +5504,8 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-logs') { return setTeacherView('logs'); }
   if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
   if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
+  if (a === 'sys-system') { return setTeacherView('system'); }
+  if (a === 'refresh-system-status') { const cc = cur(); return loadSystemStatus(cc ? cc.id : '', true); }
   if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
   if (a === 'cancel-edit-attendance-session') { attendanceEditingId = null; return render(); }
   if (a === 'del-attendance-session') {
@@ -5363,7 +5553,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return act('teacher:clear-logs', { courseId: c.id, category });
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system') ? teacherView : 'course';
     if (!state.session || state.session.role !== 'teacher') {
       publicSubView = 'dashboard';
     }
@@ -5754,26 +5944,41 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       return alert('🎉 本組所有組員皆已完成問卷填寫！\nCả nhóm đã hoàn thành!');
     }
     const text = `📢【生活關懷問卷填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n組別：${g.name}\n\n目前本組尚有以下同學尚未填寫生活關懷問卷，請撥空儘速登入系統完成填寫：\n${uncompletedMates.map((m, i) => `${i + 1}. ${m.name} (${m.id})`).join('\n')}\n\n👉 請至分組系統登入填寫，謝謝大家配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
-    copyTextToClipboard(text, '已複製本組未填寫名單提醒文字！可直接貼至 LINE / Zalo 群組催繳。\nĐã sao chép nội dung nhắc nhở!');
+    copyTextToClipboard(text, '已複製本組未填寫名單提醒文字！可直接貼至 LINE / Zalo 群組催填。\nĐã sao chép nội dung nhắc nhở!');
+    return;
+  }
+  if (a === 'copy-care-message') {
+    if (!c) return;
+    const x = careAbsenceList(c, careAbsenceThreshold).find(v => v.key === btn.dataset.student);
+    if (!x) return;
+    copyTextToClipboard(careMessageText(c, x), `已複製給 ${x.name} 的關懷訊息！可直接貼至 LINE 私訊傳送。`);
+    return;
+  }
+  if (a === 'copy-all-care-messages') {
+    if (!c) return;
+    const list = careAbsenceList(c, careAbsenceThreshold);
+    if (!list.length) return alert(`目前沒有整學期缺席超過 ${careAbsenceThreshold} 天的學生。`);
+    const text = list.map(x => `━━━━ ${x.name}（${x.id}｜${x.groupName}｜缺席 ${x.count} 次／${x.days} 天）━━━━\n${careMessageText(c, x)}`).join('\n\n');
+    copyTextToClipboard(text, `已複製 ${list.length} 位學生的關懷訊息！請依姓名分段貼至各自的 LINE 私訊。`);
     return;
   }
   if (a === 'copy-teacher-uncompleted-survey') {
     if (!c) return;
     const stats = getSurveyStats(c);
-    if (!stats.uncompletedCount) {
+    if (!stats.uncompleted) {
       return alert('🎉 本科目所有修課學生皆已完成問卷填寫！');
     }
-    const text = `📢【生活關懷問卷未填寫催繳提醒名單】\n課程：${courseLabel(c)}\n應填人數：${stats.total} 人 | 未完成：${stats.uncompletedCount} 人\n\n尚未填寫名單如下：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] 組長:${st.leaderName} ➔ ${st.name} (${st.id})`).join('\n')}\n\n請各組組長協助提醒組員至分組平台登入填寫生活關懷問卷，謝謝！`;
+    const text = `📢【生活關懷問卷未填寫催填提醒名單】\n課程：${courseLabel(c)}\n應填人數：${stats.total} 人 | 未完成：${stats.uncompleted} 人\n\n尚未填寫名單如下：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] 組長:${st.leaderName} ➔ ${st.name} (${st.id})`).join('\n')}\n\n請各組組長協助提醒組員至分組平台登入填寫生活關懷問卷，謝謝！`;
     copyTextToClipboard(text, '已複製全班未完成名單提醒文字！可直接貼至班級群組或寄信通知。');
     return;
   }
   if (a === 'copy-public-uncompleted-survey') {
     if (!c) return;
     const stats = getSurveyStats(c);
-    if (!stats.uncompletedCount) {
+    if (!stats.uncompleted) {
       return alert('🎉 本課程全班同學皆已完成問卷填寫！\nTất cả sinh viên đã hoàn thành khảo sát!');
     }
-    const text = `📢【生活關懷問卷未填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n未完成人數：${stats.uncompletedCount} 人\n\n尚未填寫同學名單：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] ${st.name}`).join('\n')}\n\n請尚未填寫的同學撥空登入完成問卷，謝謝配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
+    const text = `📢【生活關懷問卷未填寫提醒 / Nhắc nhở khảo sát】\n課程：${courseLabel(c)}\n未完成人數：${stats.uncompleted} 人\n\n尚未填寫同學名單：\n${stats.uncompletedList.map((st, i) => `${i + 1}. [${st.groupName}] ${st.name}`).join('\n')}\n\n請尚未填寫的同學撥空登入完成問卷，謝謝配合！\n(Vui lòng đăng nhập hệ thống để hoàn thành khảo sát, cảm ơn các bạn!)`;
     copyTextToClipboard(text, '已複製未完成名單！可貼至群組提醒。\nĐã sao chép danh sách!');
     return;
   }
@@ -5859,6 +6064,7 @@ app.addEventListener('change', e => {
     });
   }
   if (a === 'attendance-stat-scope') { attendanceStatScope = t.value; attendanceLeaderboardPage = 1; return render(); }
+  if (a === 'care-absence-threshold') { careAbsenceThreshold = Math.max(0, parseInt(t.value, 10) || 0); return render(); }
   if (a === 'public-attendance-stat-scope') { publicAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
   if (a === 'leader-attendance-stat-scope') { leaderAttendanceStatScope = t.value; publicAttendanceLeaderboardPage = 1; return render(); }
   if (a === 'attendance-progress-session') { attendanceProgressSessionId = t.value; return render(); }

@@ -1,6 +1,6 @@
 /* 學生分組系統 — Worker 進入點
    /api/state、/api/action 走 D1；其餘交給靜態資源（public/）。 */
-import { bad, cleanupOldLogs } from './lib.js';
+import { bad, runScheduledCleanup } from './lib.js';
 import { handleState, handleAction } from './api.js';
 
 export default {
@@ -22,8 +22,8 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  /* Cron Trigger：每日清除超過六個月的點名／問卷異動紀錄 */
+  /* Cron Trigger：每日清除超過六個月的點名／問卷異動紀錄，並寫入系統運行紀錄 */
   async scheduled(event, env, ctx) {
-    if (env.DB) ctx.waitUntil(cleanupOldLogs(env.DB).then(n => console.log(`cleanupOldLogs: deleted ${n} rows`)));
+    if (env.DB) ctx.waitUntil(runScheduledCleanup(env.DB).then(r => console.log('log-cleanup', JSON.stringify(r))));
   },
 };
