@@ -2,3 +2,4 @@
 node_modules/
 .wrangler/
 cookies.txt
+.claude/settings.local.json

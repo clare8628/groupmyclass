@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.84.20260930.134712';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.85.20260930.144014';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -71,7 +71,7 @@ let leaderAttendanceStatScope = 'all'; // 組長後台缺席統計範圍：預�
 let attendanceStatDate = '';        // 缺席統計所選日期，預設為今天
 let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，預設為最新時段
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
-let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席天數「超過」此值者列入關懷名單
+let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席次數「超過」此值者列入關懷名單
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
@@ -705,36 +705,36 @@ function attendanceAbsentCounts(c, date, filterStudentIds = null) {
   return counts;
 }
 
-/* 缺席關懷名單：整學期缺席天數（不同日期）超過門檻之學生，依缺席天數由多到少排序 */
+/* 缺席關懷名單：整學期缺席次數超過門檻之學生，依缺席次數由多到少排序 */
 function careAbsenceList(c, threshold) {
   const counts = attendanceAbsentCounts(c, null);
   const list = [];
   Object.entries(counts).forEach(([key, n]) => {
     const details = getStudentAbsenceList(c, key);
     const dates = [...new Set(details.map(d => d.date))].sort();
-    if (dates.length <= threshold) return;
+    if (n <= threshold) return;
     const rec = (c.attendanceRecords || []).find(r => r.studentId === key || r.ref === key);
     const sid = rec && rec.studentId ? rec.studentId : key;
     const st = c.students.find(x => x.id === sid || (x.ref && x.ref === key));
     const g = st && st.groupId ? c.groups.find(x => x.id === st.groupId) : null;
     list.push({
       key, id: st ? st.id : sid, name: st ? st.name : ((rec && rec.studentName) || sid),
-      groupName: g ? g.name : '未分組', count: n, days: dates.length,
+      groupName: g ? g.name : '未分組', count: n,
       lastDate: dates[dates.length - 1] || '',
     });
   });
-  return list.sort((a, b) => b.days - a.days || b.count - a.count ||
+  return list.sort((a, b) => b.count - a.count ||
     String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
 }
 
 /* 導師關懷訊息（中越雙語），供複製至 LINE 私訊 */
 function careMessageText(c, x) {
   return `${x.name} 同學你好：\n` +
-    `我是「${courseLabel(c)}」的導師。系統紀錄顯示你本學期目前已缺席 ${x.count} 次（共 ${x.days} 天，最近一次為 ${x.lastDate}）。\n` +
+    `我是「${courseLabel(c)}」的導師。系統紀錄顯示你本學期目前已缺席 ${x.count} 次（最近一次為 ${x.lastDate}）。\n` +
     `老師很關心你的近況，是不是身體不舒服、打工或生活上遇到了什麼困難呢？如果有任何需要協助的地方，歡迎直接回覆這則訊息或找老師聊聊，我們一起想辦法。\n` +
     `期待在課堂上見到你，加油！💪\n\n` +
     `Chào em ${x.name},\n` +
-    `Thầy/Cô là giáo viên chủ nhiệm lớp "${courseLabel(c)}". Theo hệ thống, học kỳ này em đã vắng mặt ${x.count} lần (${x.days} ngày, gần nhất vào ngày ${x.lastDate}).\n` +
+    `Thầy/Cô là giáo viên chủ nhiệm lớp "${courseLabel(c)}". Theo hệ thống, học kỳ này em đã vắng mặt ${x.count} lần (gần nhất vào ngày ${x.lastDate}).\n` +
     `Thầy/Cô rất quan tâm đến tình hình của em. Em có gặp vấn đề về sức khỏe, công việc làm thêm hay khó khăn gì trong cuộc sống không? Nếu cần hỗ trợ, em cứ trả lời tin nhắn này hoặc gặp Thầy/Cô để trao đổi nhé.\n` +
     `Mong sớm gặp lại em trên lớp. Cố lên em nhé! 💪`;
 }
@@ -3224,7 +3224,7 @@ function teacherAttendanceBlock(c) {
   /* ---- 4. 點名人員任務執行表現學期排行榜 ---- */
   const markerLeaderboard = calcRollCallPerformance(c);
 
-  /* ---- 缺席關懷名單（整學期缺席天數超過門檻） ---- */
+  /* ---- 缺席關懷名單（整學期缺席次數超過門檻） ---- */
   const careList = careAbsenceList(c, careAbsenceThreshold);
 
   /* ---- 5. 組員缺席排行榜（支援每頁 15 筆分頁瀏覽） ---- */
@@ -3498,20 +3498,19 @@ function teacherAttendanceBlock(c) {
     <h2>💌 缺席關懷 <small>準備導師 LINE 關心訊息</small></h2>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
       <label style="font-size:0.9rem;color:#475569;">整學期缺席超過
-        <input type="number" min="0" max="99" value="${careAbsenceThreshold}" data-act="care-absence-threshold" style="width:4.5rem;margin:0 0.25rem;"> 天的學生（共 <b>${careList.length}</b> 位）
+        <input type="number" min="0" max="99" value="${careAbsenceThreshold}" data-act="care-absence-threshold" style="width:4.5rem;margin:0 0.25rem;"> 次的學生（共 <b>${careList.length}</b> 位）
       </label>
       ${careList.length ? `<button class="btn btn-primary btn-sm" type="button" data-act="copy-all-care-messages" style="margin:0;">📋 一鍵複製全部關懷訊息</button>` : ''}
     </div>
     ${careList.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th style="text-align:center;">缺席天數</th><th style="text-align:center;">缺席次數</th><th>最近缺席</th><th>關懷訊息</th></tr></thead>
+        <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th style="text-align:center;">缺席次數</th><th>最近缺席</th><th>關懷訊息</th></tr></thead>
         <tbody>${careList.map(x => `
           <tr>
             <td>${esc(x.id)}</td>
             <td><b>${esc(x.name)}</b></td>
             <td>${esc(x.groupName)}</td>
-            <td style="text-align:center;">${x.days} 天</td>
             <td style="text-align:center;">
               <button class="absent-count-badge" data-act="view-absence-detail" data-student="${esc(x.key)}" data-name="${esc(x.name)}" data-id="${esc(x.id)}" title="點選查看缺席日期與對應活動明細">⚠️ ${x.count} 次</button>
             </td>
@@ -3524,7 +3523,7 @@ function teacherAttendanceBlock(c) {
             </td>
           </tr>`).join('')}</tbody>
       </table>
-    </div>` : `<p class="file-path">目前沒有整學期缺席超過 ${careAbsenceThreshold} 天的學生。</p>`}
+    </div>` : `<p class="file-path">目前沒有整學期缺席超過 ${careAbsenceThreshold} 次的學生。</p>`}
   </div>
 
   <div class="teacher-section">
@@ -5957,8 +5956,8 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'copy-all-care-messages') {
     if (!c) return;
     const list = careAbsenceList(c, careAbsenceThreshold);
-    if (!list.length) return alert(`目前沒有整學期缺席超過 ${careAbsenceThreshold} 天的學生。`);
-    const text = list.map(x => `━━━━ ${x.name}（${x.id}｜${x.groupName}｜缺席 ${x.count} 次／${x.days} 天）━━━━\n${careMessageText(c, x)}`).join('\n\n');
+    if (!list.length) return alert(`目前沒有整學期缺席超過 ${careAbsenceThreshold} 次的學生。`);
+    const text = list.map(x => `━━━━ ${x.name}（${x.id}｜${x.groupName}｜缺席 ${x.count} 次）━━━━\n${careMessageText(c, x)}`).join('\n\n');
     copyTextToClipboard(text, `已複製 ${list.length} 位學生的關懷訊息！請依姓名分段貼至各自的 LINE 私訊。`);
     return;
   }
