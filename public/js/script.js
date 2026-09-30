@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.85.20260930.144014';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.86.20260930.150107';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -729,12 +729,12 @@ function careAbsenceList(c, threshold) {
 
 /* 導師關懷訊息（中越雙語），供複製至 LINE 私訊 */
 function careMessageText(c, x) {
-  return `${x.name} 同學你好：\n` +
-    `我是「${courseLabel(c)}」的導師。系統紀錄顯示你本學期目前已缺席 ${x.count} 次（最近一次為 ${x.lastDate}）。\n` +
+  return `Hi ${x.name}：\n` +
+    `點名系統紀錄顯示你本學期目前已缺席 ${x.count} 次（最近一次為 ${x.lastDate}）。\n` +
     `老師很關心你的近況，是不是身體不舒服、打工或生活上遇到了什麼困難呢？如果有任何需要協助的地方，歡迎直接回覆這則訊息或找老師聊聊，我們一起想辦法。\n` +
     `期待在課堂上見到你，加油！💪\n\n` +
-    `Chào em ${x.name},\n` +
-    `Thầy/Cô là giáo viên chủ nhiệm lớp "${courseLabel(c)}". Theo hệ thống, học kỳ này em đã vắng mặt ${x.count} lần (gần nhất vào ngày ${x.lastDate}).\n` +
+    `Hi ${x.name},\n` +
+    `Theo hệ thống điểm danh, học kỳ này em đã vắng mặt ${x.count} lần (gần nhất vào ngày ${x.lastDate}).\n` +
     `Thầy/Cô rất quan tâm đến tình hình của em. Em có gặp vấn đề về sức khỏe, công việc làm thêm hay khó khăn gì trong cuộc sống không? Nếu cần hỗ trợ, em cứ trả lời tin nhắn này hoặc gặp Thầy/Cô để trao đổi nhé.\n` +
     `Mong sớm gặp lại em trên lớp. Cố lên em nhé! 💪`;
 }
