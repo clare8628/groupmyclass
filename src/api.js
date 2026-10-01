@@ -6,6 +6,7 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
+import { fetchNotionBulletin } from './bulletin.js';
 
 /* 確保點名時段寫入資料庫（用於日常點名自動建立或補登驗證） */
 async function ensureSessionInDb(db, courseId, s) {
@@ -40,8 +41,9 @@ export async function handleState(request, env, db) {
   }
 
   const courses = await applyDeadline(db, await loadState(db, rev));
+  const bulletin = await fetchNotionBulletin();
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );

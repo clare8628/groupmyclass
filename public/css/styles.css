@@ -2719,19 +2719,20 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   min-width: 0;
 }
 
-/* [Block B] 公告事項區：緊接於頁首 (Block A) 下方的獨立公告區塊 */
+/* [Block B] 公佈欄：緊接於頁首 (Block A) 下方的獨立公告區塊 */
 .notice-block-section {
   margin-top: 1.25rem;
   padding: 1.1rem 1.4rem;
 }
 
 .notice-bulletin-bar {
-  background: #fffbeb;
+  background: #fffdf5;
   border: 1px solid #fef3c7;
   border-left: 4px solid #f59e0b;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  padding: 0.9rem 1.15rem;
   margin-top: 0.75rem;
+  box-shadow: 0 1px 3px rgba(245, 158, 11, 0.06);
 }
 
 .bulletin-bar-header {
@@ -2740,32 +2741,130 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #fef3c7;
   color: #92400e;
-  font-size: 0.88rem;
+  font-size: 0.92rem;
 }
 
 .bulletin-bell-icon {
-  font-size: 1.05rem;
+  font-size: 1.15rem;
 }
 
-.bulletin-time-pill {
-  font-size: 0.78rem;
-  background: #fef3c7;
-  color: #b45309;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+.bulletin-notion-source-link {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: #0369a1;
+  text-decoration: none;
+  font-size: 0.8rem;
   font-weight: 600;
+  transition: color 0.15s ease;
+}
+
+.bulletin-notion-source-link:hover {
+  color: #0284c7;
+  text-decoration: underline;
 }
 
 .bulletin-bar-content {
-  font-size: 0.84rem;
+  font-size: 0.86rem;
   color: #78350f;
   line-height: 1.5;
 }
 
-.bulletin-line {
-  margin: 0.2rem 0;
+.bulletin-item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bulletin-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border-bottom: 1px dashed #fef3c7;
+  transition: background-color 0.15s ease;
+}
+
+.bulletin-item-row:last-child {
+  border-bottom: none;
+}
+
+.bulletin-item-row:hover {
+  background-color: #fefce8;
+}
+
+.bulletin-date-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  padding: 0.18rem 0.5rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
+.bulletin-date-badge.bulletin-date-empty {
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.bulletin-item-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #1e293b;
+  text-decoration: none;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  font-weight: 550;
+  flex-grow: 1;
+  word-break: break-word;
+  transition: color 0.15s ease;
+}
+
+.bulletin-item-link:hover {
+  color: #d97706;
+  text-decoration: underline;
+}
+
+.bulletin-item-title-text {
+  flex-grow: 1;
+}
+
+.bulletin-ext-icon {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  opacity: 0.75;
+  transition: transform 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.bulletin-item-link:hover .bulletin-ext-icon {
+  color: #d97706;
+  transform: translate(1px, -1px);
+}
+
+@media (max-width: 480px) {
+  .bulletin-item-row {
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .bulletin-date-badge {
+    margin-top: 0.15rem;
+  }
 }
 
 /* 子系統切換導覽列 (Subsystem Tabs) */
