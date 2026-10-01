@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.86.20260930.150107';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.87.20261001.115113';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1370,7 +1370,8 @@ function renderUncompletedSurveysCard(c) {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:0.4rem;">
-        <span class="status-badge ${status.badgeClass}">🟢 開放填寫中<br><small class="vn-sub">Đang mở</small></span>
+        <span class="status-badge ${status.badgeClass}">${status.label}</span>
+        <span style="font-size:0.78rem;color:#0f766e;font-weight:600;">📅 ${esc(status.timeDesc)}</span>
       </div>
     </div>
 
@@ -1919,8 +1920,8 @@ function renderSurveyStandaloneLogin(c) {
         </div>
 
         <div style="margin-bottom:1.15rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-          <span class="status-badge ${status.badgeClass}">🟢 開放填寫中<br><small class="vn-sub">Đang mở</small></span>
-          <span style="font-size:0.85rem;color:#0f766e;font-weight:600;">📅 ${status.timeDesc}</span>
+          <span class="status-badge ${status.badgeClass}">${status.label}</span>
+          <span style="font-size:0.85rem;color:#0f766e;font-weight:600;">📅 ${esc(status.timeDesc)}</span>
         </div>
 
         <div style="background:#ffffff;border:1px solid #ccfbf1;border-radius:8px;padding:0.9rem 1rem;margin-bottom:1rem;font-size:0.88rem;color:#134e4a;line-height:1.6;">
