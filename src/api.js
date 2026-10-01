@@ -4,6 +4,7 @@ import {
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
+  getBulletinPageSize, setBulletinPageSize,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { fetchNotionBulletin } from './bulletin.js';
@@ -41,9 +42,12 @@ export async function handleState(request, env, db) {
   }
 
   const courses = await applyDeadline(db, await loadState(db, rev));
-  const bulletin = await fetchNotionBulletin();
+  const [bulletin, bulletinPageSize] = await Promise.all([
+    fetchNotionBulletin(),
+    getBulletinPageSize(db),
+  ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -147,6 +151,13 @@ export async function handleAction(request, env, db, body) {
     if (op === 'system-status') {
       const courseId = body.courseId ? String(body.courseId) : '';
       return json({ ok: true, status: await getSystemStatus(db, courseId) });
+    }
+
+    if (op === 'set-bulletin-settings') {
+      const size = parseInt(body.pageSize, 10);
+      if (!size || size < 1 || size > 100) return bad('顯示筆數必須為 1 至 100 之間的整數', 400);
+      await setBulletinPageSize(db, size);
+      return ok({ bulletinPageSize: size });
     }
 
     if (op === 'change-password') {

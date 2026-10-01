@@ -1033,3 +1033,17 @@ export async function resolveStudent(db, env, c, key) {
   }
   return null;
 }
+
+export async function getBulletinPageSize(db) {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('bulletin_page_size').first().catch(() => null);
+  const n = row ? parseInt(row.value, 10) : 10;
+  return (n > 0 && n <= 100) ? n : 10;
+}
+
+export async function setBulletinPageSize(db, size) {
+  const n = parseInt(size, 10);
+  const val = (n > 0 && n <= 100) ? n : 10;
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('bulletin_page_size', String(val)).run();
+  return val;
+}
+

@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.88.20261001.165806';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.89.20261001.171301';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -27,11 +27,11 @@ function parseSubViewFromHash() {
 function getInitialTeacherView() {
   const parsed = parseViewFromHash();
   if (parsed && parsed.type === 'teacher') return parsed.view;
-  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(window.history.state.teacherView)) {
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(window.history.state.teacherView)) {
     return window.history.state.teacherView;
   }
   const saved = localStorage.getItem(TEACHER_VIEW_KEY);
-  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(saved)) {
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(saved)) {
     return saved;
   }
   return 'course';
@@ -58,6 +58,7 @@ let state = {
   session: null,
   currentId: localStorage.getItem(CURRENT_KEY) || null,
   bulletin: [],
+  bulletinPageSize: 10,
 };
 let bulletinPage = 1;     // 前台 [Block B] 公佈欄目前頁碼（每頁 10 筆）
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
@@ -222,6 +223,7 @@ function apply(data) {
   if (data.courses) state.courses = data.courses;
   if (data.session !== undefined) state.session = data.session;
   if (data.bulletin && Array.isArray(data.bulletin)) state.bulletin = data.bulletin;
+  if (data.bulletinPageSize) state.bulletinPageSize = Number(data.bulletinPageSize);
   if (state.session && state.session.role === 'student') state.currentId = state.session.courseId;
   if (!state.courses.some(c => c.id === state.currentId)) {
     state.currentId = state.courses.length ? state.courses[0].id : null;
@@ -1308,7 +1310,7 @@ function extractBulletinDate(title) {
 
 function noticeBlock(c) {
   const items = (state.bulletin && state.bulletin.length) ? state.bulletin : INITIAL_BULLETIN_PAGES;
-  const pageSize = 10;
+  const pageSize = Number(state.bulletinPageSize) > 0 ? Number(state.bulletinPageSize) : 10;
   const totalItems = items.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   if (bulletinPage > totalPages) bulletinPage = totalPages;
@@ -2298,6 +2300,9 @@ function courseTree() {
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
         </li>
+        <li class="${teacherView === 'bulletin' ? 'active' : ''}">
+          <button data-act="sys-bulletin">📢 公佈欄管理<span class="count">首頁 Block B 顯示筆數設定</span></button>
+        </li>
         <li class="${teacherView === 'system' ? 'active' : ''}">
           <button data-act="sys-system">🖥️ 系統運行紀錄<span class="count">排程執行紀錄與日誌自動移除提示</span></button>
         </li>
@@ -2339,6 +2344,8 @@ function teacherScreen() {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
   } else if (teacherView === 'wellbeing') {
     main = teacherSubpageNav('問卷管理', c) + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
+  } else if (teacherView === 'bulletin') {
+    main = teacherSubpageNav('公佈欄管理', c) + teacherBulletinBlock();
   } else if (teacherView === 'system') {
     main = teacherSubpageNav('系統運行紀錄', c) + teacherSystemBlock(c);
   } else {
@@ -2437,6 +2444,56 @@ function teacherSystemBlock(c) {
   </div>`;
 }
 
+/* ---- 老師後台：公佈欄管理（首頁 Block B 顯示筆數設定） ---- */
+function teacherBulletinBlock() {
+  const pageSize = Number(state.bulletinPageSize) > 0 ? Number(state.bulletinPageSize) : 10;
+  const items = (state.bulletin && state.bulletin.length) ? state.bulletin : INITIAL_BULLETIN_PAGES;
+  const total = items.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return `
+  <div class="teacher-section bulletin-admin-box">
+    <h2>📢 公佈欄管理<small class="vn-sub" style="display:block;font-size:0.85rem;color:#64748b;font-weight:normal;margin-top:0.2rem;">Quản lý bảng thông báo</small></h2>
+    <p class="file-path">
+      設定前台首頁 [Block B] 公佈欄每次分頁顯示的公告筆數。目前系統預設為 10 筆，可依需求調整為 5 筆或其他筆數。<br>
+      <small class="vn-sub">Cài đặt số lượng thông báo hiển thị trên mỗi trang của [Block B]. Mặc định là 10 mục.</small>
+    </p>
+
+    <form data-act="save-bulletin-settings" style="background:#fffdf5;border:1px solid #fef3c7;border-left:4px solid #f59e0b;border-radius:10px;padding:1.3rem 1.6rem;margin:1.3rem 0;max-width:620px;box-shadow:0 1px 3px rgba(245,158,11,0.08);">
+      <div class="form-group" style="margin-bottom:1.1rem;">
+        <label style="font-weight:700;font-size:0.96rem;color:#92400e;display:block;margin-bottom:0.45rem;">
+          每頁顯示公告筆數（筆）
+          <small class="vn-sub" style="font-weight:normal;color:#64748b;margin-left:0.3rem;">Số lượng thông báo trên mỗi trang</small>
+        </label>
+        <div style="display:flex;align-items:center;gap:0.75rem;">
+          <input type="number" name="pageSize" id="bulletinPageSizeInput" min="1" max="50" value="${pageSize}" style="width:130px;padding:0.45rem 0.75rem;border:1.5px solid #cbd5e1;border-radius:6px;font-size:1.05rem;font-weight:600;" required>
+          <span style="font-size:0.9rem;color:#64748b;">筆 / 頁（Trang）</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1.3rem;flex-wrap:wrap;">
+        <span style="font-size:0.84rem;color:#64748b;font-weight:600;">快速選擇：</span>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="set-bulletin-pagesize-preset" data-size="5" style="padding:0.25rem 0.7rem;font-size:0.82rem;${pageSize === 5 ? 'background:#d97706;color:#fff;border-color:#d97706;' : ''}">5 筆</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="set-bulletin-pagesize-preset" data-size="10" style="padding:0.25rem 0.7rem;font-size:0.82rem;${pageSize === 10 ? 'background:#d97706;color:#fff;border-color:#d97706;' : ''}">10 筆</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="set-bulletin-pagesize-preset" data-size="15" style="padding:0.25rem 0.7rem;font-size:0.82rem;${pageSize === 15 ? 'background:#d97706;color:#fff;border-color:#d97706;' : ''}">15 筆</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="set-bulletin-pagesize-preset" data-size="20" style="padding:0.25rem 0.7rem;font-size:0.82rem;${pageSize === 20 ? 'background:#d97706;color:#fff;border-color:#d97706;' : ''}">20 筆</button>
+      </div>
+      <button class="btn btn-primary" type="submit" style="padding:0.5rem 1.4rem;font-size:0.92rem;">
+        💾 儲存顯示設定<br><small class="vn-sub">Lưu cài đặt</small>
+      </button>
+    </form>
+
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1.1rem 1.4rem;max-width:620px;margin-top:1.5rem;">
+      <h4 style="margin:0 0 0.6rem;color:#334155;font-size:0.95rem;">📊 公佈欄運行狀態</h4>
+      <ul style="margin:0;padding-left:1.2rem;font-size:0.88rem;color:#475569;line-height:1.75;">
+        <li>目前每頁顯示：<b style="color:#d97706;">${pageSize}</b> 筆（共需分 <b>${totalPages}</b> 頁）</li>
+        <li>公佈欄總公告數：共 <b>${total}</b> 則最新公告</li>
+        <li>Notion 來源頁面：<a href="https://app.notion.com/p/113-_-975bbaa19830833e955701873b3181e5" target="_blank" rel="noopener noreferrer" style="color:#0284c7;text-decoration:underline;font-weight:600;">113入學-行銷一真(國際)_班務公告入口 ↗</a></li>
+        <li>同步機制：伺服端每 10 分鐘自動快取更新；若遇網路或 API 限制，自動切換至離線快照備援。</li>
+      </ul>
+    </div>
+  </div>`;
+}
+
 function teacherNoCourse() {
   return `
   <div class="teacher-section">
@@ -2466,10 +2523,7 @@ function courseForm(c) {
       <div class="form-group"><label>誤差人數 ±</label><input type="number" min="0" name="tolerance" value="${c.tolerance ?? 1}"></div>
       <div class="form-group"><label>組長加分上限（分）</label><input type="number" min="1" max="100" name="maxBonus" value="${maxB}" placeholder="例如 5 或 10" required></div>
       <div class="form-group"><label>分組截止時間</label><input type="datetime-local" name="deadline" value="${esc(c.deadline || '')}"></div>
-      <div class="form-group full">
-        <label>公布欄注意事項（顯示於前台最上方）</label>
-        <textarea name="notice" rows="4" style="width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px;font:inherit;">${esc(noticeVal)}</textarea>
-      </div>
+
     </div>
     <button class="btn btn-primary" type="submit">儲存</button>
   </form>`;
@@ -5199,6 +5253,13 @@ app.addEventListener('submit', e => {
     return act('teacher:change-password', { current: f.current.value, next },
       { after: () => alert('密碼已更新') });
   }
+  if (a === 'save-bulletin-settings') {
+    const size = parseInt(f.pageSize.value, 10);
+    if (!size || size < 1 || size > 50) return alert('每頁顯示筆數必須在 1 至 50 之間');
+    return act('teacher:set-bulletin-settings', { pageSize: size }, {
+      after: () => alert(`公佈欄每頁顯示筆數已更新為 ${size} 筆！\n(Đã cập nhật số lượng thông báo mỗi trang: ${size})`),
+    });
+  }
   if (a === 'save-course') {
     const c = cur();
     return act('teacher:save-course', {
@@ -5566,6 +5627,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-logs') { return setTeacherView('logs'); }
   if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
   if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
+  if (a === 'sys-bulletin') { return setTeacherView('bulletin'); }
   if (a === 'sys-system') { return setTeacherView('system'); }
   if (a === 'refresh-system-status') { const cc = cur(); return loadSystemStatus(cc ? cc.id : '', true); }
   if (a === 'edit-attendance-session') { attendanceEditingId = id; return render(); }
@@ -5614,8 +5676,14 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     delete fullLogsByCourse[c.id];
     return act('teacher:clear-logs', { courseId: c.id, category });
   }
+  if (a === 'set-bulletin-pagesize-preset') {
+    const size = parseInt(btn.dataset.size, 10);
+    const input = document.getElementById('bulletinPageSizeInput');
+    if (input) input.value = size;
+    return;
+  }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system' || teacherView === 'bulletin') ? teacherView : 'course';
     if (!state.session || state.session.role !== 'teacher') {
       publicSubView = 'dashboard';
     }
