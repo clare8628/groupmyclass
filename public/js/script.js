@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.99.20261006.172937';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.100.20261006.173558';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -76,7 +76,8 @@ let attendanceProgressSessionId = ''; // 尚未完成點名排行所選時段，
 let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目前頁碼（每頁 15 筆）
 let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席次數「超過」此值者列入關懷名單
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
-let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
+let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
+let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
 const admOpen = new Set(); // 後台問卷區塊展開狀態（預設收折）
 const admOpenAttr = k => admOpen.has(k) ? 'open' : '';
@@ -93,7 +94,7 @@ let editingSurveyModal = null;      // 老師修改學生問卷彈窗
 let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
 let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
 let simulatingStudentModal = false; // 老師模擬學生身分登入測試彈窗
-let publicSurveyCard = '';          // 前台問卷子系統目前進入的卡片：'' = 卡片列表 | 'care' | 'abs:<id>'
+let publicSurveyCard = '';          // 前台問卷子系統目前進入的卡片：'' = 卡片列表 | 'care:<id>' | 'abs:<id>'
 let absPicker = null;               // 老師選擇缺曠輔導學生彈窗：{ surveyId, selected: Set }
 let dragSurveyKey = null;           // 後台問卷卡片拖拉中的卡片 key
 let listPages = {};                 // 各異動日誌列表目前頁碼（每頁 15 筆），key：'log-group' | 'log-attendance' | 'log-survey' | 'survey-logs'
@@ -1388,35 +1389,38 @@ function noticeBlock(c) {
 }
 
 /* ---- 核心監控卡片：未完成問卷名單（前 15 筆分頁切換，學號升冪排序） ---- */
-function renderUncompletedSurveysCard(c) {
-  if (!c || c.careVisible === false) return '';
+function renderUncompletedSurveysCard(c0, b) {
+  if (!c0 || !b || b.visible === false) return '';
+  const c = careView(c0, b);
+  let pg = publicSurveyUncompletedPages[b.id] || 1;
   const stats = getSurveyStats(c);
   const status = getSurveyStatus(c);
   const uncompletedAll = stats.uncompletedList || [];
 
   const pageSize = 15;
   const totalPages = Math.max(1, Math.ceil(uncompletedAll.length / pageSize));
-  if (publicSurveyUncompletedPage > totalPages) publicSurveyUncompletedPage = totalPages;
-  if (publicSurveyUncompletedPage < 1) publicSurveyUncompletedPage = 1;
-  const startIndex = (publicSurveyUncompletedPage - 1) * pageSize;
+  if (pg > totalPages) pg = totalPages;
+  if (pg < 1) pg = 1;
+  publicSurveyUncompletedPages[b.id] = pg;
+  const startIndex = (pg - 1) * pageSize;
   const uncompleted = uncompletedAll.slice(startIndex, startIndex + pageSize);
 
   const paginationHtml = uncompletedAll.length > pageSize ? `
     <div class="leaderboard-pagination" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;padding:0.6rem 0.25rem 0.15rem;border-top:1px solid #f1f5f9;margin-top:0.5rem;">
       <div style="font-size:0.8rem;color:#64748b;">
-        第 <b>${startIndex + 1} - ${Math.min(startIndex + pageSize, uncompletedAll.length)}</b> 位 / 共 <b>${uncompletedAll.length}</b> 位（第 <b>${publicSurveyUncompletedPage} / ${totalPages}</b> 頁）
-        <br><small class="vn-sub">Từ ${startIndex + 1} đến ${Math.min(startIndex + pageSize, uncompletedAll.length)} / Tổng ${uncompletedAll.length} (Trang ${publicSurveyUncompletedPage}/${totalPages})</small>
+        第 <b>${startIndex + 1} - ${Math.min(startIndex + pageSize, uncompletedAll.length)}</b> 位 / 共 <b>${uncompletedAll.length}</b> 位（第 <b>${pg} / ${totalPages}</b> 頁）
+        <br><small class="vn-sub">Từ ${startIndex + 1} đến ${Math.min(startIndex + pageSize, uncompletedAll.length)} / Tổng ${uncompletedAll.length} (Trang ${pg}/${totalPages})</small>
       </div>
       <div style="display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;">
-        <button class="pagination-btn" data-act="set-public-survey-page" data-page="${publicSurveyUncompletedPage - 1}" ${publicSurveyUncompletedPage <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+        <button class="pagination-btn" data-act="set-public-survey-page" data-bid="${esc(b.id)}" data-page="${pg - 1}" ${pg <= 1 ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
           ◀ 上一頁<br><small class="vn-sub">Trang trước</small>
         </button>
         ${Array.from({ length: totalPages }, (_, idx) => idx + 1).map(p => `
-          <button class="pagination-page-btn ${p === publicSurveyUncompletedPage ? 'active' : ''}" data-act="set-public-survey-page" data-page="${p}" style="${p === publicSurveyUncompletedPage ? 'font-weight:750;background:#0d9488;color:#fff;border-color:#0d9488;' : ''}">
+          <button class="pagination-page-btn ${p === pg ? 'active' : ''}" data-act="set-public-survey-page" data-bid="${esc(b.id)}" data-page="${p}" style="${p === pg ? 'font-weight:750;background:#0d9488;color:#fff;border-color:#0d9488;' : ''}">
             ${p}
           </button>
         `).join('')}
-        <button class="pagination-btn" data-act="set-public-survey-page" data-page="${publicSurveyUncompletedPage + 1}" ${publicSurveyUncompletedPage >= totalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
+        <button class="pagination-btn" data-act="set-public-survey-page" data-bid="${esc(b.id)}" data-page="${pg + 1}" ${pg >= totalPages ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : ''}>
           下一頁 ▶<br><small class="vn-sub">Trang sau</small>
         </button>
       </div>
@@ -1477,7 +1481,7 @@ function renderUncompletedSurveysCard(c) {
               <td><span class="group-name-tag" style="font-size:0.75rem;">${esc(st.groupName)}</span></td>
               <td>${st.rawLeaderName ? `<span style="color:#16a34a;font-weight:600;font-size:0.8rem;">${esc(st.leaderName)}</span>` : '<span style="color:#dc2626;font-size:0.8rem;">（無組長）</span><br><small class="vn-sub">Chưa có nhóm trưởng</small>'}</td>
               <td style="text-align:center;">
-                <button class="btn btn-primary btn-xs" data-act="quick-survey-login" data-name="${esc(st.name)}" data-id="${esc(st.id)}" style="padding:0.2rem 0.55rem;font-size:0.78rem;margin:0;">
+                <button class="btn btn-primary btn-xs" data-act="quick-survey-login" data-bid="${esc(b.id)}" data-name="${esc(st.name)}" data-id="${esc(st.id)}" style="padding:0.2rem 0.55rem;font-size:0.78rem;margin:0;">
                   ✍️ 填寫問卷<br><small class="vn-sub">Điền phiếu</small>
                 </button>
               </td>
@@ -1500,7 +1504,7 @@ function renderUncompletedSurveysCard(c) {
 /* ---- 儀表板：三大子系統入口捷徑卡片 ---- */
 function renderSubsystemLauncherCards(c) {
   if (!c) return '';
-  const stats = getSurveyStats(c);
+  const stats = getSurveyStats(careCur(c));
   const assignedCount = c.students.filter(s => s.groupId).length;
   const unassignedCount = unassigned(c).length;
 
@@ -1609,7 +1613,7 @@ function renderPublicDashboard(c) {
       </div>
       <div class="monitoring-block monitoring-block-f">
       <div class="block-identifier-tag block-f"><span class="block-tag-code">[Block F]</span> <span class="block-tag-name">生活關懷問卷調查－未完成名單（含缺曠輔導調查）</span></div>
-      ${(() => { const l = surveyCardList(c, true); return l.filter(x => x.type === 'care').map(() => renderUncompletedSurveysCard(c)).concat(l.filter(x => x.type !== 'care').map(x => renderAbsenceUncompletedCard(c, x.sv))).join(''); })()}
+      ${(() => { const l = surveyCardList(c, true); return l.filter(x => x.type === 'care').map(x => renderUncompletedSurveysCard(c, x.b)).concat(l.filter(x => x.type !== 'care').map(x => renderAbsenceUncompletedCard(c, x.sv))).join(''); })()}
       </div>
     </div>
   </div>`;
@@ -2079,12 +2083,48 @@ function renderSurveyStandaloneLogin(c) {
 const surveyCardOpen = new Set();
 const surveyCardHead = (key, inner) => `<div data-act="toggle-survey-card" data-key="${esc(key)}" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;" title="點擊收折/展開">${inner}<span style="margin-left:auto;font-size:1rem;color:#64748b;">${surveyCardOpen.has(key) ? '▼' : '▶'}</span></div>`;
 const careTitle = c => `生活關懷問卷調查${c && c.careSubtitle ? '-' + c.careSubtitle : ''}`;
+const careKeyId = k => String(k || '').startsWith('care:') ? String(k).slice(5) : '';
+
+/* 生活關懷問卷多批次：將單一批次的資料攤平成「課程檢視」，讓既有的單份問卷畫面／統計函式可直接沿用 */
+function careView(c, b) {
+  const done = (b && b.done) || {};
+  const doneAt = s => (s.id in done ? done[s.id] : (s.ref && s.ref in done ? done[s.ref] : undefined));
+  return {
+    ...c,
+    careBatchId: b ? b.id : '',
+    careSubtitle: b ? b.subtitle : '',
+    careVisible: b ? b.visible !== false : true,
+    surveyStart: b ? b.surveyStart || '' : '',
+    surveyEnd: b ? b.surveyEnd || '' : '',
+    hideUpcomingSurveys: !!(b && b.hideUpcoming),
+    surveySubmissions: (b && b.submissions) || [],
+    surveyLogs: (b && b.logs) || [],
+    mySurvey: (b && b.mySurvey) || null,
+    mySurveyLogs: (b && b.mySurveyLogs) || [],
+    students: (c.students || []).map(st => {
+      const at = doneAt(st);
+      return { ...st, surveyCompleted: at !== undefined, surveyUpdatedAt: at || 0 };
+    }),
+  };
+}
+
+/* 目前操作中的生活關懷問卷：老師看後台選取的批次；學生看目前進入的卡片（未指定則第一份顯示中的問卷） */
+function careCur(c) {
+  const list = (c && c.careSurveys) || [];
+  const isTeacher = state.session && state.session.role === 'teacher';
+  const want = isTeacher ? careAdminId : careKeyId(publicSurveyCard);
+  const b = list.find(x => x.id === want) || list.find(x => x.visible !== false) || list[0]
+    || { id: '', subtitle: '', visible: true, submissions: [], logs: [], done: {} };
+  return careView(c, b);
+}
 const absenceTitle = sv => `缺曠原因調查-${sv.subtitle}`;
 
 /* 依老師設定排序的問卷卡片；publicOnly 時略過前台隱藏者 */
 function surveyCardList(c, publicOnly) {
   const items = [];
-  if (!publicOnly || c.careVisible !== false) items.push({ key: 'care', type: 'care' });
+  (c.careSurveys || []).forEach(b => {
+    if (!publicOnly || b.visible !== false) items.push({ key: 'care:' + b.id, type: 'care', b });
+  });
   (c.absenceSurveys || []).forEach(sv => {
     if (!publicOnly || sv.visible !== false) items.push({ key: 'abs:' + sv.id, type: 'abs', sv });
   });
@@ -2104,17 +2144,18 @@ function renderSurveyCardList(c) {
   const cards = surveyCardList(c, true);
   const cardHtml = x => {
     if (x.type === 'care') {
-      const st = getSurveyStatus(c), stats = getSurveyStats(c);
+      const cv = careView(c, x.b);
+      const st = getSurveyStatus(cv), stats = getSurveyStats(cv);
       return `
       <div class="survey-list-card" style="border-color:#99f6e4;">
-        ${surveyCardHead('care', `<span style="font-size:2rem;">💌</span>
-          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">${esc(careTitle(c))}</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div>`)}
-        <div style="display:${surveyCardOpen.has('care') ? 'block' : 'none'};">
+        ${surveyCardHead(x.key, `<span style="font-size:2rem;">💌</span>
+          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">${esc(careTitle(cv))}</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div>`)}
+        <div style="display:${surveyCardOpen.has(x.key) ? 'block' : 'none'};">
         <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
           <span class="status-badge ${st.badgeClass}">${st.label}</span>
           <span style="font-size:0.82rem;color:#475569;">📅 ${esc(st.timeDesc)}</span></div>
         <div style="font-size:0.85rem;color:#134e4a;margin-bottom:0.8rem;">填寫進度：${stats.completed}/${stats.total} 人（${stats.percent}%）</div>
-        <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="care" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
+        <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="${esc(x.key)}" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
         </div>
       </div>`;
     }
@@ -2221,8 +2262,9 @@ const surveyListBackBtn = () => `<button class="btn btn-secondary btn-sm" data-a
 /* ---- 問卷子系統子頁面 ---- */
 function renderPublicSurveySection(c) {
   const key = publicSurveyCard;
-  if (key === 'care' && c.careVisible !== false) {
-    return `<div style="margin-bottom:0.75rem;">${surveyListBackBtn()}</div>${renderCareSurveyDetail(c)}`;
+  const cb = key.startsWith('care:') ? (c.careSurveys || []).find(x => 'care:' + x.id === key) : null;
+  if (cb && cb.visible !== false) {
+    return `<div style="margin-bottom:0.75rem;">${surveyListBackBtn()}</div>${renderCareSurveyDetail(careView(c, cb))}`;
   }
   const sv = key.startsWith('abs:') ? (c.absenceSurveys || []).find(x => 'abs:' + x.id === key) : null;
   if (sv) return renderAbsenceSurveyDetail(c, sv);
@@ -4347,8 +4389,8 @@ function teacherAbsenceSurveyBlock(c) {
   const cards = surveyCardList(c, false);
   const surveys = c.absenceSurveys || [];
   const nextThreshold = c.absenceBase + c.absenceStep * surveys.length;
-  const titleOf = x => x.type === 'care' ? '💌 ' + careTitle(c) : '📝 ' + absenceTitle(x.sv);
-  const visibleOf = x => x.type === 'care' ? c.careVisible !== false : x.sv.visible !== false;
+  const titleOf = x => x.type === 'care' ? '💌 ' + careTitle({ careSubtitle: x.b.subtitle }) : '📝 ' + absenceTitle(x.sv);
+  const visibleOf = x => x.type === 'care' ? x.b.visible !== false : x.sv.visible !== false;
   const box = 'background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;';
   const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
   return `
@@ -4495,6 +4537,9 @@ function teacherWellbeingBlock(c) {
     </div>`;
   }
 
+  const c0 = c;
+  c = careCur(c0);
+  const careList = c0.careSurveys || [];
   const stats = getSurveyStats(c);
   const status = getSurveyStatus(c);
   const submissions = c.surveySubmissions || [];
@@ -4533,17 +4578,32 @@ function teacherWellbeingBlock(c) {
       </div>
     </div>
 
-    ${teacherAbsenceSurveyBlock(c)}
+    ${teacherAbsenceSurveyBlock(c0)}
 
     <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
     <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 ${esc(careTitle(c))}（時限設定、回覆與日誌）</h3></summary>
 
-    <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
-      <label style="font-weight:700;font-size:0.9rem;">🏷️ 問卷副標題（每學期一次）：</label>
-      <input name="subtitle" maxlength="60" value="${esc(c.careSubtitle || '')}" placeholder="例如 1151" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
-      <button class="btn btn-primary btn-sm" type="submit" style="margin:0;">💾 儲存副標題</button>
-      <span class="file-path" style="margin:0;">前台標題顯示為「${esc(careTitle(c))}」；下學期請於新課程改為 1152。</span>
-    </form>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+        <label style="font-weight:700;font-size:0.9rem;">📚 生活關懷問卷（每學期一份）：</label>
+        <select data-act="care-admin-select" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;">
+          ${careList.map(b => `<option value="${esc(b.id)}" ${b.id === c.careBatchId ? 'selected' : ''}>${esc(careTitle({ careSubtitle: b.subtitle }))}${b.visible === false ? '（前台隱藏）' : ''}</option>`).join('')}
+        </select>
+        <button class="btn btn-neutral btn-sm" type="button" data-act="delete-care-survey" style="margin:0;color:#dc2626;border-color:#fca5a5;" ${careList.length <= 1 ? 'disabled' : ''}>🗑️ 刪除此份問卷</button>
+      </div>
+      <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+        <label style="font-weight:700;font-size:0.9rem;">🏷️ 此份問卷副標題：</label>
+        <input name="subtitle" maxlength="60" value="${esc(c.careSubtitle || '')}" placeholder="例如 1151" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
+        <button class="btn btn-primary btn-sm" type="submit" style="margin:0;">💾 儲存副標題</button>
+        <span class="file-path" style="margin:0;">前台標題顯示為「${esc(careTitle(c))}」。</span>
+      </form>
+      <form data-act="create-care-survey" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+        <label style="font-weight:700;font-size:0.9rem;">➕ 新增學期問卷：</label>
+        <input name="subtitle" maxlength="60" placeholder="例如 1152" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
+        <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增問卷</button>
+        <span class="file-path" style="margin:0;">每份問卷各自有開放時段、填寫紀錄、未完成名單與日誌；舊學期資料不受影響。</span>
+      </form>
+    </div>
 
     <!-- 1. 問卷開放時限設定 -->
     <div class="survey-period-box" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
@@ -4832,11 +4892,12 @@ function exportSurveyCSV(c) {
   });
 
   const csv = '\ufeff' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_生活關懷問卷填寫紀錄.csv`);
+  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_${careTitle(c)}填寫紀錄.csv`);
 }
 
 function surveyModalsHtml() {
-  const c = cur();
+  const c0 = cur();
+  const c = c0 ? careCur(c0) : c0;
   let html = '';
 
   // 1. 查閱問卷詳情 Modal
@@ -5728,13 +5789,14 @@ app.addEventListener('submit', e => {
     if (!content) {
       return alert('請填寫自述狀況或反映問題！\nVui lòng nhập nội dung tự thuật hoặc phản ánh!');
     }
-    const isEdit = !!c.mySurvey;
+    const cv = careCur(c);
+    const isEdit = !!cv.mySurvey;
     const confirmMsg = isEdit
       ? '確定要送出修改的生活關懷問卷嗎？\n您的修改紀錄將會記錄於日誌中。\n\nXác nhận cập nhật khảo sát?'
       : '確定送出生活關懷問卷？\n\nXác nhận gửi khảo sát?';
     if (!confirm(confirmMsg)) return;
 
-    return act('submit-survey', { category: catEl.value, content }, {
+    return act('submit-survey', { surveyId: cv.careBatchId, category: catEl.value, content }, {
       after: () => {
         alert(isEdit
           ? '🎉 生活關懷問卷已成功更新！感謝您的反映。\nCập nhật khảo sát thành công!'
@@ -5753,8 +5815,20 @@ app.addEventListener('submit', e => {
   if (a === 'save-care-subtitle') {
     const c = cur();
     if (!c) return;
-    return act('teacher:save-care-subtitle', { courseId: c.id, subtitle: f.subtitle.value }, {
+    return act('teacher:update-care-survey', { courseId: c.id, surveyId: careCur(c).careBatchId, subtitle: f.subtitle.value }, {
       after: () => alert('✅ 生活關懷問卷副標題已儲存'),
+    });
+  }
+  if (a === 'create-care-survey') {
+    const c = cur();
+    if (!c) return;
+    const subtitle = (f.subtitle.value || '').trim();
+    if (!subtitle) return alert('請輸入新學期問卷副標題，例如 1152');
+    return act('teacher:create-care-survey', { courseId: c.id, subtitle }, {
+      after: (r) => {
+        if (r && r.surveyId) careAdminId = r.surveyId;
+        alert(`✅ 已新增「生活關懷問卷調查-${subtitle}」，請接著設定開放時段。`);
+      },
     });
   }
   if (a === 'save-absence-config') {
@@ -5789,7 +5863,7 @@ app.addEventListener('submit', e => {
       return alert('開始日期時間不得晚於結束日期時間！');
     }
     const hideUpcomingSurveys = !!(f.hideUpcomingSurveys && f.hideUpcomingSurveys.checked);
-    return act('teacher:save-survey-period', { courseId: c.id, surveyStart, surveyEnd, hideUpcomingSurveys }, {
+    return act('teacher:save-survey-period', { courseId: c.id, surveyId: careCur(c).careBatchId, surveyStart, surveyEnd, hideUpcomingSurveys }, {
       after: () => alert('✅ 問卷開放日期段及前台顯示設定已成功儲存！'),
     });
   }
@@ -5800,7 +5874,7 @@ app.addEventListener('submit', e => {
     const category = f.category.value;
     const content = f.content.value.trim();
     if (!content) return alert('請填寫自述內容！');
-    return act('teacher:update-survey-submission', { courseId: c.id, studentId, category, content }, {
+    return act('teacher:update-survey-submission', { courseId: c.id, surveyId: careCur(c).careBatchId, studentId, category, content }, {
       after: () => {
         editingSurveyModal = null;
         alert('✅ 已成功修改學生問卷內容並記錄異動日誌！');
@@ -5963,7 +6037,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'set-public-survey-page') {
     const page = parseInt(btn.dataset.page, 10);
     if (page && page > 0) {
-      publicSurveyUncompletedPage = page;
+      publicSurveyUncompletedPages[btn.dataset.bid || ''] = page;
       return render();
     }
     return;
@@ -5987,7 +6061,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'open-survey-page' || a === 'show-student-login') {
     e.preventDefault();
     publicSubView = 'survey';
-    publicSurveyCard = 'care';
+    publicSurveyCard = 'care:' + (btn.dataset.bid || careCur(c || {}).careBatchId);
     loginMode = null;
     try {
       const targetUrl = window.location.pathname + window.location.search + '#survey';
@@ -6004,7 +6078,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'quick-survey-login') {
     e.preventDefault();
     publicSubView = 'survey';
-    publicSurveyCard = 'care';
+    publicSurveyCard = 'care:' + (btn.dataset.bid || careCur(c || {}).careBatchId);
     loginMode = null;
     try {
       const targetUrl = window.location.pathname + window.location.search + '#survey';
@@ -6309,7 +6383,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'teacher-edit-survey-modal') {
     if (!c) return;
     const sid = btn.dataset.id;
-    const sub = (c.surveySubmissions || []).find(x => x.studentId === sid);
+    const sub = (careCur(c).surveySubmissions || []).find(x => x.studentId === sid);
     if (!sub) return;
     const st = c.students.find(x => x.id === sid);
     viewingSurveyModal = null;
@@ -6382,7 +6456,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     const st = c.students.find(x => x.id === sid);
     const sname = st ? st.name : sid;
     if (!confirm(`確定要清除學生「${sname} (${sid})」的生活關懷問卷修改紀錄嗎？\n\n此動作將清空該學生的修改歷程日誌，清除測試產生的修改痕跡。`)) return;
-    return act('teacher:clear-survey-logs', { courseId: c.id, studentId: sid }, {
+    return act('teacher:clear-survey-logs', { courseId: c.id, surveyId: careCur(c).careBatchId, studentId: sid }, {
       after: () => {
         viewingSurveyLogsModal = null;
         alert(`已成功清除【${sname}】的生活關懷問卷修改歷程日誌！`);
@@ -6392,7 +6466,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'clear-course-survey-logs') {
     if (!c) return;
     if (!confirm(`確定要清空本科目「${courseLabel(c)}」全體學生的生活關懷問卷修改歷程日誌嗎？\n\n注意：此動作將清空所有修改歷程日誌，無法復原！`)) return;
-    return act('teacher:clear-survey-logs', { courseId: c.id }, {
+    return act('teacher:clear-survey-logs', { courseId: c.id, surveyId: careCur(c).careBatchId }, {
       after: () => {
         alert('已成功清空全班生活關懷問卷修改歷程日誌！');
       }
@@ -6403,13 +6477,13 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     const sid = btn.dataset.id;
     const sname = btn.dataset.name || sid;
     if (!confirm(`確定要刪除學生「${sname} (${sid})」的生活關懷問卷紀錄嗎？\n\n刪除後該學生可重新填寫問卷，此刪除動作亦將記錄於異動日誌。`)) return;
-    return act('teacher:delete-survey-submission', { courseId: c.id, studentId: sid });
+    return act('teacher:delete-survey-submission', { courseId: c.id, surveyId: careCur(c).careBatchId, studentId: sid });
   }
   if (a === 'view-survey-logs-modal') {
     if (!c) return;
     const sid = btn.dataset.id;
     const st = c.students.find(x => x.id === sid);
-    const logs = (c.surveyLogs || []).filter(l => l.studentId === sid);
+    const logs = (careCur(c).surveyLogs || []).filter(l => l.studentId === sid);
     viewingSurveyLogsModal = {
       studentId: sid,
       studentName: st ? st.name : sid,
@@ -6424,7 +6498,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     viewingSurveyLogsModal = {
       studentId: s.id,
       studentName: s.name,
-      logs: c.mySurveyLogs || [],
+      logs: careCur(c).mySurveyLogs || [],
     };
     return render();
   }
@@ -6440,7 +6514,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'export-survey-csv') {
     if (!c) return;
-    exportSurveyCSV(c);
+    exportSurveyCSV(careCur(c));
     return;
   }
   if (a === 'toggle-survey-card') {
@@ -6509,6 +6583,14 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (!confirm(`確定刪除「${absenceTitle(sv)}」？\n該問卷的名單與全部學生填寫內容都會一併刪除，無法復原。`)) return;
     return act('teacher:delete-absence-survey', { courseId: c.id, surveyId: sv.id });
   }
+  if (a === 'delete-care-survey') {
+    if (!c) return;
+    const cv = careCur(c);
+    if (!confirm(`確定要刪除「${careTitle(cv)}」嗎？\n\n該份問卷的全部填寫紀錄與日誌都會一併刪除，無法復原！`)) return;
+    return act('teacher:delete-care-survey', { courseId: c.id, surveyId: cv.careBatchId }, {
+      after: () => { careAdminId = ''; },
+    });
+  }
   if (a === 'delete-absence-response') {
     if (!c) return;
     if (!confirm('確定刪除這筆缺曠原因填寫？學生可重新填寫。')) return;
@@ -6517,7 +6599,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'clear-survey-period') {
     if (!c) return;
     if (!confirm('確定要清除日期限制，改為隨時開放填寫嗎？')) return;
-    return act('teacher:save-survey-period', { courseId: c.id, surveyStart: '', surveyEnd: '', hideUpcomingSurveys: !!c.hideUpcomingSurveys }, {
+    return act('teacher:save-survey-period', { courseId: c.id, surveyId: careCur(c).careBatchId, surveyStart: '', surveyEnd: '', hideUpcomingSurveys: !!careCur(c).hideUpcomingSurveys }, {
       after: () => alert('已更新為隨時開放填寫！'),
     });
   }
@@ -6539,7 +6621,8 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (!c) return;
     const s = me();
     const g = s && s.groupId ? c.groups.find(x => x.id === s.groupId) : null;
-    const mates = g ? members(c, g.id) : [];
+    const cvc = careCur(c);
+    const mates = g ? members(cvc, g.id) : [];
     const uncompletedMates = mates.filter(m => !m.surveyCompleted);
     if (!uncompletedMates.length) {
       return alert('🎉 本組所有組員皆已完成問卷填寫！\nCả nhóm đã hoàn thành!');
@@ -6565,7 +6648,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'copy-teacher-uncompleted-survey') {
     if (!c) return;
-    const stats = getSurveyStats(c);
+    const stats = getSurveyStats(careCur(c));
     if (!stats.uncompleted) {
       return alert('🎉 本科目所有修課學生皆已完成問卷填寫！');
     }
@@ -6575,7 +6658,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'copy-public-uncompleted-survey') {
     if (!c) return;
-    const stats = getSurveyStats(c);
+    const stats = getSurveyStats(careCur(c));
     if (!stats.uncompleted) {
       return alert('🎉 本課程全班同學皆已完成問卷填寫！\nTất cả sinh viên đã hoàn thành khảo sát!');
     }
@@ -6585,7 +6668,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'jump-to-my-survey') {
     publicSubView = 'survey';
-    publicSurveyCard = 'care';
+    publicSurveyCard = 'care:' + (btn.dataset.bid || careCur(c || {}).careBatchId);
     render();
     setTimeout(() => {
       const el = document.querySelector('.student-survey-panel');
@@ -6625,10 +6708,17 @@ app.addEventListener('change', e => {
   if (a === 'toggle-card-visible') {
     if (!c) return;
     const key = t.dataset.key;
-    if (key === 'care') {
-      return act('teacher:save-survey-layout', { courseId: c.id, order: surveyCardList(c, false).map(x => x.key), careVisible: t.checked });
+    if (key.startsWith('care:')) {
+      return act('teacher:save-survey-layout', { courseId: c.id, order: surveyCardList(c, false).map(x => x.key), careSurveyId: key.slice(5), careVisible: t.checked });
     }
     return act('teacher:update-absence-survey', { courseId: c.id, surveyId: key.slice(4), visible: t.checked });
+  }
+  if (a === 'care-admin-select') {
+    careAdminId = t.value;
+    surveyGroupFilter = 'all';
+    surveyCategoryFilter = 'all';
+    surveySearchText = '';
+    return render();
   }
   if (a === 'survey-group-filter') {
     surveyGroupFilter = t.value;

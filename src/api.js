@@ -4,10 +4,14 @@ import {
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
-  getBulletinPageSize, setBulletinPageSize,
+  getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { fetchNotionBulletin } from './bulletin.js';
+
+/* 生活關懷問卷批次：依 id 取得；未指定 id 時取第一份 */
+const careBatchOf = (c, id) => (c.careSurveys || []).find(x => x.id === id) || (id ? null : (c.careSurveys || [])[0]) || null;
+const careTitleOf = b => `生活關懷問卷調查${b && b.subtitle ? '-' + b.subtitle : ''}`;
 
 /* 確保點名時段寫入資料庫（用於日常點名自動建立或補登驗證） */
 async function ensureSessionInDb(db, courseId, s) {
@@ -234,6 +238,8 @@ export async function handleAction(request, env, db, body) {
       } else {
         await db.prepare('INSERT INTO courses (id, year, subject, group_size, tolerance, max_bonus, deadline, deadline_assigned, notice, notice_time, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
           .bind(id, ...args, Date.now()).run();
+        await db.prepare('INSERT INTO care_surveys (id, course_id, subtitle, visible, seq, created_at) VALUES (?,?,?,1,1,?)')
+          .bind(DEFAULT_CARE_ID, id, '', Date.now()).run();
       }
       return ok({ courseId: id });
     }
@@ -244,6 +250,7 @@ export async function handleAction(request, env, db, body) {
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM survey_submissions WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM survey_logs WHERE course_id = ?').bind(body.courseId),
+        db.prepare('DELETE FROM care_surveys WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM absence_surveys WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM absence_responses WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM courses WHERE id = ?').bind(body.courseId),
@@ -883,8 +890,10 @@ export async function handleAction(request, env, db, body) {
       const start = body.surveyStart ? String(body.surveyStart).trim() : '';
       const end = body.surveyEnd ? String(body.surveyEnd).trim() : '';
       const hideUpcoming = body.hideUpcomingSurveys ? 1 : 0;
-      await db.prepare('UPDATE courses SET survey_start=?, survey_end=?, hide_upcoming_surveys=? WHERE id=?')
-        .bind(start, end, hideUpcoming, c.id).run();
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
+      await db.prepare('UPDATE care_surveys SET survey_start=?, survey_end=?, hide_upcoming=? WHERE course_id=? AND id=?')
+        .bind(start, end, hideUpcoming, c.id, cb.id).run();
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
@@ -893,7 +902,7 @@ export async function handleAction(request, env, db, body) {
         actionType: 'survey-period-set',
         targetId: '',
         targetName: '',
-        detail: `老師設定生活關懷問卷開放時段：${start || '不限開始'} ~ ${end || '不限結束'}（${hideUpcoming ? '前台隱藏規劃中問卷' : '前台顯示規劃中問卷'}）`,
+        detail: `老師設定${careTitleOf(cb)}開放時段：${start || '不限開始'} ~ ${end || '不限結束'}（${hideUpcoming ? '前台隱藏規劃中問卷' : '前台顯示規劃中問卷'}）`,
       });
       return ok();
     }
@@ -908,7 +917,9 @@ export async function handleAction(request, env, db, body) {
       if (!category) return bad('請選擇輔導面向', 400);
       if (!content) return bad('請填寫自述內容', 400);
 
-      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).first();
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
+      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, studentId).first();
       const now = Date.now();
       const prevCat = existing ? (existing.category || '') : '';
       const prevContent = existing ? (existing.content || '') : '';
@@ -918,18 +929,18 @@ export async function handleAction(request, env, db, body) {
       const diffSummary = diffParts.join('；') || '老師修正問卷內容';
 
       await db.prepare(`
-        INSERT INTO survey_submissions (course_id, student_id, category, content, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(course_id, student_id) DO UPDATE SET
+        INSERT INTO survey_submissions (course_id, survey_id, student_id, category, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(course_id, survey_id, student_id) DO UPDATE SET
           category = excluded.category,
           content = excluded.content,
           updated_at = excluded.updated_at
-      `).bind(c.id, studentId, category, content, existing ? existing.created_at : now, now).run();
+      `).bind(c.id, cb.id, studentId, category, content, existing ? existing.created_at : now, now).run();
 
       await db.prepare(`
-        INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(c.id, studentId, st.name, 'teacher', 'teacher', '老師', 'update', prevCat, category, prevContent, content, `老師修改：${diffSummary}`, now).run();
+        INSERT INTO survey_logs (course_id, survey_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(c.id, cb.id, studentId, st.name, 'teacher', 'teacher', '老師', 'update', prevCat, category, prevContent, content, `老師修改：${diffSummary}`, now).run();
 
       await logActivity(db, {
         courseId: c.id,
@@ -939,7 +950,7 @@ export async function handleAction(request, env, db, body) {
         actionType: 'survey-edit',
         targetId: studentId,
         targetName: st.name,
-        detail: `老師修改學生 ${st.name} (${studentId}) 的生活關懷問卷：${diffSummary}`,
+        detail: `老師修改學生 ${st.name} (${studentId}) 的${careTitleOf(cb)}：${diffSummary}`,
       });
       return ok();
     }
@@ -949,13 +960,15 @@ export async function handleAction(request, env, db, body) {
       const studentId = String(body.studentId || '').trim();
       const st = c.students.find(s => s.id === studentId);
       const stName = st ? st.name : studentId;
-      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).first();
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
+      const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, studentId).first();
       if (!existing) return bad('該筆問卷資料不存在', 404);
 
       const now = Date.now();
-      await db.prepare('DELETE FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
-      // 一併清理該學生於此課程的所有問卷歷程日誌，確保測試或重新填寫乾淨
-      await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
+      await db.prepare('DELETE FROM survey_submissions WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, studentId).run();
+      // 一併清理該學生於此份問卷的歷程日誌，確保測試或重新填寫乾淨
+      await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, studentId).run();
 
       await logActivity(db, {
         courseId: c.id,
@@ -965,7 +978,7 @@ export async function handleAction(request, env, db, body) {
         actionType: 'survey-delete',
         targetId: studentId,
         targetName: stName,
-        detail: `老師刪除學生 ${stName} (${studentId}) 的生活關懷問卷紀錄`,
+        detail: `老師刪除學生 ${stName} (${studentId}) 的${careTitleOf(cb)}紀錄`,
       });
       return ok();
     }
@@ -973,11 +986,13 @@ export async function handleAction(request, env, db, body) {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const studentId = body.studentId ? String(body.studentId).trim() : '';
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
       let logs;
       if (studentId) {
-        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? AND student_id=? ORDER BY created_at DESC').bind(c.id, studentId).all();
+        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? AND survey_id=? AND student_id=? ORDER BY created_at DESC').bind(c.id, cb.id, studentId).all();
       } else {
-        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? ORDER BY created_at DESC LIMIT 500').bind(c.id).all();
+        logs = await db.prepare('SELECT * FROM survey_logs WHERE course_id=? AND survey_id=? ORDER BY created_at DESC LIMIT 500').bind(c.id, cb.id).all();
       }
       return json({ ok: true, logs: logs.results || [] });
     }
@@ -985,10 +1000,12 @@ export async function handleAction(request, env, db, body) {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const studentId = body.studentId ? String(body.studentId).trim() : '';
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
       if (studentId) {
         const st = c.students.find(s => s.id === studentId);
         const stName = st ? st.name : studentId;
-        await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND student_id=?').bind(c.id, studentId).run();
+        await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, studentId).run();
         await logActivity(db, {
           courseId: c.id,
           operatorRole: 'teacher',
@@ -997,10 +1014,10 @@ export async function handleAction(request, env, db, body) {
           actionType: 'survey-logs-clear',
           targetId: studentId,
           targetName: stName,
-          detail: `老師清除學生 ${stName} (${studentId}) 的生活關懷問卷修改歷程日誌`,
+          detail: `老師清除學生 ${stName} (${studentId}) 的${careTitleOf(cb)}修改歷程日誌`,
         });
       } else {
-        await db.prepare('DELETE FROM survey_logs WHERE course_id=?').bind(c.id).run();
+        await db.prepare('DELETE FROM survey_logs WHERE course_id=? AND survey_id=?').bind(c.id, cb.id).run();
         await logActivity(db, {
           courseId: c.id,
           operatorRole: 'teacher',
@@ -1009,7 +1026,7 @@ export async function handleAction(request, env, db, body) {
           actionType: 'survey-logs-clear-all',
           targetId: '',
           targetName: '',
-          detail: '老師清空全班生活關懷問卷修改歷程日誌',
+          detail: `老師清空全班${careTitleOf(cb)}修改歷程日誌`,
         });
       }
       return ok();
@@ -1019,6 +1036,7 @@ export async function handleAction(request, env, db, body) {
       courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
       actionType, targetId, targetName, detail,
     });
+    const careOrderKeys = c => [...c.careSurveys.map(x => 'care:' + x.id), ...c.absenceSurveys.map(x => 'abs:' + x.id)];
     const cleanStudentIds = (c, ids) => {
       const valid = new Set(c.students.map(s => s.id));
       return [...new Set((Array.isArray(ids) ? ids : []).map(String))].filter(id => valid.has(id));
@@ -1033,12 +1051,48 @@ export async function handleAction(request, env, db, body) {
       await surveyLog(c, 'survey-absence-config', `老師設定缺曠輔導門檻：起算 ${base} 節、每增加 ${step} 節再一張輔導記錄`);
       return ok();
     }
-    if (op === 'save-care-subtitle') {
+    if (op === 'create-care-survey') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const subtitle = String(body.subtitle || '').trim().slice(0, 60);
-      await db.prepare('UPDATE courses SET care_subtitle=? WHERE id=?').bind(subtitle, c.id).run();
-      await surveyLog(c, 'survey-care-subtitle', `老師設定生活關懷問卷副標題：${subtitle || '（無）'}`);
+      if (!subtitle) return bad('請輸入問卷副標題，例如 1152', 400);
+      if (c.careSurveys.some(x => x.subtitle === subtitle)) return bad('已有相同副標題的生活關懷問卷', 400);
+      const id = 'care_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+      const seq = c.careSurveys.reduce((m, x) => Math.max(m, x.seq), 0) + 1;
+      await db.prepare('INSERT INTO care_surveys (id, course_id, subtitle, visible, seq, created_at) VALUES (?,?,?,1,?,?)')
+        .bind(id, c.id, subtitle, seq, Date.now()).run();
+      // 新卡片預設排在最後
+      const order = c.surveyOrder.filter(k => careOrderKeys(c).includes(k));
+      careOrderKeys(c).forEach(k => { if (!order.includes(k)) order.push(k); });
+      order.push('care:' + id);
+      await db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(order), c.id).run();
+      await surveyLog(c, 'survey-care-create', `老師新增生活關懷問卷「生活關懷問卷調查-${subtitle}」`);
+      return ok({ surveyId: id });
+    }
+    if (op === 'update-care-survey' || op === 'save-care-subtitle') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const cb = careBatchOf(c, body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
+      const subtitle = String(body.subtitle === undefined ? cb.subtitle : body.subtitle).trim().slice(0, 60);
+      const visible = body.visible === undefined ? cb.visible : !!body.visible;
+      await db.prepare('UPDATE care_surveys SET subtitle=?, visible=? WHERE course_id=? AND id=?').bind(subtitle, visible ? 1 : 0, c.id, cb.id).run();
+      await surveyLog(c, 'survey-care-update', `老師更新生活關懷問卷副標題：${subtitle || '（無）'}（前台${visible ? '顯示' : '隱藏'}）`);
+      return ok();
+    }
+    if (op === 'delete-care-survey') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const cb = c.careSurveys.find(x => x.id === body.surveyId);
+      if (!cb) return bad('生活關懷問卷不存在', 404);
+      if (c.careSurveys.length <= 1) return bad('至少需保留一份生活關懷問卷', 400);
+      await db.batch([
+        db.prepare('DELETE FROM care_surveys WHERE course_id=? AND id=?').bind(c.id, cb.id),
+        db.prepare('DELETE FROM survey_submissions WHERE course_id=? AND survey_id=?').bind(c.id, cb.id),
+        db.prepare('DELETE FROM survey_logs WHERE course_id=? AND survey_id=?').bind(c.id, cb.id),
+        db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(c.surveyOrder.filter(k => k !== 'care:' + cb.id)), c.id),
+      ]);
+      await surveyLog(c, 'survey-care-delete', `老師刪除${careTitleOf(cb)}及其全部填寫紀錄與日誌`);
       return ok();
     }
     if (op === 'create-absence-survey') {
@@ -1053,9 +1107,8 @@ export async function handleAction(request, env, db, body) {
       await db.prepare('INSERT INTO absence_surveys (id, course_id, threshold, subtitle, visible, seq, student_ids, created_at) VALUES (?,?,?,?,1,?,?,?)')
         .bind(id, c.id, threshold, subtitle, seq, JSON.stringify(studentIds), Date.now()).run();
       // 新卡片預設排在最後
-      const order = [...c.surveyOrder.filter(k => k === 'care' || c.absenceSurveys.some(x => 'abs:' + x.id === k))];
-      if (!order.includes('care')) order.unshift('care');
-      c.absenceSurveys.forEach(x => { if (!order.includes('abs:' + x.id)) order.push('abs:' + x.id); });
+      const order = c.surveyOrder.filter(k => careOrderKeys(c).includes(k));
+      careOrderKeys(c).forEach(k => { if (!order.includes(k)) order.push(k); });
       order.push('abs:' + id);
       await db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(order), c.id).run();
       await surveyLog(c, 'survey-absence-create', `老師新增缺曠原因調查「${subtitle}」（需填寫學生 ${studentIds.length} 位）`);
@@ -1101,12 +1154,17 @@ export async function handleAction(request, env, db, body) {
     if (op === 'save-survey-layout') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
-      const valid = new Set(['care', ...c.absenceSurveys.map(x => 'abs:' + x.id)]);
+      const valid = new Set(careOrderKeys(c));
       const order = [...new Set((Array.isArray(body.order) ? body.order : []).map(String))].filter(k => valid.has(k));
       valid.forEach(k => { if (!order.includes(k)) order.push(k); });
-      const careVisible = body.careVisible === undefined ? c.careVisible : !!body.careVisible;
-      await db.prepare('UPDATE courses SET survey_order=?, care_visible=? WHERE id=?').bind(JSON.stringify(order), careVisible ? 1 : 0, c.id).run();
-      await surveyLog(c, 'survey-layout', `老師調整問卷卡片排序與顯示（生活關懷問卷前台${careVisible ? '顯示' : '隱藏'}）`);
+      await db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(order), c.id).run();
+      let note = '';
+      const cb = body.careSurveyId ? c.careSurveys.find(x => x.id === body.careSurveyId) : null;
+      if (cb && body.careVisible !== undefined) {
+        await db.prepare('UPDATE care_surveys SET visible=? WHERE course_id=? AND id=?').bind(body.careVisible ? 1 : 0, c.id, cb.id).run();
+        note = `（${careTitleOf(cb)}前台${body.careVisible ? '顯示' : '隱藏'}）`;
+      }
+      await surveyLog(c, 'survey-layout', `老師調整問卷卡片排序與顯示${note}`);
       return ok();
     }
     if (op === 'simulate-student') {
@@ -1168,8 +1226,10 @@ export async function handleAction(request, env, db, body) {
   }
 
   if (action === 'submit-survey') {
-    const start = c.surveyStart || '';
-    const end = c.surveyEnd || '';
+    const cb = careBatchOf(c, body.surveyId);
+    if (!cb || !cb.visible) return bad('問卷不存在或未開放（Phiếu khảo sát không tồn tại hoặc chưa mở）', 404);
+    const start = cb.surveyStart || '';
+    const end = cb.surveyEnd || '';
     const now = Date.now();
     if (start && now < parseDate(start)) {
       return bad('問卷尚未開放填寫（Chưa đến thời gian mở khảo sát：' + start.replace('T', ' ') + '）', 400);
@@ -1182,7 +1242,7 @@ export async function handleAction(request, env, db, body) {
     if (!category) return bad('請選擇輔導面向（Vui lòng chọn hướng tư vấn）', 400);
     if (!content) return bad('請填寫自述目前狀況或反映問題（Vui lòng mô tả tình hình hoặc phản ánh vấn đề）', 400);
 
-    const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND student_id=?').bind(c.id, self.id).first();
+    const existing = await db.prepare('SELECT * FROM survey_submissions WHERE course_id=? AND survey_id=? AND student_id=?').bind(c.id, cb.id, self.id).first();
     const prevCat = existing ? (existing.category || '') : '';
     const prevContent = existing ? (existing.content || '') : '';
 
@@ -1199,18 +1259,18 @@ export async function handleAction(request, env, db, body) {
     const actType = existing ? 'update' : 'create';
 
     await db.prepare(`
-      INSERT INTO survey_submissions (course_id, student_id, category, content, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(course_id, student_id) DO UPDATE SET
+      INSERT INTO survey_submissions (course_id, survey_id, student_id, category, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(course_id, survey_id, student_id) DO UPDATE SET
         category = excluded.category,
         content = excluded.content,
         updated_at = excluded.updated_at
-    `).bind(c.id, self.id, category, content, existing ? existing.created_at : now, now).run();
+    `).bind(c.id, cb.id, self.id, category, content, existing ? existing.created_at : now, now).run();
 
     await db.prepare(`
-      INSERT INTO survey_logs (course_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(c.id, self.id, self.name, 'student', self.id, self.name, actType, prevCat, category, prevContent, content, diffSummary, now).run();
+      INSERT INTO survey_logs (course_id, survey_id, student_id, student_name, operator_role, operator_id, operator_name, action_type, prev_category, new_category, prev_content, new_content, diff_summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(c.id, cb.id, self.id, self.name, 'student', self.id, self.name, actType, prevCat, category, prevContent, content, diffSummary, now).run();
 
     await logActivity(db, {
       courseId: c.id,
@@ -1222,7 +1282,7 @@ export async function handleAction(request, env, db, body) {
       actionType: 'survey-submit',
       targetId: self.id,
       targetName: self.name,
-      detail: `學生 ${self.name} (${self.id}) ${existing ? '修改' : '填寫'}生活關懷問卷：${diffSummary}`,
+      detail: `學生 ${self.name} (${self.id}) ${existing ? '修改' : '填寫'}${careTitleOf(cb)}：${diffSummary}`,
     });
 
     return ok();

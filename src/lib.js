@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-06';
+const SCHEMA_REV = '2026-10-06b';
 let _schemaReady = false;
 async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -83,6 +83,7 @@ async function ensureSchema(db) {
     await ensureAttendanceSchema(db);
     await ensureSurveySchema(db);
     await ensureAbsenceSurveySchema(db);
+    await ensureCareSurveySchema(db);
     await ensureGroup3Restored(db);
     await ensurePanReleased(db);
     try {
@@ -336,6 +337,70 @@ async function ensureAbsenceSurveySchema(db) {
     `).run();
   } catch (_) {}
   _ensuredAbsenceSchema = true;
+}
+
+/* 生活關懷問卷多批次：每學期（副標題）為一份獨立問卷，各自有時限、顯示設定、填寫紀錄與日誌；既有資料歸入預設批次 care0 */
+export const DEFAULT_CARE_ID = 'care0';
+let _ensuredCareSchema = false;
+async function ensureCareSurveySchema(db) {
+  if (_ensuredCareSchema) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS care_surveys (
+        id            TEXT NOT NULL,
+        course_id     TEXT NOT NULL,
+        subtitle      TEXT NOT NULL DEFAULT '',
+        visible       INTEGER NOT NULL DEFAULT 1,
+        survey_start  TEXT NOT NULL DEFAULT '',
+        survey_end    TEXT NOT NULL DEFAULT '',
+        hide_upcoming INTEGER NOT NULL DEFAULT 0,
+        seq           INTEGER NOT NULL DEFAULT 0,
+        created_at    INTEGER NOT NULL,
+        PRIMARY KEY (course_id, id)
+      )
+    `).run();
+  } catch (_) {}
+  try { await db.prepare("ALTER TABLE survey_logs ADD COLUMN survey_id TEXT NOT NULL DEFAULT 'care0'").run(); } catch (_) {}
+  try {
+    const info = await db.prepare('PRAGMA table_info(survey_submissions)').all();
+    const hasSurveyId = (info.results || []).some(col => col.name === 'survey_id');
+    if (!hasSurveyId) {
+      // 主鍵由 (course_id, student_id) 改為 (course_id, survey_id, student_id)，SQLite 需重建資料表
+      await db.batch([
+        db.prepare(`
+          CREATE TABLE survey_submissions_new (
+            course_id   TEXT NOT NULL,
+            survey_id   TEXT NOT NULL DEFAULT 'care0',
+            student_id  TEXT NOT NULL,
+            category    TEXT NOT NULL DEFAULT '',
+            content     TEXT NOT NULL DEFAULT '',
+            created_at  INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            PRIMARY KEY (course_id, survey_id, student_id)
+          )
+        `),
+        db.prepare("INSERT INTO survey_submissions_new (course_id, survey_id, student_id, category, content, created_at, updated_at) SELECT course_id, 'care0', student_id, category, content, created_at, updated_at FROM survey_submissions"),
+        db.prepare('DROP TABLE survey_submissions'),
+        db.prepare('ALTER TABLE survey_submissions_new RENAME TO survey_submissions'),
+        db.prepare('CREATE INDEX IF NOT EXISTS idx_survey_submissions_course ON survey_submissions(course_id, survey_id)'),
+      ]);
+    }
+  } catch (_) {}
+  try {
+    // 每門課至少一份生活關懷問卷：沿用課程原有的副標題、時限與顯示設定
+    const courses = await db.prepare('SELECT * FROM courses').all();
+    const existing = await db.prepare('SELECT course_id FROM care_surveys').all();
+    const have = new Set((existing.results || []).map(r => r.course_id));
+    for (const c of (courses.results || [])) {
+      if (have.has(c.id)) continue;
+      await db.prepare('INSERT INTO care_surveys (id, course_id, subtitle, visible, survey_start, survey_end, hide_upcoming, seq, created_at) VALUES (?,?,?,?,?,?,?,1,?)')
+        .bind(DEFAULT_CARE_ID, c.id, c.care_subtitle === undefined || c.care_subtitle === null ? '1151' : String(c.care_subtitle),
+          c.care_visible === 0 ? 0 : 1, c.survey_start || '', c.survey_end || '', c.hide_upcoming_surveys ? 1 : 0, Date.now()).run();
+      const order = parseJsonArray(c.survey_order).map(k => k === 'care' ? 'care:' + DEFAULT_CARE_ID : k);
+      if (order.length) await db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(order), c.id).run();
+    }
+  } catch (_) {}
+  _ensuredCareSchema = true;
 }
 
 let _checkedGroup3Restored = false;
@@ -728,6 +793,7 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM absence_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM absence_responses').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
@@ -756,7 +822,7 @@ function buildAbsenceTargets(c, survey, idOf) {
 export async function loadState(db, rev = null) {
   await ensureSchema(db);
   if (rev === null) rev = await getDataRev(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses] = await loadRows(db, rev);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses, careSurveyRows] = await loadRows(db, rev);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
@@ -790,12 +856,7 @@ export async function loadState(db, rev = null) {
       hasSnapshot: snapshotSet.has(c.id),
       groups: courseGroups,
       students: courseStudents,
-      surveyStart: c.survey_start || '',
-      surveyEnd: c.survey_end || '',
-      hideUpcomingSurveys: !!c.hide_upcoming_surveys,
-      careVisible: c.care_visible === undefined || c.care_visible === null ? true : !!c.care_visible,
-      careSubtitle: c.care_subtitle === undefined || c.care_subtitle === null ? '1151' : String(c.care_subtitle),
-      surveyOrder: parseJsonArray(c.survey_order),
+      surveyOrder: parseJsonArray(c.survey_order).map(k => k === 'care' ? 'care:' + DEFAULT_CARE_ID : k),
       absenceBase: Number(c.abs_base) > 0 ? Number(c.abs_base) : 30,
       absenceStep: Number(c.abs_step) > 0 ? Number(c.abs_step) : 15,
     };
@@ -836,29 +897,42 @@ export async function loadState(db, rev = null) {
       delegateName: x.delegate_name || '', createdAt: x.created_at,
     }));
 
-    courseObj.surveySubmissions = (surveySubs.results || []).filter(x => x.course_id === c.id).map(x => ({
-      courseId: x.course_id,
-      studentId: x.student_id,
-      category: x.category || '',
-      content: x.content || '',
-      createdAt: x.created_at,
-      updatedAt: x.updated_at,
-    }));
-    courseObj.surveyLogs = (surveyLogs.results || []).filter(x => x.course_id === c.id).map(x => ({
+    const careSubs = (surveySubs.results || []).filter(x => x.course_id === c.id);
+    const careLogs = (surveyLogs.results || []).filter(x => x.course_id === c.id);
+    courseObj.careSurveys = (careSurveyRows.results || []).filter(x => x.course_id === c.id).map(x => ({
       id: x.id,
-      courseId: x.course_id,
-      studentId: x.student_id,
-      studentName: x.student_name || '',
-      operatorRole: x.operator_role,
-      operatorId: x.operator_id,
-      operatorName: x.operator_name,
-      actionType: x.action_type,
-      prevCategory: x.prev_category || '',
-      newCategory: x.new_category || '',
-      prevContent: x.prev_content || '',
-      newContent: x.new_content || '',
-      diffSummary: x.diff_summary || '',
-      createdAt: x.created_at,
+      subtitle: x.subtitle || '',
+      visible: !!x.visible,
+      surveyStart: x.survey_start || '',
+      surveyEnd: x.survey_end || '',
+      hideUpcoming: !!x.hide_upcoming,
+      seq: x.seq || 0,
+      submissions: careSubs.filter(r => (r.survey_id || DEFAULT_CARE_ID) === x.id).map(r => ({
+        courseId: r.course_id,
+        surveyId: x.id,
+        studentId: r.student_id,
+        category: r.category || '',
+        content: r.content || '',
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+      logs: careLogs.filter(r => (r.survey_id || DEFAULT_CARE_ID) === x.id).map(r => ({
+        id: r.id,
+        courseId: r.course_id,
+        surveyId: x.id,
+        studentId: r.student_id,
+        studentName: r.student_name || '',
+        operatorRole: r.operator_role,
+        operatorId: r.operator_id,
+        operatorName: r.operator_name,
+        actionType: r.action_type,
+        prevCategory: r.prev_category || '',
+        newCategory: r.new_category || '',
+        prevContent: r.prev_content || '',
+        newContent: r.new_content || '',
+        diffSummary: r.diff_summary || '',
+        createdAt: r.created_at,
+      })),
     }));
 
     courseObj.absenceSurveys = (absSurveys.results || []).filter(x => x.course_id === c.id).map(x => ({
@@ -982,18 +1056,11 @@ export async function publicize(db, env, courses, session) {
     return courses.map(c => {
       const groupName = gid => (c.groups.find(g => g.id === gid) || {}).name || '';
       const studentName = sid => (c.students.find(s => s.id === sid) || {}).name || '';
-      const subMap = new Map();
-      (c.surveySubmissions || []).forEach(sub => { subMap.set(sub.studentId, sub); });
       return {
         ...c,
         students: c.students.map(s => {
           const { password_hash, ...rest } = s;
-          return {
-            ...rest,
-            hasCustomPassword: !!password_hash,
-            surveyCompleted: subMap.has(s.id),
-            surveyUpdatedAt: subMap.has(s.id) ? subMap.get(s.id).updatedAt : 0,
-          };
+          return { ...rest, hasCustomPassword: !!password_hash };
         }),
         logs: logsByCourse[c.id] || [],
         attendanceSessions: c.attendanceSessions || [],
@@ -1008,21 +1075,22 @@ export async function publicize(db, env, courses, session) {
           delegateGroupName: groupName((c.students.find(s => s.id === d.delegateId) || {}).groupId),
           groupName: groupName(d.groupId),
         })),
-        surveyStart: c.surveyStart || '',
-        surveyEnd: c.surveyEnd || '',
-        surveySubmissions: (c.surveySubmissions || []).map(sub => {
-          const st = c.students.find(s => s.id === sub.studentId);
-          const grp = st && st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
-          const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
-          return {
-            ...sub,
-            studentName: st ? st.name : '',
-            groupId: grp ? grp.id : '',
-            groupName: grp ? grp.name : '未分組',
-            leaderName: leader ? `${leader.name} (${leader.id})` : '（無組長）',
-          };
-        }),
-        surveyLogs: c.surveyLogs || [],
+        careSurveys: (c.careSurveys || []).map(b => ({
+          ...b,
+          done: Object.fromEntries(b.submissions.map(sub => [sub.studentId, sub.updatedAt])),
+          submissions: b.submissions.map(sub => {
+            const st = c.students.find(s => s.id === sub.studentId);
+            const grp = st && st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+            const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
+            return {
+              ...sub,
+              studentName: st ? st.name : '',
+              groupId: grp ? grp.id : '',
+              groupName: grp ? grp.name : '未分組',
+              leaderName: leader ? `${leader.name} (${leader.id})` : '（無組長）',
+            };
+          }),
+        })),
         absenceSurveys: (c.absenceSurveys || []).map(sv => ({ ...sv, targets: buildAbsenceTargets(c, sv, x => x) })),
         absenceResponses: (c.absenceResponses || []).map(r => {
           const st = c.students.find(s => s.id === r.studentId);
@@ -1045,8 +1113,6 @@ export async function publicize(db, env, courses, session) {
   for (const c of courses) {
     const students = [];
     const refById = {};
-    const subMap = new Map();
-    (c.surveySubmissions || []).forEach(sub => { subMap.set(sub.studentId, sub); });
     for (const s of c.students) {
       const mine = selfId && s.id === selfId && c.id === selfCourse;
       const ref = await studentRef(db, env, c.id, s.id, hmacKey);
@@ -1060,21 +1126,24 @@ export async function publicize(db, env, courses, session) {
         peerComment: '',
         adjustment: null,
         hasCustomPassword: !!password_hash,
-        surveyCompleted: subMap.has(s.id),
-        surveyUpdatedAt: subMap.has(s.id) ? subMap.get(s.id).updatedAt : 0,
       });
     }
     const isMine = !!selfId && c.id === selfCourse;
-    const mySub = isMine && selfId ? subMap.get(selfId) : null;
-    const mySurvey = mySub ? {
-      category: mySub.category,
-      content: mySub.content,
-      createdAt: mySub.createdAt,
-      updatedAt: mySub.updatedAt,
-    } : null;
-    const mySurveyLogs = isMine && selfId
-      ? (c.surveyLogs || []).filter(l => l.studentId === selfId)
-      : [];
+    const careSurveys = (c.careSurveys || []).filter(b => b.visible).map(b => {
+      const mySub = isMine && selfId ? b.submissions.find(x => x.studentId === selfId) : null;
+      return {
+        id: b.id,
+        subtitle: b.subtitle,
+        visible: b.visible,
+        surveyStart: b.surveyStart,
+        surveyEnd: b.surveyEnd,
+        hideUpcoming: b.hideUpcoming,
+        seq: b.seq,
+        done: Object.fromEntries(b.submissions.map(sub => [refById[sub.studentId], sub.updatedAt])),
+        mySurvey: mySub ? { category: mySub.category, content: mySub.content, createdAt: mySub.createdAt, updatedAt: mySub.updatedAt } : null,
+        mySurveyLogs: isMine && selfId ? b.logs.filter(l => l.studentId === selfId) : [],
+      };
+    });
 
     const selfGroupId = isMine ? (c.students.find(s => s.id === selfId) || {}).groupId : null;
     const myDelegates = isMine ? (c.attendanceDelegates || []).filter(d => d.delegateId === selfId) : [];
@@ -1119,7 +1188,7 @@ export async function publicize(db, env, courses, session) {
         myResponse: mineResp ? { reason: mineResp.reason, createdAt: mineResp.createdAt, updatedAt: mineResp.updatedAt } : null,
       };
     });
-    const { surveySubmissions: _subs, surveyLogs: _logs, absenceSurveys: _abs, absenceResponses: _absResp, ...safeCourse } = c;
+    const { careSurveys: _care, absenceSurveys: _abs, absenceResponses: _absResp, ...safeCourse } = c;
     out.push({
       ...safeCourse,
       students,
@@ -1127,10 +1196,7 @@ export async function publicize(db, env, courses, session) {
       attendanceRecords,
       attendanceUnlocks,
       attendanceDelegates,
-      surveyStart: c.surveyStart || '',
-      surveyEnd: c.surveyEnd || '',
-      mySurvey,
-      mySurveyLogs,
+      careSurveys,
       absenceSurveys,
     });
   }
