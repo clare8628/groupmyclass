@@ -1422,7 +1422,7 @@ function renderUncompletedSurveysCard(c) {
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <span style="font-size:1.15rem;">⏳</span>
         <div>
-          <strong style="color:#0f766e;font-size:1.02rem;">未完成問卷名單</strong>
+          <strong style="color:#0f766e;font-size:1.02rem;">生活關懷問卷調查－未完成名單</strong>
           <br><small class="vn-sub">Danh sách chưa hoàn thành khảo sát</small>
         </div>
       </div>
@@ -1604,8 +1604,39 @@ function renderPublicDashboard(c) {
         limit: 15,
         isPublicFlow: true
       })}
-      ${renderUncompletedSurveysCard(c)}
+      ${surveyCardList(c, true).map(x => x.type === 'care' ? renderUncompletedSurveysCard(c) : renderAbsenceUncompletedCard(c, x.sv)).join('')}
     </div>
+  </div>`;
+}
+
+/* ---- 核心監控卡片：缺曠原因調查（各批次）未完成名單，標題隨問卷副標題變動 ---- */
+function renderAbsenceUncompletedCard(c, sv) {
+  const p = absenceProgress(sv);
+  const rows = (sv.targets || []).filter(t => !t.done)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  return `
+  <div class="uncompleted-surveys-box">
+    <div class="uncompleted-surveys-header">
+      <div style="display:flex;align-items:center;gap:0.4rem;">
+        <span style="font-size:1.15rem;">📝</span>
+        <div>
+          <strong style="color:#92400e;font-size:1.02rem;">${esc(absenceTitle(sv))}－未完成名單</strong>
+          <br><small class="vn-sub">Danh sách chưa hoàn thành khảo sát lý do vắng mặt</small>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-xs" data-act="open-survey-card" data-key="abs:${esc(sv.id)}" style="margin:0;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu</small></button>
+    </div>
+    <div style="font-size:0.84rem;color:#78350f;font-weight:600;margin-bottom:0.5rem;">需填寫 ${p.total} 位，已完成 ${p.done} 位（${p.percent}%）</div>
+    ${rows.length ? `
+    <div class="table-wrap" style="margin:0;max-height:320px;overflow-y:auto;">
+      <table class="roster" style="background:#fff;margin:0;font-size:0.86rem;">
+        <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th>組長</th></tr></thead>
+        <tbody>${rows.map(t => `<tr><td>${esc(t.id)}</td><td><b>${esc(t.name)}</b></td><td>${esc(t.groupName)}</td><td>${esc(t.leaderName)}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>` : `
+    <div style="text-align:center;padding:1.2rem 1rem;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534;">
+      ${p.total ? '🎉 本次名單同學皆已完成填寫！' : '老師尚未指定需填寫的學生。'}
+    </div>`}
   </div>`;
 }
 
