@@ -302,6 +302,7 @@ async function ensureAbsenceSurveySchema(db) {
     "ALTER TABLE courses ADD COLUMN survey_order TEXT NOT NULL DEFAULT ''",
     'ALTER TABLE courses ADD COLUMN abs_base INTEGER NOT NULL DEFAULT 30',
     'ALTER TABLE courses ADD COLUMN abs_step INTEGER NOT NULL DEFAULT 15',
+    "ALTER TABLE courses ADD COLUMN care_subtitle TEXT NOT NULL DEFAULT '1151'",
   ];
   for (const sql of alters) {
     try { await db.prepare(sql).run(); } catch (_) {}
@@ -793,6 +794,7 @@ export async function loadState(db, rev = null) {
       surveyEnd: c.survey_end || '',
       hideUpcomingSurveys: !!c.hide_upcoming_surveys,
       careVisible: c.care_visible === undefined || c.care_visible === null ? true : !!c.care_visible,
+      careSubtitle: c.care_subtitle === undefined || c.care_subtitle === null ? '1151' : String(c.care_subtitle),
       surveyOrder: parseJsonArray(c.survey_order),
       absenceBase: Number(c.abs_base) > 0 ? Number(c.abs_base) : 30,
       absenceStep: Number(c.abs_step) > 0 ? Number(c.abs_step) : 15,

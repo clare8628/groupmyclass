@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS courses (
   survey_order      TEXT NOT NULL DEFAULT '',     -- 問卷卡片排序 JSON：['care','abs:<id>',...]
   abs_base          INTEGER NOT NULL DEFAULT 30,  -- 缺曠輔導起算節數
   abs_step          INTEGER NOT NULL DEFAULT 15,  -- 缺曠輔導累增節數
+  care_subtitle     TEXT NOT NULL DEFAULT '1151', -- 生活關懷問卷副標題（每學期一次）
   created_at        INTEGER NOT NULL
 );
 

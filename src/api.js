@@ -1033,6 +1033,14 @@ export async function handleAction(request, env, db, body) {
       await surveyLog(c, 'survey-absence-config', `老師設定缺曠輔導門檻：起算 ${base} 節、每增加 ${step} 節再一張輔導記錄`);
       return ok();
     }
+    if (op === 'save-care-subtitle') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const subtitle = String(body.subtitle || '').trim().slice(0, 60);
+      await db.prepare('UPDATE courses SET care_subtitle=? WHERE id=?').bind(subtitle, c.id).run();
+      await surveyLog(c, 'survey-care-subtitle', `老師設定生活關懷問卷副標題：${subtitle || '（無）'}`);
+      return ok();
+    }
     if (op === 'create-absence-survey') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);

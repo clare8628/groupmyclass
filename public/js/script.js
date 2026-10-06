@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.98.20261006.172405';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.99.20261006.172937';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1428,7 +1428,7 @@ function renderUncompletedSurveysCard(c) {
       <div style="display:flex;align-items:center;gap:0.4rem;">
         <span style="font-size:1.15rem;">⏳</span>
         <div>
-          <strong style="color:#0f766e;font-size:1.02rem;">生活關懷問卷調查－未完成名單</strong>
+          <strong style="color:#0f766e;font-size:1.02rem;">${esc(careTitle(c))}－未完成名單</strong>
           <br><small class="vn-sub">Danh sách chưa hoàn thành khảo sát</small>
         </div>
       </div>
@@ -2008,7 +2008,7 @@ function renderSurveyStandaloneLogin(c) {
         <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;">
           <span style="font-size:2.5rem;line-height:1;">💌</span>
           <div>
-            <h3 style="margin:0;font-size:1.25rem;color:#0f766e;">生活關懷問卷調查</h3>
+            <h3 style="margin:0;font-size:1.25rem;color:#0f766e;">${esc(careTitle(c))}</h3>
             <p style="margin:0.2rem 0 0;font-size:0.88rem;color:#0d9488;">Phiếu khảo sát Chăm sóc Cuộc sống</p>
           </div>
         </div>
@@ -2078,6 +2078,7 @@ function renderSurveyStandaloneLogin(c) {
 /* ---- 問卷子系統：卡片列表與缺曠原因調查 ---- */
 const surveyCardOpen = new Set();
 const surveyCardHead = (key, inner) => `<div data-act="toggle-survey-card" data-key="${esc(key)}" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;" title="點擊收折/展開">${inner}<span style="margin-left:auto;font-size:1rem;color:#64748b;">${surveyCardOpen.has(key) ? '▼' : '▶'}</span></div>`;
+const careTitle = c => `生活關懷問卷調查${c && c.careSubtitle ? '-' + c.careSubtitle : ''}`;
 const absenceTitle = sv => `缺曠原因調查-${sv.subtitle}`;
 
 /* 依老師設定排序的問卷卡片；publicOnly 時略過前台隱藏者 */
@@ -2107,7 +2108,7 @@ function renderSurveyCardList(c) {
       return `
       <div class="survey-list-card" style="border-color:#99f6e4;">
         ${surveyCardHead('care', `<span style="font-size:2rem;">💌</span>
-          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">生活關懷問卷調查</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div>`)}
+          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">${esc(careTitle(c))}</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div>`)}
         <div style="display:${surveyCardOpen.has('care') ? 'block' : 'none'};">
         <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
           <span class="status-badge ${st.badgeClass}">${st.label}</span>
@@ -4346,7 +4347,7 @@ function teacherAbsenceSurveyBlock(c) {
   const cards = surveyCardList(c, false);
   const surveys = c.absenceSurveys || [];
   const nextThreshold = c.absenceBase + c.absenceStep * surveys.length;
-  const titleOf = x => x.type === 'care' ? '💌 生活關懷問卷調查' : '📝 ' + absenceTitle(x.sv);
+  const titleOf = x => x.type === 'care' ? '💌 ' + careTitle(c) : '📝 ' + absenceTitle(x.sv);
   const visibleOf = x => x.type === 'care' ? c.careVisible !== false : x.sv.visible !== false;
   const box = 'background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;';
   const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
@@ -4535,7 +4536,14 @@ function teacherWellbeingBlock(c) {
     ${teacherAbsenceSurveyBlock(c)}
 
     <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
-    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查（時限設定、回覆與日誌）</h3></summary>
+    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 ${esc(careTitle(c))}（時限設定、回覆與日誌）</h3></summary>
+
+    <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+      <label style="font-weight:700;font-size:0.9rem;">🏷️ 問卷副標題（每學期一次）：</label>
+      <input name="subtitle" maxlength="60" value="${esc(c.careSubtitle || '')}" placeholder="例如 1151" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
+      <button class="btn btn-primary btn-sm" type="submit" style="margin:0;">💾 儲存副標題</button>
+      <span class="file-path" style="margin:0;">前台標題顯示為「${esc(careTitle(c))}」；下學期請於新課程改為 1152。</span>
+    </form>
 
     <!-- 1. 問卷開放時限設定 -->
     <div class="survey-period-box" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
@@ -5740,6 +5748,13 @@ app.addEventListener('submit', e => {
     if (!confirm('確定送出缺曠原因調查？\n\nXác nhận gửi khảo sát?')) return;
     return act('submit-absence-reason', { surveyId: f.dataset.survey, reason }, {
       after: () => alert('🎉 缺曠原因已送出！\nGửi khảo sát thành công!'),
+    });
+  }
+  if (a === 'save-care-subtitle') {
+    const c = cur();
+    if (!c) return;
+    return act('teacher:save-care-subtitle', { courseId: c.id, subtitle: f.subtitle.value }, {
+      after: () => alert('✅ 生活關懷問卷副標題已儲存'),
     });
   }
   if (a === 'save-absence-config') {
