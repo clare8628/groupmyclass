@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.96.20261006.171107';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.97.20261006.171935';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -2070,6 +2070,8 @@ function renderSurveyStandaloneLogin(c) {
 }
 
 /* ---- 問卷子系統：卡片列表與缺曠原因調查 ---- */
+const surveyCardOpen = new Set();
+const surveyCardHead = (key, inner) => `<div data-act="toggle-survey-card" data-key="${esc(key)}" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;" title="點擊收折/展開">${inner}<span style="margin-left:auto;font-size:1rem;color:#64748b;">${surveyCardOpen.has(key) ? '▼' : '▶'}</span></div>`;
 const absenceTitle = sv => `缺曠原因調查-${sv.subtitle}`;
 
 /* 依老師設定排序的問卷卡片；publicOnly 時略過前台隱藏者 */
@@ -2098,13 +2100,15 @@ function renderSurveyCardList(c) {
       const st = getSurveyStatus(c), stats = getSurveyStats(c);
       return `
       <div class="survey-list-card" style="border-color:#99f6e4;">
-        <div style="display:flex;align-items:center;gap:0.6rem;"><span style="font-size:2rem;">💌</span>
-          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">生活關懷問卷調查</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div></div>
+        ${surveyCardHead('care', `<span style="font-size:2rem;">💌</span>
+          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">生活關懷問卷調查</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div>`)}
+        <div style="display:${surveyCardOpen.has('care') ? 'block' : 'none'};">
         <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
           <span class="status-badge ${st.badgeClass}">${st.label}</span>
           <span style="font-size:0.82rem;color:#475569;">📅 ${esc(st.timeDesc)}</span></div>
         <div style="font-size:0.85rem;color:#134e4a;margin-bottom:0.8rem;">填寫進度：${stats.completed}/${stats.total} 人（${stats.percent}%）</div>
         <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="care" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
+        </div>
       </div>`;
     }
     const sv = x.sv, p = absenceProgress(sv);
@@ -2113,11 +2117,13 @@ function renderSurveyCardList(c) {
       : '';
     return `
     <div class="survey-list-card" style="border-color:#fcd34d;">
-      <div style="display:flex;align-items:center;gap:0.6rem;"><span style="font-size:2rem;">📝</span>
-        <div><h3 style="margin:0;font-size:1.1rem;color:#92400e;">${esc(absenceTitle(sv))}</h3><small class="vn-sub">Khảo sát lý do vắng mặt</small></div></div>
+      ${surveyCardHead(x.key, `<span style="font-size:2rem;">📝</span>
+        <div><h3 style="margin:0;font-size:1.1rem;color:#92400e;">${esc(absenceTitle(sv))}</h3><small class="vn-sub">Khảo sát lý do vắng mặt</small></div>`)}
+      <div style="display:${surveyCardOpen.has(x.key) ? 'block' : 'none'};">
       <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">${mine}</div>
       <div style="font-size:0.85rem;color:#78350f;margin-bottom:0.8rem;">需填寫 ${p.total} 位，已完成 ${p.done} 位（${p.percent}%）</div>
       <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="${esc(x.key)}" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
+      </div>
     </div>`;
   };
   return `
@@ -6409,6 +6415,11 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (!c) return;
     exportSurveyCSV(c);
     return;
+  }
+  if (a === 'toggle-survey-card') {
+    const k = btn.dataset.key || '';
+    if (surveyCardOpen.has(k)) surveyCardOpen.delete(k); else surveyCardOpen.add(k);
+    return render();
   }
   if (a === 'open-survey-card') {
     publicSurveyCard = btn.dataset.key || '';
