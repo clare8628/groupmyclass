@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.92.20261006.165158';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.93.20261006.170148';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1548,7 +1548,8 @@ function renderSubsystemLauncherCards(c) {
       </button>
     </div>
 
-    <!-- 3. 生活關懷問卷系統 -->
+    <!-- 3. 問卷子系統（右欄：入口卡片＋其下各問卷未完成名單） -->
+    <div class="launcher-survey-col">
     <div class="subsystem-launcher-card" style="border-color:#99f6e4;background:#f0fdfa;">
       <div>
         <div style="display:flex;align-items:center;gap:0.45rem;margin-bottom:0.35rem;">
@@ -1567,6 +1568,8 @@ function renderSubsystemLauncherCards(c) {
       <button class="btn btn-primary btn-sm" data-act="nav-public-subview" data-view="survey" style="justify-content:center;font-weight:600;">
         進入問卷子系統 ➔<br><small class="vn-sub">Vào hệ thống con khảo sát</small>
       </button>
+    </div>
+    ${(() => { const l = surveyCardList(c, true); return l.filter(x => x.type === 'care').map(() => renderUncompletedSurveysCard(c)).concat(l.filter(x => x.type !== 'care').map(x => renderAbsenceUncompletedCard(c, x.sv))).join(''); })()}
     </div>
   </div>`;
 }
@@ -1604,7 +1607,6 @@ function renderPublicDashboard(c) {
         limit: 15,
         isPublicFlow: true
       })}
-      ${(() => { const l = surveyCardList(c, true); return l.filter(x => x.type === 'care').map(() => renderUncompletedSurveysCard(c)).concat(l.filter(x => x.type !== 'care').map(x => renderAbsenceUncompletedCard(c, x.sv))).join(''); })()}
     </div>
   </div>`;
 }
@@ -1633,10 +1635,7 @@ function renderAbsenceUncompletedCard(c, sv) {
         <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th>組長</th></tr></thead>
         <tbody>${rows.map(t => `<tr><td>${esc(t.id)}</td><td><b>${esc(t.name)}</b></td><td>${esc(t.groupName)}</td><td>${esc(t.leaderName)}</td></tr>`).join('')}</tbody>
       </table>
-    </div>` : `
-    <div style="text-align:center;padding:1.2rem 1rem;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534;">
-      ${p.total ? '🎉 本次名單同學皆已完成填寫！' : '老師尚未指定需填寫的學生。'}
-    </div>`}
+    </div>` : ''}
   </div>`;
 }
 
