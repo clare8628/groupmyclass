@@ -3204,3 +3204,11 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 .monitoring-block-f .uncompleted-surveys-box { height: auto; }
 .block-identifier-tag.block-e { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
 .block-identifier-tag.block-f { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+
+/* 後台問卷區塊收折 */
+.adm-sum { cursor: pointer; list-style: none; }
+.adm-sum::-webkit-details-marker { display: none; }
+.adm-sum::before { content: '▶'; font-size: 0.8rem; color: #64748b; margin-right: 0.5rem; display: inline-block; }
+details[open] > .adm-sum::before { content: '▼'; }
+.adm-sum h3 { display: inline; margin: 0; }
+details[open] > .adm-sum { margin-bottom: 0.7rem; }

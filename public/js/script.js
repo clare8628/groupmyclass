@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.97.20261006.171935';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.98.20261006.172405';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -78,6 +78,12 @@ let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席次數「超
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPage = 1;     // 前台總覽未完成問卷名單頁碼（每頁 15 筆）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
+const admOpen = new Set(); // 後台問卷區塊展開狀態（預設收折）
+const admOpenAttr = k => admOpen.has(k) ? 'open' : '';
+document.addEventListener('toggle', e => {
+  const k = e.target && e.target.dataset && e.target.dataset.adm;
+  if (k) e.target.open ? admOpen.add(k) : admOpen.delete(k);
+}, true);
 let surveyActiveTab = 'uncompleted'; // 後台問卷子分頁：'uncompleted' | 'submissions' | 'logs'
 let surveyCategoryFilter = 'all';
 let surveyGroupFilter = 'all';
@@ -4347,7 +4353,7 @@ function teacherAbsenceSurveyBlock(c) {
   return `
   <div class="abs-survey-admin">
     <div style="${box}">
-      <h3 style="margin:0 0 0.4rem;">🗂️ 問卷卡片管理（前台「問卷子系統」）</h3>
+      <details data-adm="cards" ${admOpenAttr('cards')}><summary class="adm-sum"><h3>🗂️ 問卷卡片管理（前台「問卷子系統」）</h3></summary>
       <p class="file-path" style="margin:0 0 0.7rem;">以滑鼠拖拉 ☰ 調整卡片上下順序（或用 ▲▼ 按鈕）；取消勾選「前台顯示」即可隱藏該問卷。</p>
       <div id="survey-card-sort" style="display:flex;flex-direction:column;gap:0.5rem;">
         ${cards.map((x, i) => `
@@ -4360,10 +4366,11 @@ function teacherAbsenceSurveyBlock(c) {
           <button class="tab-btn" type="button" data-act="move-card" data-key="${esc(x.key)}" data-dir="1" ${i === cards.length - 1 ? 'disabled' : ''}>▼</button>
         </div>`).join('')}
       </div>
+      </details>
     </div>
 
     <div style="${box}">
-      <h3 style="margin:0 0 0.4rem;">📝 缺曠原因調查（缺曠輔導批次）</h3>
+      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查（缺曠輔導批次）</h3></summary>
       <form data-act="save-absence-config" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;">
         <label style="font-weight:700;font-size:0.9rem;">缺曠輔導門檻：</label>
         <span style="font-size:0.88rem;">初始達 <input type="number" min="1" name="absenceBase" value="${c.absenceBase}" style="${inp}width:5rem;"> 節，每增加 <input type="number" min="1" name="absenceStep" value="${c.absenceStep}" style="${inp}width:5rem;"> 節再一張輔導記錄</span>
@@ -4377,6 +4384,7 @@ function teacherAbsenceSurveyBlock(c) {
         <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增並選擇學生</button>
         <span class="file-path" style="margin:0;">每新增一份即為獨立問卷，需重新勾選學生並各自統計。</span>
       </form>
+      </details>
     </div>
     ${surveys.map(sv => teacherAbsenceCard(c, sv)).join('')}
   </div>`;
@@ -4391,11 +4399,12 @@ function teacherAbsenceCard(c, sv) {
   const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
   return `
   <div class="abs-admin-card" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
-    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
-      <h3 style="margin:0;flex:1;">📝 ${esc(absenceTitle(sv))}</h3>
+    <details data-adm="abs-${esc(sv.id)}" ${admOpenAttr('abs-' + sv.id)}>
+    <summary class="adm-sum" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
+      <h3 style="flex:1;">📝 ${esc(absenceTitle(sv))}</h3>
       <span class="status-badge ${sv.visible ? 'can-edit' : 'is-locked'}">${sv.visible ? '前台顯示中' : '前台已隱藏'}</span>
       <span style="font-size:0.88rem;">已填 <b>${p.done}</b> / 需填 <b>${p.total}</b>（${p.percent}%）</span>
-    </div>
+    </summary>
     <form data-act="update-absence-meta" data-survey="${esc(sv.id)}" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
       <span style="font-size:0.88rem;">副標題 <input name="subtitle" maxlength="60" value="${esc(sv.subtitle)}" style="${inp}width:11rem;"></span>
       <span style="font-size:0.88rem;">門檻 <input type="number" min="1" name="threshold" value="${sv.threshold}" style="${inp}width:5rem;"> 節</span>
@@ -4416,6 +4425,7 @@ function teacherAbsenceCard(c, sv) {
         <td style="white-space:pre-wrap;">${esc(r.reason)}</td><td>${esc(formatLogTime(r.updatedAt))}</td>
         <td><button class="tab-btn" type="button" data-act="delete-absence-response" data-survey="${esc(sv.id)}" data-id="${esc(r.studentId)}" style="color:#dc2626;">🗑️</button></td></tr>`).join('')}
       </tbody></table></div>` : '<p class="file-path" style="margin:0;">尚無填寫紀錄</p>'}
+    </details>
   </div>`;
 }
 
@@ -4524,7 +4534,8 @@ function teacherWellbeingBlock(c) {
 
     ${teacherAbsenceSurveyBlock(c)}
 
-    <h3 style="margin:1.5rem 0 0.75rem;">💌 生活關懷問卷調查（時限設定、回覆與日誌）</h3>
+    <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
+    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查（時限設定、回覆與日誌）</h3></summary>
 
     <!-- 1. 問卷開放時限設定 -->
     <div class="survey-period-box" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
@@ -4778,6 +4789,7 @@ function teacherWellbeingBlock(c) {
         `}
       </div>
     ` : ''}
+    </details>
   </div>`;
 }
 
