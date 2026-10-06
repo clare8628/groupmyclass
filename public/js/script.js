@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.89.20261001.171301';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.90.20261006.153858';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -87,6 +87,9 @@ let editingSurveyModal = null;      // 老師修改學生問卷彈窗
 let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
 let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
 let simulatingStudentModal = false; // 老師模擬學生身分登入測試彈窗
+let publicSurveyCard = '';          // 前台問卷子系統目前進入的卡片：'' = 卡片列表 | 'care' | 'abs:<id>'
+let absPicker = null;               // 老師選擇缺曠輔導學生彈窗：{ surveyId, selected: Set }
+let dragSurveyKey = null;           // 後台問卷卡片拖拉中的卡片 key
 let listPages = {};                 // 各異動日誌列表目前頁碼（每頁 15 筆），key：'log-group' | 'log-attendance' | 'log-survey' | 'survey-logs'
 let attendanceEditSessionId = '';   // 老師「依日期調閱／修改點名紀錄」所選時段
 const PREVIEW_GROUP_KEY = 'groupmyclass_teacher_preview_group';
@@ -1380,7 +1383,7 @@ function noticeBlock(c) {
 
 /* ---- 核心監控卡片：未完成問卷名單（前 15 筆分頁切換，學號升冪排序） ---- */
 function renderUncompletedSurveysCard(c) {
-  if (!c) return '';
+  if (!c || c.careVisible === false) return '';
   const stats = getSurveyStats(c);
   const status = getSurveyStatus(c);
   const uncompletedAll = stats.uncompletedList || [];
@@ -2035,8 +2038,154 @@ function renderSurveyStandaloneLogin(c) {
   </div>`;
 }
 
+/* ---- 問卷子系統：卡片列表與缺曠原因調查 ---- */
+const absenceTitle = sv => `缺曠原因調查-${sv.subtitle}`;
+
+/* 依老師設定排序的問卷卡片；publicOnly 時略過前台隱藏者 */
+function surveyCardList(c, publicOnly) {
+  const items = [];
+  if (!publicOnly || c.careVisible !== false) items.push({ key: 'care', type: 'care' });
+  (c.absenceSurveys || []).forEach(sv => {
+    if (!publicOnly || sv.visible !== false) items.push({ key: 'abs:' + sv.id, type: 'abs', sv });
+  });
+  const order = c.surveyOrder || [];
+  const idx = k => { const i = order.indexOf(k); return i < 0 ? 9999 : i; };
+  return items.map((x, i) => ({ x, i })).sort((a, b) => idx(a.x.key) - idx(b.x.key) || a.i - b.i).map(o => o.x);
+}
+
+function absenceProgress(sv) {
+  const total = (sv.targets || []).length;
+  const done = (sv.targets || []).filter(t => t.done).length;
+  return { total, done, percent: total ? Math.round(done / total * 100) : 0 };
+}
+
+function renderSurveyCardList(c) {
+  const s = me();
+  const cards = surveyCardList(c, true);
+  const cardHtml = x => {
+    if (x.type === 'care') {
+      const st = getSurveyStatus(c), stats = getSurveyStats(c);
+      return `
+      <div class="survey-list-card" style="border-color:#99f6e4;">
+        <div style="display:flex;align-items:center;gap:0.6rem;"><span style="font-size:2rem;">💌</span>
+          <div><h3 style="margin:0;font-size:1.1rem;color:#0f766e;">生活關懷問卷調查</h3><small class="vn-sub">Phiếu khảo sát Chăm sóc Cuộc sống</small></div></div>
+        <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <span class="status-badge ${st.badgeClass}">${st.label}</span>
+          <span style="font-size:0.82rem;color:#475569;">📅 ${esc(st.timeDesc)}</span></div>
+        <div style="font-size:0.85rem;color:#134e4a;margin-bottom:0.8rem;">填寫進度：${stats.completed}/${stats.total} 人（${stats.percent}%）</div>
+        <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="care" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
+      </div>`;
+    }
+    const sv = x.sv, p = absenceProgress(sv);
+    const mine = s && sv.isTarget
+      ? (sv.myResponse ? '<span class="status-badge can-edit">✅ 你已填寫</span>' : '<span class="status-badge under-threshold">✍️ 待你填寫</span>')
+      : '';
+    return `
+    <div class="survey-list-card" style="border-color:#fcd34d;">
+      <div style="display:flex;align-items:center;gap:0.6rem;"><span style="font-size:2rem;">📝</span>
+        <div><h3 style="margin:0;font-size:1.1rem;color:#92400e;">${esc(absenceTitle(sv))}</h3><small class="vn-sub">Khảo sát lý do vắng mặt</small></div></div>
+      <div style="margin:0.7rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">${mine}</div>
+      <div style="font-size:0.85rem;color:#78350f;margin-bottom:0.8rem;">需填寫 ${p.total} 位，已完成 ${p.done} 位（${p.percent}%）</div>
+      <button class="btn btn-primary btn-sm" data-act="open-survey-card" data-key="${esc(x.key)}" style="justify-content:center;">進入問卷 ➔<br><small class="vn-sub">Vào phiếu khảo sát</small></button>
+    </div>`;
+  };
+  return `
+  <div class="survey-standalone-page">
+    <div class="block-identifier-tag">
+      <span class="block-tag-code">[Block D]</span>
+      <span class="block-tag-name">主要內容顯示區（問卷子系統）<br><small class="vn-sub">Khu vực hiển thị nội dung chính (Hệ thống con khảo sát)</small></span>
+    </div>
+    <div class="subsystem-header-bar">
+      ${subsystemBackBtn()}
+      <div class="subsystem-title-tag"><span class="subsystem-icon">💌</span>
+        <div><strong>問卷子系統</strong><br><small class="vn-sub">Hệ thống con khảo sát</small></div></div>
+      ${s ? `<span style="font-size:0.85rem;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;padding:0.25rem 0.65rem;border-radius:6px;font-weight:600;">🎓 ${esc(s.name)} (${esc(s.id)})</span>` : ''}
+    </div>
+    ${cards.length
+      ? `<div style="display:flex;flex-direction:column;gap:1rem;margin-top:1rem;">${cards.map(cardHtml).join('')}</div>`
+      : '<p class="file-path" style="margin-top:1rem;">目前沒有開放的問卷。<br><small class="vn-sub">Hiện chưa có phiếu khảo sát nào.</small></p>'}
+    ${!c.hideUpcomingSurveys ? renderUpcomingSurveysBox() : ''}
+    <div class="subsystem-footer">${subsystemBackBtn()}</div>
+  </div>`;
+}
+
+/* 名單表格：需填寫該次問卷的學生與其所屬組長 */
+function absenceTargetsTable(sv) {
+  const rows = (sv.targets || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  if (!rows.length) return '<p class="file-path">老師尚未指定需填寫的學生。</p>';
+  return `
+  <div style="overflow-x:auto;"><table class="data-table" style="width:100%;font-size:0.86rem;">
+    <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th>所屬組長</th><th>狀態</th></tr></thead>
+    <tbody>${rows.map(t => `<tr>
+      <td>${esc(t.id)}</td><td>${esc(t.name)}</td><td>${esc(t.groupName)}</td><td>${esc(t.leaderName)}</td>
+      <td>${t.done ? '<span style="color:#16a34a;font-weight:600;">✅ 已填寫</span>' : '<span style="color:#dc2626;font-weight:600;">⏳ 尚未填寫</span>'}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+function renderAbsenceSurveyDetail(c, sv) {
+  const s = me();
+  const p = absenceProgress(sv);
+  let body;
+  if (!s) {
+    body = `
+    <div class="survey-login-card" style="margin:1rem 0;">
+      <h3 style="margin:0 0 0.6rem;font-size:1.05rem;">🎓 學生登入填寫<small class="vn-sub">Đăng nhập điền khảo sát</small></h3>
+      <form data-act="login-student" class="survey-login-form">
+        <div class="form-group" style="margin-bottom:0.8rem;"><label style="font-weight:700;font-size:0.88rem;">帳號（學生姓名）<br><small class="vn-sub">Họ và tên</small></label>
+          <input name="name" required autocomplete="off" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:8px;"></div>
+        <div class="form-group" style="margin-bottom:1rem;"><label style="font-weight:700;font-size:0.88rem;">密碼（預設學號）<br><small class="vn-sub">Mật khẩu (Mặc định: Mã SV)</small></label>
+          <input type="password" name="password" required autocomplete="off" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:8px;"></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;">✍️ 登入並開始填寫<br><small class="vn-sub">Đăng nhập và điền phiếu</small></button>
+      </form>
+    </div>`;
+  } else if (!sv.isTarget) {
+    body = `<div class="survey-guide-notice" style="margin:1rem 0;padding:0.8rem 1rem;background:#f1f5f9;border-radius:8px;font-size:0.9rem;color:#475569;">
+      你不在本次缺曠原因調查的填寫名單中，無需填寫。<br><small class="vn-sub">Bạn không nằm trong danh sách điền phiếu này.</small></div>`;
+  } else {
+    const my = sv.myResponse;
+    body = `
+    <form data-act="submit-absence-reason" data-survey="${esc(sv.id)}" class="student-survey-form" style="margin:1rem 0;padding:1rem 1.25rem;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;">
+      ${my ? `<div style="margin-bottom:0.8rem;font-size:0.86rem;color:#166534;">✅ 已於 ${esc(formatLogTime(my.updatedAt))} 送出，可修改後重新送出。</div>` : ''}
+      <div class="form-row" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.8rem;">
+        <label style="flex:1;min-width:160px;font-weight:700;font-size:0.88rem;">學號 <small class="vn-sub">Mã SV</small> <span style="color:#dc2626;">*</span>
+          <input value="${esc(s.id)}" readonly style="width:100%;padding:0.5rem;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;"></label>
+        <label style="flex:1;min-width:160px;font-weight:700;font-size:0.88rem;">姓名 <small class="vn-sub">Họ tên</small> <span style="color:#dc2626;">*</span>
+          <input value="${esc(s.name)}" readonly style="width:100%;padding:0.5rem;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;"></label>
+      </div>
+      <label style="display:block;font-weight:700;font-size:0.88rem;margin-bottom:0.3rem;">缺曠原因說明 <small class="vn-sub">Lý do vắng mặt</small> <span style="color:#dc2626;">*</span></label>
+      <textarea name="reason" required rows="5" maxlength="2000" placeholder="請說明缺曠原因 (Vui lòng nhập lý do vắng mặt)" style="width:100%;padding:0.6rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;">${esc(my ? my.reason : '')}</textarea>
+      <button class="btn btn-primary" type="submit" style="margin-top:0.8rem;">${my ? '💾 更新送出' : '📨 送出'}<br><small class="vn-sub">${my ? 'Cập nhật' : 'Gửi'}</small></button>
+    </form>`;
+  }
+  return `
+  <div class="survey-standalone-page">
+    <div class="subsystem-header-bar">
+      ${surveyListBackBtn()}
+      <div class="subsystem-title-tag"><span class="subsystem-icon">📝</span>
+        <div><strong>${esc(absenceTitle(sv))}</strong><br><small class="vn-sub">Khảo sát lý do vắng mặt</small></div></div>
+      ${s ? `<span style="font-size:0.85rem;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;padding:0.25rem 0.65rem;border-radius:6px;font-weight:600;">🎓 ${esc(s.name)} (${esc(s.id)})</span>
+        <button class="btn btn-neutral btn-sm" data-act="logout" style="padding:0.25rem 0.65rem;font-size:0.8rem;">登出<br><small class="vn-sub">Đăng xuất</small></button>` : ''}
+    </div>
+    ${body}
+    <h4 style="margin:1rem 0 0.4rem;">📋 本次需填寫名單與所屬組長（${p.done}/${p.total} 已完成）<br><small class="vn-sub">Danh sách sinh viên cần điền và nhóm trưởng</small></h4>
+    ${absenceTargetsTable(sv)}
+  </div>`;
+}
+
+const surveyListBackBtn = () => `<button class="btn btn-secondary btn-sm" data-act="back-survey-list" style="margin:0;">⬅ 返回問卷列表<br><small class="vn-sub">Về danh sách khảo sát</small></button>`;
+
 /* ---- 問卷子系統子頁面 ---- */
 function renderPublicSurveySection(c) {
+  const key = publicSurveyCard;
+  if (key === 'care' && c.careVisible !== false) {
+    return `<div style="margin-bottom:0.75rem;">${surveyListBackBtn()}</div>${renderCareSurveyDetail(c)}`;
+  }
+  const sv = key.startsWith('abs:') ? (c.absenceSurveys || []).find(x => 'abs:' + x.id === key) : null;
+  if (sv) return renderAbsenceSurveyDetail(c, sv);
+  return renderSurveyCardList(c);
+}
+
+function renderCareSurveyDetail(c) {
   const s = me();
   if (!s) {
     return renderSurveyStandaloneLogin(c);
@@ -2958,6 +3107,13 @@ function formatActionTypeLabel(type) {
     case 'survey-delete': return '老師刪除學生問卷';
     case 'survey-logs-clear':
     case 'survey-logs-clear-all': return '老師清除問卷日誌';
+    case 'survey-absence-config': return '老師設定缺曠輔導門檻';
+    case 'survey-absence-create': return '老師新增缺曠原因調查';
+    case 'survey-absence-update': return '老師更新缺曠原因調查';
+    case 'survey-absence-delete': return '老師刪除缺曠原因調查';
+    case 'survey-absence-submit': return '學生填寫/修改缺曠原因';
+    case 'survey-absence-response-delete': return '老師刪除缺曠原因填寫';
+    case 'survey-layout': return '老師調整問卷卡片排序/顯示';
     default: return type;
   }
 }
@@ -4142,6 +4298,146 @@ function leaderSurveyStatusPanel(c, g, s, mates) {
   </div>`;
 }
 
+/* ---- 老師後台：問卷卡片管理（排序／顯示）與缺曠原因調查批次 ---- */
+function teacherAbsenceSurveyBlock(c) {
+  const cards = surveyCardList(c, false);
+  const surveys = c.absenceSurveys || [];
+  const nextThreshold = c.absenceBase + c.absenceStep * surveys.length;
+  const titleOf = x => x.type === 'care' ? '💌 生活關懷問卷調查' : '📝 ' + absenceTitle(x.sv);
+  const visibleOf = x => x.type === 'care' ? c.careVisible !== false : x.sv.visible !== false;
+  const box = 'background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;';
+  const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
+  return `
+  <div class="abs-survey-admin">
+    <div style="${box}">
+      <h3 style="margin:0 0 0.4rem;">🗂️ 問卷卡片管理（前台「問卷子系統」）</h3>
+      <p class="file-path" style="margin:0 0 0.7rem;">以滑鼠拖拉 ☰ 調整卡片上下順序（或用 ▲▼ 按鈕）；取消勾選「前台顯示」即可隱藏該問卷。</p>
+      <div id="survey-card-sort" style="display:flex;flex-direction:column;gap:0.5rem;">
+        ${cards.map((x, i) => `
+        <div class="survey-sort-item" draggable="true" data-key="${esc(x.key)}" style="display:flex;align-items:center;gap:0.6rem;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:0.5rem 0.75rem;cursor:grab;">
+          <span style="font-size:1.1rem;color:#94a3b8;">☰</span>
+          <b style="flex:1;">${esc(titleOf(x))}</b>
+          <label style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem;cursor:pointer;">
+            <input type="checkbox" data-act="toggle-card-visible" data-key="${esc(x.key)}" ${visibleOf(x) ? 'checked' : ''}> 前台顯示</label>
+          <button class="tab-btn" type="button" data-act="move-card" data-key="${esc(x.key)}" data-dir="-1" ${i === 0 ? 'disabled' : ''}>▲</button>
+          <button class="tab-btn" type="button" data-act="move-card" data-key="${esc(x.key)}" data-dir="1" ${i === cards.length - 1 ? 'disabled' : ''}>▼</button>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div style="${box}">
+      <h3 style="margin:0 0 0.4rem;">📝 缺曠原因調查（缺曠輔導批次）</h3>
+      <form data-act="save-absence-config" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;">
+        <label style="font-weight:700;font-size:0.9rem;">缺曠輔導門檻：</label>
+        <span style="font-size:0.88rem;">初始達 <input type="number" min="1" name="absenceBase" value="${c.absenceBase}" style="${inp}width:5rem;"> 節，每增加 <input type="number" min="1" name="absenceStep" value="${c.absenceStep}" style="${inp}width:5rem;"> 節再一張輔導記錄</span>
+        <button class="btn btn-primary btn-sm" type="submit" style="margin:0;">💾 儲存門檻</button>
+        <span class="file-path" style="margin:0;">第1批達${c.absenceBase}節、第2批達${c.absenceBase + c.absenceStep}節、第3批達${c.absenceBase + 2 * c.absenceStep}節…</span>
+      </form>
+      <form data-act="create-absence-survey" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+        <label style="font-weight:700;font-size:0.9rem;">➕ 新增批次問卷：</label>
+        <span style="font-size:0.88rem;">曠課達 <input type="number" min="1" name="threshold" value="${nextThreshold}" style="${inp}width:5rem;"> 節</span>
+        <span style="font-size:0.88rem;">副標題 <input name="subtitle" maxlength="60" value="達${nextThreshold}節" style="${inp}width:11rem;"></span>
+        <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增並選擇學生</button>
+        <span class="file-path" style="margin:0;">每新增一份即為獨立問卷，需重新勾選學生並各自統計。</span>
+      </form>
+    </div>
+    ${surveys.map(sv => teacherAbsenceCard(c, sv)).join('')}
+  </div>`;
+}
+
+function teacherAbsenceCard(c, sv) {
+  const p = absenceProgress(sv);
+  const pending = (sv.targets || []).filter(t => !t.done);
+  const byLeader = {};
+  pending.forEach(t => { (byLeader[t.leaderName] = byLeader[t.leaderName] || []).push(t); });
+  const resps = (c.absenceResponses || []).filter(r => r.surveyId === sv.id);
+  const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
+  return `
+  <div class="abs-admin-card" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
+      <h3 style="margin:0;flex:1;">📝 ${esc(absenceTitle(sv))}</h3>
+      <span class="status-badge ${sv.visible ? 'can-edit' : 'is-locked'}">${sv.visible ? '前台顯示中' : '前台已隱藏'}</span>
+      <span style="font-size:0.88rem;">已填 <b>${p.done}</b> / 需填 <b>${p.total}</b>（${p.percent}%）</span>
+    </div>
+    <form data-act="update-absence-meta" data-survey="${esc(sv.id)}" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
+      <span style="font-size:0.88rem;">副標題 <input name="subtitle" maxlength="60" value="${esc(sv.subtitle)}" style="${inp}width:11rem;"></span>
+      <span style="font-size:0.88rem;">門檻 <input type="number" min="1" name="threshold" value="${sv.threshold}" style="${inp}width:5rem;"> 節</span>
+      <button class="btn btn-secondary btn-sm" type="submit" style="margin:0;">💾 儲存</button>
+      <button class="btn btn-primary btn-sm" type="button" data-act="open-abs-picker" data-survey="${esc(sv.id)}" style="margin:0;">👥 選擇需填寫學生</button>
+      <button class="btn btn-success btn-sm" type="button" data-act="export-absence-csv" data-survey="${esc(sv.id)}" style="margin:0;">📥 匯出填寫內容</button>
+      <button class="btn btn-neutral btn-sm" type="button" data-act="delete-absence-survey" data-survey="${esc(sv.id)}" style="margin:0;color:#dc2626;border-color:#fca5a5;">🗑️ 刪除</button>
+    </form>
+    <h4 style="margin:0.5rem 0 0.3rem;">⏳ 尚未填寫（${pending.length} 位，依所屬組長）</h4>
+    ${pending.length ? Object.keys(byLeader).sort().map(l => `
+      <div style="margin-bottom:0.35rem;font-size:0.88rem;"><b>組長：${esc(l)}</b>（${byLeader[l].length} 位）→
+        ${byLeader[l].map(t => `${esc(t.name)} (${esc(t.id)})`).join('、')}</div>`).join('')
+      : `<p class="file-path" style="margin:0;">${p.total ? '🎉 全部已完成填寫' : '尚未選擇需填寫的學生'}</p>`}
+    <h4 style="margin:0.8rem 0 0.3rem;">✅ 已填寫內容（${resps.length} 筆）</h4>
+    ${resps.length ? `<div style="overflow-x:auto;"><table class="data-table" style="width:100%;font-size:0.86rem;">
+      <thead><tr><th>學號</th><th>姓名</th><th>組別</th><th>組長</th><th>缺曠原因說明</th><th>填寫時間</th><th></th></tr></thead>
+      <tbody>${resps.map(r => `<tr><td>${esc(r.studentId)}</td><td>${esc(r.studentName)}</td><td>${esc(r.groupName)}</td><td>${esc(r.leaderName)}</td>
+        <td style="white-space:pre-wrap;">${esc(r.reason)}</td><td>${esc(formatLogTime(r.updatedAt))}</td>
+        <td><button class="tab-btn" type="button" data-act="delete-absence-response" data-survey="${esc(sv.id)}" data-id="${esc(r.studentId)}" style="color:#dc2626;">🗑️</button></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="file-path" style="margin:0;">尚無填寫紀錄</p>'}
+  </div>`;
+}
+
+function exportAbsenceCSV(c, sv) {
+  const respMap = new Map((c.absenceResponses || []).filter(r => r.surveyId === sv.id).map(r => [r.studentId, r]));
+  const rows = [['學號', '姓名', '組別', '所屬組長', '填寫狀態', '缺曠原因說明', '首次填寫時間', '最後修改時間']];
+  (sv.targets || []).slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true })).forEach(t => {
+    const r = respMap.get(t.id);
+    rows.push([t.id, t.name, t.groupName, t.leaderName, r ? '已填寫' : '尚未填寫', r ? r.reason : '',
+      r ? formatLogTime(r.createdAt) : '', r ? formatLogTime(r.updatedAt) : '']);
+  });
+  const csv = '﻿' + rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(csv, 'text/csv;charset=utf-8', `${c.year || ''}_${c.subject || ''}_${absenceTitle(sv)}.csv`);
+}
+
+/* 選擇學生彈窗：列出缺曠次數（點名紀錄）供參考，可一鍵勾選達門檻者 */
+function absPickerModalHtml(c) {
+  if (!absPicker || !c) return '';
+  const sv = (c.absenceSurveys || []).find(x => x.id === absPicker.surveyId);
+  if (!sv) return '';
+  const counts = attendanceAbsentCounts(c, null);
+  const rows = c.students.slice().sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  return `
+  <div class="absence-modal-overlay" data-act="close-abs-picker-bg">
+    <div class="absence-modal-content" style="max-width:760px;">
+      <div class="absence-modal-header">
+        <h3>👥 選擇需填寫「${esc(absenceTitle(sv))}」的學生</h3>
+        <button class="absence-modal-close-btn" type="button" data-act="close-abs-picker">✕</button>
+      </div>
+      <div class="absence-modal-body">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-bottom:0.7rem;">
+          <input data-act="abs-pick-search" placeholder="🔍 搜尋學號／姓名／組別" style="flex:1;min-width:180px;padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:4px;">
+          <button class="tab-btn" type="button" data-act="abs-pick-reach">勾選缺曠達 ${sv.threshold} 次者</button>
+          <button class="tab-btn" type="button" data-act="abs-pick-none">全部取消</button>
+          <span id="abs-pick-count" style="font-size:0.88rem;">已選 <b>${absPicker.selected.size}</b> 位</span>
+        </div>
+        <p class="file-path" style="margin:0 0 0.5rem;">缺曠次數取自點名紀錄（每筆缺席計 1），僅供參考；實際曠課節數以學校系統為準。</p>
+        <div style="max-height:50vh;overflow:auto;">
+        <table class="data-table" style="width:100%;font-size:0.86rem;">
+          <thead><tr><th></th><th>學號</th><th>姓名</th><th>組別</th><th>所屬組長</th><th>缺曠次數</th></tr></thead>
+          <tbody>${rows.map(s => {
+            const g = s.groupId ? c.groups.find(x => x.id === s.groupId) : null;
+            const lead = g ? c.students.find(x => x.groupId === g.id && x.isLeader) : null;
+            const n = counts[s.id] || 0;
+            return `<tr data-q="${esc((s.id + ' ' + s.name + ' ' + (g ? g.name : '')).toLowerCase())}">
+              <td><input type="checkbox" data-act="abs-pick-toggle" data-id="${esc(s.id)}" ${absPicker.selected.has(s.id) ? 'checked' : ''}></td>
+              <td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(g ? g.name : '未分組')}</td>
+              <td>${esc(lead ? lead.name : '（無組長）')}</td><td>${n}</td></tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>
+      <div class="absence-modal-footer" style="display:flex;gap:0.5rem;justify-content:flex-end;padding:0.75rem 1rem;">
+        <button class="btn btn-secondary" type="button" data-act="close-abs-picker" style="margin:0;">取消</button>
+        <button class="btn btn-primary" type="button" data-act="abs-pick-save" style="margin:0;">💾 儲存名單</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function teacherWellbeingBlock(c) {
   if (!c) {
     return `
@@ -4188,6 +4484,10 @@ function teacherWellbeingBlock(c) {
         </button>
       </div>
     </div>
+
+    ${teacherAbsenceSurveyBlock(c)}
+
+    <h3 style="margin:1.5rem 0 0.75rem;">💌 生活關懷問卷調查（時限設定、回覆與日誌）</h3>
 
     <!-- 1. 問卷開放時限設定 -->
     <div class="survey-period-box" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
@@ -4728,6 +5028,8 @@ function surveyModalsHtml() {
       </div>
     </div>`;
   }
+
+  html += absPickerModalHtml(c);
 
   return html;
 }
@@ -5383,6 +5685,37 @@ app.addEventListener('submit', e => {
       }
     });
   }
+  if (a === 'submit-absence-reason') {
+    const reason = (f.reason ? f.reason.value : '').trim();
+    if (!reason) return alert('請填寫缺曠原因說明！\nVui lòng nhập lý do vắng mặt!');
+    if (!confirm('確定送出缺曠原因調查？\n\nXác nhận gửi khảo sát?')) return;
+    return act('submit-absence-reason', { surveyId: f.dataset.survey, reason }, {
+      after: () => alert('🎉 缺曠原因已送出！\nGửi khảo sát thành công!'),
+    });
+  }
+  if (a === 'save-absence-config') {
+    const c = cur();
+    if (!c) return;
+    return act('teacher:save-absence-config', { courseId: c.id, absenceBase: f.absenceBase.value, absenceStep: f.absenceStep.value }, {
+      after: () => alert('✅ 缺曠輔導門檻已儲存'),
+    });
+  }
+  if (a === 'create-absence-survey') {
+    const c = cur();
+    if (!c) return;
+    return act('teacher:create-absence-survey', { courseId: c.id, threshold: f.threshold.value, subtitle: f.subtitle.value }, {
+      after: data => {
+        if (data && data.surveyId) absPicker = { surveyId: data.surveyId, selected: new Set() };
+      },
+    });
+  }
+  if (a === 'update-absence-meta') {
+    const c = cur();
+    if (!c) return;
+    return act('teacher:update-absence-survey', { courseId: c.id, surveyId: f.dataset.survey, subtitle: f.subtitle.value, threshold: f.threshold.value }, {
+      after: () => alert('✅ 問卷副標題與門檻已儲存'),
+    });
+  }
   if (a === 'save-survey-period') {
     const c = cur();
     if (!c) return;
@@ -5573,6 +5906,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'nav-public-subview') {
     publicSubView = btn.dataset.view || 'dashboard';
+    if (publicSubView === 'survey') publicSurveyCard = '';
     if (btn.dataset.course && btn.dataset.course !== state.currentId) {
       state.currentId = btn.dataset.course;
       localStorage.setItem(CURRENT_KEY, state.currentId);
@@ -5589,6 +5923,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'open-survey-page' || a === 'show-student-login') {
     e.preventDefault();
     publicSubView = 'survey';
+    publicSurveyCard = 'care';
     loginMode = null;
     try {
       const targetUrl = window.location.pathname + window.location.search + '#survey';
@@ -5605,6 +5940,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'quick-survey-login') {
     e.preventDefault();
     publicSubView = 'survey';
+    publicSurveyCard = 'care';
     loginMode = null;
     try {
       const targetUrl = window.location.pathname + window.location.search + '#survey';
@@ -6043,6 +6379,72 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     exportSurveyCSV(c);
     return;
   }
+  if (a === 'open-survey-card') {
+    publicSurveyCard = btn.dataset.key || '';
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  if (a === 'back-survey-list') {
+    publicSurveyCard = '';
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  if (a === 'move-card') {
+    if (!c) return;
+    const keys = surveyCardList(c, false).map(x => x.key);
+    const i = keys.indexOf(btn.dataset.key), j = i + Number(btn.dataset.dir);
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    return act('teacher:save-survey-layout', { courseId: c.id, order: keys });
+  }
+  if (a === 'open-abs-picker') {
+    if (!c) return;
+    const sv = (c.absenceSurveys || []).find(x => x.id === btn.dataset.survey);
+    if (!sv) return;
+    absPicker = { surveyId: sv.id, selected: new Set(sv.studentIds || []) };
+    return render();
+  }
+  if (a === 'close-abs-picker' || a === 'close-abs-picker-bg') {
+    if (a === 'close-abs-picker-bg' && !e.target.classList.contains('absence-modal-overlay')) return;
+    absPicker = null;
+    return render();
+  }
+  if (a === 'abs-pick-none') {
+    if (absPicker) absPicker.selected.clear();
+    return render();
+  }
+  if (a === 'abs-pick-reach') {
+    if (!c || !absPicker) return;
+    const sv = (c.absenceSurveys || []).find(x => x.id === absPicker.surveyId);
+    const counts = attendanceAbsentCounts(c, null);
+    c.students.forEach(s => { if (sv && (counts[s.id] || 0) >= sv.threshold) absPicker.selected.add(s.id); });
+    return render();
+  }
+  if (a === 'abs-pick-save') {
+    if (!c || !absPicker) return;
+    const payload = { courseId: c.id, surveyId: absPicker.surveyId, studentIds: [...absPicker.selected] };
+    return act('teacher:update-absence-survey', payload, {
+      after: () => { absPicker = null; },
+    });
+  }
+  if (a === 'export-absence-csv') {
+    const sv = c && (c.absenceSurveys || []).find(x => x.id === btn.dataset.survey);
+    if (sv) exportAbsenceCSV(c, sv);
+    return;
+  }
+  if (a === 'delete-absence-survey') {
+    const sv = c && (c.absenceSurveys || []).find(x => x.id === btn.dataset.survey);
+    if (!sv) return;
+    if (!confirm(`確定刪除「${absenceTitle(sv)}」？\n該問卷的名單與全部學生填寫內容都會一併刪除，無法復原。`)) return;
+    return act('teacher:delete-absence-survey', { courseId: c.id, surveyId: sv.id });
+  }
+  if (a === 'delete-absence-response') {
+    if (!c) return;
+    if (!confirm('確定刪除這筆缺曠原因填寫？學生可重新填寫。')) return;
+    return act('teacher:delete-absence-response', { courseId: c.id, surveyId: btn.dataset.survey, studentId: btn.dataset.id });
+  }
   if (a === 'clear-survey-period') {
     if (!c) return;
     if (!confirm('確定要清除日期限制，改為隨時開放填寫嗎？')) return;
@@ -6114,6 +6516,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'jump-to-my-survey') {
     publicSubView = 'survey';
+    publicSurveyCard = 'care';
     render();
     setTimeout(() => {
       const el = document.querySelector('.student-survey-panel');
@@ -6142,6 +6545,21 @@ app.addEventListener('change', e => {
   if (a === 'survey-cat-filter') {
     surveyCategoryFilter = t.value;
     return render();
+  }
+  if (a === 'abs-pick-toggle') {
+    if (!absPicker) return;
+    if (t.checked) absPicker.selected.add(id); else absPicker.selected.delete(id);
+    const cnt = document.querySelector('#abs-pick-count b');
+    if (cnt) cnt.textContent = absPicker.selected.size;
+    return;
+  }
+  if (a === 'toggle-card-visible') {
+    if (!c) return;
+    const key = t.dataset.key;
+    if (key === 'care') {
+      return act('teacher:save-survey-layout', { courseId: c.id, order: surveyCardList(c, false).map(x => x.key), careVisible: t.checked });
+    }
+    return act('teacher:update-absence-survey', { courseId: c.id, surveyId: key.slice(4), visible: t.checked });
   }
   if (a === 'survey-group-filter') {
     surveyGroupFilter = t.value;
@@ -6221,6 +6639,11 @@ app.addEventListener('input', e => {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   }
+  if (a === 'abs-pick-search') {
+    const q = t.value.trim().toLowerCase();
+    document.querySelectorAll('tr[data-q]').forEach(tr => { tr.style.display = !q || tr.dataset.q.includes(q) ? '' : 'none'; });
+    return;
+  }
   if (a === 'survey-search-input') {
     surveySearchText = t.value;
     render();
@@ -6230,6 +6653,38 @@ app.addEventListener('input', e => {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   }
+});
+
+/* ===== 後台問卷卡片滑鼠拖拉排序（HTML5 Drag & Drop，放開後儲存順序） ===== */
+app.addEventListener('dragstart', e => {
+  const item = e.target.closest && e.target.closest('.survey-sort-item');
+  if (!item) return;
+  dragSurveyKey = item.dataset.key;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragSurveyKey);
+  setTimeout(() => item.classList.add('dragging'), 0);
+});
+app.addEventListener('dragover', e => {
+  const list = e.target.closest && e.target.closest('#survey-card-sort');
+  if (!list || !dragSurveyKey) return;
+  e.preventDefault();
+  const dragging = list.querySelector('.dragging');
+  if (!dragging) return;
+  const after = [...list.querySelectorAll('.survey-sort-item:not(.dragging)')].find(el => {
+    const r = el.getBoundingClientRect();
+    return e.clientY < r.top + r.height / 2;
+  });
+  if (after) list.insertBefore(dragging, after); else list.appendChild(dragging);
+});
+app.addEventListener('dragend', () => {
+  if (!dragSurveyKey) return;
+  dragSurveyKey = null;
+  const list = document.getElementById('survey-card-sort');
+  const c = cur();
+  if (!list || !c) return;
+  const order = [...list.querySelectorAll('.survey-sort-item')].map(el => el.dataset.key);
+  list.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+  act('teacher:save-survey-layout', { courseId: c.id, order });
 });
 
 /* ===== 瀏覽器上一頁／下一頁 (popstate) 與 hashchange 支援 ===== */

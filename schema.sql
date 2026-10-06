@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS courses (
   survey_start      TEXT NOT NULL DEFAULT '',
   survey_end        TEXT NOT NULL DEFAULT '',
   hide_upcoming_surveys INTEGER NOT NULL DEFAULT 0,
+  care_visible      INTEGER NOT NULL DEFAULT 1,   -- 生活關懷問卷卡片是否顯示於前台
+  survey_order      TEXT NOT NULL DEFAULT '',     -- 問卷卡片排序 JSON：['care','abs:<id>',...]
+  abs_base          INTEGER NOT NULL DEFAULT 30,  -- 缺曠輔導起算節數
+  abs_step          INTEGER NOT NULL DEFAULT 15,  -- 缺曠輔導累增節數
   created_at        INTEGER NOT NULL
 );
 
@@ -156,6 +160,30 @@ CREATE TABLE IF NOT EXISTS survey_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, student_id, created_at DESC);
+
+-- 缺曠原因調查：每個副標題（批次）為一份獨立問卷
+CREATE TABLE IF NOT EXISTS absence_surveys (
+  id          TEXT NOT NULL,
+  course_id   TEXT NOT NULL,
+  threshold   INTEGER NOT NULL DEFAULT 0,    -- 該批次曠課節數門檻
+  subtitle    TEXT NOT NULL DEFAULT '',      -- 副標題，如「達30節」
+  visible     INTEGER NOT NULL DEFAULT 1,    -- 前台是否顯示
+  seq         INTEGER NOT NULL DEFAULT 0,
+  student_ids TEXT NOT NULL DEFAULT '[]',    -- 需填寫學生學號 JSON
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (course_id, id)
+);
+
+-- 缺曠原因調查：學生填寫之缺曠原因說明
+CREATE TABLE IF NOT EXISTS absence_responses (
+  course_id   TEXT NOT NULL,
+  survey_id   TEXT NOT NULL,
+  student_id  TEXT NOT NULL,
+  reason      TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (course_id, survey_id, student_id)
+);
 
 
 CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at);

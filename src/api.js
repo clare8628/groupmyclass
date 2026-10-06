@@ -244,6 +244,8 @@ export async function handleAction(request, env, db, body) {
         db.prepare('DELETE FROM groups WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM survey_submissions WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM survey_logs WHERE course_id = ?').bind(body.courseId),
+        db.prepare('DELETE FROM absence_surveys WHERE course_id = ?').bind(body.courseId),
+        db.prepare('DELETE FROM absence_responses WHERE course_id = ?').bind(body.courseId),
         db.prepare('DELETE FROM courses WHERE id = ?').bind(body.courseId),
       ]);
       return ok();
@@ -1012,6 +1014,93 @@ export async function handleAction(request, env, db, body) {
       }
       return ok();
     }
+    /* ---- 缺曠原因調查：批次問卷卡片管理 ---- */
+    const surveyLog = (c, actionType, detail, targetId = '', targetName = '') => logActivity(db, {
+      courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+      actionType, targetId, targetName, detail,
+    });
+    const cleanStudentIds = (c, ids) => {
+      const valid = new Set(c.students.map(s => s.id));
+      return [...new Set((Array.isArray(ids) ? ids : []).map(String))].filter(id => valid.has(id));
+    };
+    if (op === 'save-absence-config') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const base = Math.floor(Number(body.absenceBase));
+      const step = Math.floor(Number(body.absenceStep));
+      if (!(base > 0) || !(step > 0)) return bad('起算節數與累增節數須為正整數', 400);
+      await db.prepare('UPDATE courses SET abs_base=?, abs_step=? WHERE id=?').bind(base, step, c.id).run();
+      await surveyLog(c, 'survey-absence-config', `老師設定缺曠輔導門檻：起算 ${base} 節、每增加 ${step} 節再一張輔導記錄`);
+      return ok();
+    }
+    if (op === 'create-absence-survey') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      let threshold = Math.floor(Number(body.threshold));
+      if (!(threshold > 0)) threshold = c.absenceBase + c.absenceStep * c.absenceSurveys.length;
+      const subtitle = String(body.subtitle || '').trim().slice(0, 60) || `達${threshold}節`;
+      const studentIds = cleanStudentIds(c, body.studentIds);
+      const id = 'abs_' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+      const seq = c.absenceSurveys.reduce((m, x) => Math.max(m, x.seq), 0) + 1;
+      await db.prepare('INSERT INTO absence_surveys (id, course_id, threshold, subtitle, visible, seq, student_ids, created_at) VALUES (?,?,?,?,1,?,?,?)')
+        .bind(id, c.id, threshold, subtitle, seq, JSON.stringify(studentIds), Date.now()).run();
+      // 新卡片預設排在最後
+      const order = [...c.surveyOrder.filter(k => k === 'care' || c.absenceSurveys.some(x => 'abs:' + x.id === k))];
+      if (!order.includes('care')) order.unshift('care');
+      c.absenceSurveys.forEach(x => { if (!order.includes('abs:' + x.id)) order.push('abs:' + x.id); });
+      order.push('abs:' + id);
+      await db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(order), c.id).run();
+      await surveyLog(c, 'survey-absence-create', `老師新增缺曠原因調查「${subtitle}」（需填寫學生 ${studentIds.length} 位）`);
+      return ok({ surveyId: id });
+    }
+    if (op === 'update-absence-survey') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const sv = c.absenceSurveys.find(x => x.id === body.surveyId);
+      if (!sv) return bad('問卷不存在', 404);
+      const subtitle = body.subtitle !== undefined ? (String(body.subtitle).trim().slice(0, 60) || sv.subtitle) : sv.subtitle;
+      const threshold = body.threshold !== undefined && Math.floor(Number(body.threshold)) > 0 ? Math.floor(Number(body.threshold)) : sv.threshold;
+      const studentIds = body.studentIds !== undefined ? cleanStudentIds(c, body.studentIds) : sv.studentIds;
+      const visible = body.visible !== undefined ? (body.visible ? 1 : 0) : (sv.visible ? 1 : 0);
+      await db.prepare('UPDATE absence_surveys SET subtitle=?, threshold=?, student_ids=?, visible=? WHERE course_id=? AND id=?')
+        .bind(subtitle, threshold, JSON.stringify(studentIds), visible, c.id, sv.id).run();
+      await surveyLog(c, 'survey-absence-update', `老師更新缺曠原因調查「${subtitle}」（需填寫學生 ${studentIds.length} 位、前台${visible ? '顯示' : '隱藏'}）`);
+      return ok();
+    }
+    if (op === 'delete-absence-survey') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const sv = c.absenceSurveys.find(x => x.id === body.surveyId);
+      if (!sv) return bad('問卷不存在', 404);
+      await db.batch([
+        db.prepare('DELETE FROM absence_surveys WHERE course_id=? AND id=?').bind(c.id, sv.id),
+        db.prepare('DELETE FROM absence_responses WHERE course_id=? AND survey_id=?').bind(c.id, sv.id),
+        db.prepare('UPDATE courses SET survey_order=? WHERE id=?').bind(JSON.stringify(c.surveyOrder.filter(k => k !== 'abs:' + sv.id)), c.id),
+      ]);
+      await surveyLog(c, 'survey-absence-delete', `老師刪除缺曠原因調查「${sv.subtitle}」及其全部填寫紀錄`);
+      return ok();
+    }
+    if (op === 'delete-absence-response') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const studentId = String(body.studentId || '');
+      await db.prepare('DELETE FROM absence_responses WHERE course_id=? AND survey_id=? AND student_id=?')
+        .bind(c.id, String(body.surveyId || ''), studentId).run();
+      const st = c.students.find(s => s.id === studentId);
+      await surveyLog(c, 'survey-absence-response-delete', `老師刪除學生 ${st ? st.name : studentId} (${studentId}) 的缺曠原因填寫`, studentId, st ? st.name : '');
+      return ok();
+    }
+    if (op === 'save-survey-layout') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const valid = new Set(['care', ...c.absenceSurveys.map(x => 'abs:' + x.id)]);
+      const order = [...new Set((Array.isArray(body.order) ? body.order : []).map(String))].filter(k => valid.has(k));
+      valid.forEach(k => { if (!order.includes(k)) order.push(k); });
+      const careVisible = body.careVisible === undefined ? c.careVisible : !!body.careVisible;
+      await db.prepare('UPDATE courses SET survey_order=?, care_visible=? WHERE id=?').bind(JSON.stringify(order), careVisible ? 1 : 0, c.id).run();
+      await surveyLog(c, 'survey-layout', `老師調整問卷卡片排序與顯示（生活關懷問卷前台${careVisible ? '顯示' : '隱藏'}）`);
+      return ok();
+    }
     if (op === 'simulate-student') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
@@ -1040,6 +1129,35 @@ export async function handleAction(request, env, db, body) {
 
   const myGroup = self.groupId ? c.groups.find(g => g.id === self.groupId) : null;
   const canEdit = canGroupLeaderEdit(c, myGroup);
+
+  if (action === 'submit-absence-reason') {
+    const sv = c.absenceSurveys.find(x => x.id === body.surveyId);
+    if (!sv || !sv.visible) return bad('問卷不存在或未開放（Phiếu khảo sát không tồn tại hoặc chưa mở）', 404);
+    if (!sv.studentIds.includes(self.id)) return bad('您不在本次缺曠原因調查的填寫名單中（Bạn không nằm trong danh sách điền phiếu này）', 403);
+    const reason = String(body.reason || '').trim().slice(0, 2000);
+    if (!reason) return bad('請填寫缺曠原因說明（Vui lòng nhập lý do vắng mặt）', 400);
+    const now = Date.now();
+    const existing = c.absenceResponses.find(r => r.surveyId === sv.id && r.studentId === self.id);
+    if (existing && existing.reason === reason) return ok({ message: '內容未變更（Không có thay đổi）' });
+    await db.prepare(`
+      INSERT INTO absence_responses (course_id, survey_id, student_id, reason, created_at, updated_at)
+      VALUES (?,?,?,?,?,?)
+      ON CONFLICT(course_id, survey_id, student_id) DO UPDATE SET reason = excluded.reason, updated_at = excluded.updated_at
+    `).bind(c.id, sv.id, self.id, reason, existing ? existing.createdAt : now, now).run();
+    await logActivity(db, {
+      courseId: c.id,
+      groupId: self.groupId || '',
+      groupName: myGroup ? myGroup.name : '',
+      operatorRole: self.isLeader ? 'leader' : self.isVice ? 'vice' : 'student',
+      operatorId: self.id,
+      operatorName: self.name,
+      actionType: 'survey-absence-submit',
+      targetId: self.id,
+      targetName: self.name,
+      detail: `學生 ${self.name} (${self.id}) ${existing ? '修改' : '填寫'}缺曠原因調查「${sv.subtitle}」`,
+    });
+    return ok();
+  }
 
   if (action === 'submit-survey') {
     const start = c.surveyStart || '';

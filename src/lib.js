@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-09-29';
+const SCHEMA_REV = '2026-10-06';
 let _schemaReady = false;
 async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -82,6 +82,7 @@ async function ensureSchema(db) {
     await ensureGroupSchema(db);
     await ensureAttendanceSchema(db);
     await ensureSurveySchema(db);
+    await ensureAbsenceSurveySchema(db);
     await ensureGroup3Restored(db);
     await ensurePanReleased(db);
     try {
@@ -290,6 +291,50 @@ async function ensureSurveySchema(db) {
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_survey_logs_course ON survey_logs(course_id, student_id, created_at DESC)').run();
   } catch (_) {}
   _ensuredSurveySchema = true;
+}
+
+/* 缺曠原因調查：課程層級設定（起算／累增節數、生活關懷卡片顯示、卡片排序）、獨立批次問卷與學生回覆 */
+let _ensuredAbsenceSchema = false;
+async function ensureAbsenceSurveySchema(db) {
+  if (_ensuredAbsenceSchema) return;
+  const alters = [
+    'ALTER TABLE courses ADD COLUMN care_visible INTEGER NOT NULL DEFAULT 1',
+    "ALTER TABLE courses ADD COLUMN survey_order TEXT NOT NULL DEFAULT ''",
+    'ALTER TABLE courses ADD COLUMN abs_base INTEGER NOT NULL DEFAULT 30',
+    'ALTER TABLE courses ADD COLUMN abs_step INTEGER NOT NULL DEFAULT 15',
+  ];
+  for (const sql of alters) {
+    try { await db.prepare(sql).run(); } catch (_) {}
+  }
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS absence_surveys (
+        id          TEXT NOT NULL,
+        course_id   TEXT NOT NULL,
+        threshold   INTEGER NOT NULL DEFAULT 0,
+        subtitle    TEXT NOT NULL DEFAULT '',
+        visible     INTEGER NOT NULL DEFAULT 1,
+        seq         INTEGER NOT NULL DEFAULT 0,
+        student_ids TEXT NOT NULL DEFAULT '[]',
+        created_at  INTEGER NOT NULL,
+        PRIMARY KEY (course_id, id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS absence_responses (
+        course_id   TEXT NOT NULL,
+        survey_id   TEXT NOT NULL,
+        student_id  TEXT NOT NULL,
+        reason      TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (course_id, survey_id, student_id)
+      )
+    `).run();
+  } catch (_) {}
+  _ensuredAbsenceSchema = true;
 }
 
 let _checkedGroup3Restored = false;
@@ -680,16 +725,37 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM attendance_delegates').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM survey_submissions').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM absence_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM absence_responses').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
+}
+
+function parseJsonArray(v) {
+  try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; }
+}
+
+/* 缺曠原因調查：產生單張問卷卡片的應填名單（含所屬組長與完成狀態）；idOf 決定學號呈現（前台遮罩） */
+function buildAbsenceTargets(c, survey, idOf) {
+  const doneSet = new Set((c.absenceResponses || []).filter(r => r.surveyId === survey.id).map(r => r.studentId));
+  return survey.studentIds.map(sid => c.students.find(s => s.id === sid)).filter(Boolean).map(st => {
+    const grp = st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+    const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
+    return {
+      id: idOf(st.id), name: st.name,
+      groupName: grp ? grp.name : '未分組',
+      leaderName: leader ? `${leader.name} (${idOf(leader.id)})` : '（無組長）',
+      done: doneSet.has(st.id),
+    };
+  });
 }
 
 /* 讀取全部課程狀態；原始資料列依 data_rev 快取，時間相關欄位（今日點名、調分）每次重新計算 */
 export async function loadState(db, rev = null) {
   await ensureSchema(db);
   if (rev === null) rev = await getDataRev(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs] = await loadRows(db, rev);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses] = await loadRows(db, rev);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
@@ -726,6 +792,10 @@ export async function loadState(db, rev = null) {
       surveyStart: c.survey_start || '',
       surveyEnd: c.survey_end || '',
       hideUpcomingSurveys: !!c.hide_upcoming_surveys,
+      careVisible: c.care_visible === undefined || c.care_visible === null ? true : !!c.care_visible,
+      surveyOrder: parseJsonArray(c.survey_order),
+      absenceBase: Number(c.abs_base) > 0 ? Number(c.abs_base) : 30,
+      absenceStep: Number(c.abs_step) > 0 ? Number(c.abs_step) : 15,
     };
 
     courseStudents.forEach(s => {
@@ -787,6 +857,23 @@ export async function loadState(db, rev = null) {
       newContent: x.new_content || '',
       diffSummary: x.diff_summary || '',
       createdAt: x.created_at,
+    }));
+
+    courseObj.absenceSurveys = (absSurveys.results || []).filter(x => x.course_id === c.id).map(x => ({
+      id: x.id,
+      threshold: Number(x.threshold) || 0,
+      subtitle: x.subtitle || '',
+      visible: !!x.visible,
+      seq: x.seq || 0,
+      studentIds: parseJsonArray(x.student_ids),
+      createdAt: x.created_at,
+    }));
+    courseObj.absenceResponses = (absResponses.results || []).filter(x => x.course_id === c.id).map(x => ({
+      surveyId: x.survey_id,
+      studentId: x.student_id,
+      reason: x.reason || '',
+      createdAt: x.created_at,
+      updatedAt: x.updated_at,
     }));
 
     return courseObj;
@@ -934,6 +1021,18 @@ export async function publicize(db, env, courses, session) {
           };
         }),
         surveyLogs: c.surveyLogs || [],
+        absenceSurveys: (c.absenceSurveys || []).map(sv => ({ ...sv, targets: buildAbsenceTargets(c, sv, x => x) })),
+        absenceResponses: (c.absenceResponses || []).map(r => {
+          const st = c.students.find(s => s.id === r.studentId);
+          const grp = st && st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
+          const leader = grp ? c.students.find(s => s.groupId === grp.id && s.isLeader) : null;
+          return {
+            ...r,
+            studentName: st ? st.name : '',
+            groupName: grp ? grp.name : '未分組',
+            leaderName: leader ? `${leader.name} (${leader.id})` : '（無組長）',
+          };
+        }),
       };
     });
   }
@@ -1007,7 +1106,18 @@ export async function publicize(db, env, courses, session) {
           groupName: (c.groups.find(g => g.id === d.groupId) || {}).name || '',
         }))
       : [];
-    const { surveySubmissions: _subs, surveyLogs: _logs, ...safeCourse } = c;
+    const maskIfOther = id => (isMine && id === selfId) ? id : maskId(id);
+    const absenceSurveys = (c.absenceSurveys || []).filter(sv => sv.visible).map(sv => {
+      const mineResp = isMine ? (c.absenceResponses || []).find(r => r.surveyId === sv.id && r.studentId === selfId) : null;
+      const { studentIds, ...pub } = sv;
+      return {
+        ...pub,
+        isTarget: isMine && studentIds.includes(selfId),
+        targets: buildAbsenceTargets(c, sv, maskIfOther),
+        myResponse: mineResp ? { reason: mineResp.reason, createdAt: mineResp.createdAt, updatedAt: mineResp.updatedAt } : null,
+      };
+    });
+    const { surveySubmissions: _subs, surveyLogs: _logs, absenceSurveys: _abs, absenceResponses: _absResp, ...safeCourse } = c;
     out.push({
       ...safeCourse,
       students,
@@ -1019,6 +1129,7 @@ export async function publicize(db, env, courses, session) {
       surveyEnd: c.surveyEnd || '',
       mySurvey,
       mySurveyLogs,
+      absenceSurveys,
     });
   }
   return out;
