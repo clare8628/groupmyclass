@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.95.20261006.170855';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.96.20261006.171107';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1487,13 +1487,7 @@ function renderUncompletedSurveysCard(c) {
         <br><small class="vn-sub">Tổng cộng có ${uncompletedAll.length} sinh viên chưa hoàn thành</small>
       </span>
     </div>
-    ` : `
-    <div style="text-align:center;padding:2rem 1rem;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534;">
-      <span style="font-size:2rem;display:block;margin-bottom:0.4rem;">🎉</span>
-      <strong style="font-size:1.02rem;">全班同學皆已完成生活關懷問卷填寫！</strong>
-      <p style="margin:0.25rem 0 0;font-size:0.84rem;color:#15803d;">Tất cả sinh viên trong lớp đã hoàn thành phiếu khảo sát.</p>
-    </div>
-    `}
+    ` : ''}
   </div>`;
 }
 
