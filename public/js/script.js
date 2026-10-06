@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.94.20261006.170433';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.95.20261006.170855';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1588,6 +1588,8 @@ function renderPublicDashboard(c) {
 
     <!-- 中央核心即時監控：組員缺席排行榜 ＆ 未完成問卷名單 -->
     <div class="dashboard-monitoring-grid">
+      <div class="monitoring-block monitoring-block-e">
+      <div class="block-identifier-tag block-e"><span class="block-tag-code">[Block E]</span> <span class="block-tag-name">組員缺席排行榜</span></div>
       ${renderAbsenceLeaderboardCard(c, myGroup ? {
         title: `${myGroup.name} 組員缺席排行榜`,
         subTitle: 'Bảng xếp hạng vắng mặt của nhóm',
@@ -1604,7 +1606,11 @@ function renderPublicDashboard(c) {
         limit: 15,
         isPublicFlow: true
       })}
+      </div>
+      <div class="monitoring-block monitoring-block-f">
+      <div class="block-identifier-tag block-f"><span class="block-tag-code">[Block F]</span> <span class="block-tag-name">生活關懷問卷調查－未完成名單（含缺曠輔導調查）</span></div>
       ${(() => { const l = surveyCardList(c, true); return l.filter(x => x.type === 'care').map(() => renderUncompletedSurveysCard(c)).concat(l.filter(x => x.type !== 'care').map(x => renderAbsenceUncompletedCard(c, x.sv))).join(''); })()}
+      </div>
     </div>
   </div>`;
 }

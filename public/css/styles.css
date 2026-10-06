@@ -3197,3 +3197,10 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   opacity: 0.45;
   border-style: dashed;
 }
+
+/* Block E／F：首頁監控區分區標籤（F 內卡片垂直排列） */
+.monitoring-block { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.monitoring-block > .block-identifier-tag { align-self: flex-start; }
+.monitoring-block-f .uncompleted-surveys-box { height: auto; }
+.block-identifier-tag.block-e { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.block-identifier-tag.block-f { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
