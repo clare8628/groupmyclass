@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
-const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.108.20261007.103222';   // 顯示於前台標題列，隨後端 API 自動同步更新
+const APP_NAME = '113入學行銷真班';
+let APP_VERSION = 'v2.109.20261007.104928';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -1119,6 +1119,10 @@ function nav() {
       }
     }
   } else {
+    center = `
+      <button class="btn btn-primary btn-sm" data-act="open-leader-login" style="padding:0.35rem 0.95rem;">
+        🎓 組長／副組長點名登入<br><small class="vn-sub">Đăng nhập điểm danh</small>
+      </button>`;
     right = `
       <button class="teacher-link ${loginMode === 'teacher' ? 'on' : ''}" data-act="show-teacher-login">
         👨‍🏫 老師登入<br><small class="vn-sub">Đăng nhập giáo viên</small>
