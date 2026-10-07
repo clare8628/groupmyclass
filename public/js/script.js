@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.102.20261007.094249';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.103.20261007.095330';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4414,7 +4414,7 @@ function teacherAbsenceSurveyBlock(c) {
     </div>
 
     <div style="${box}">
-      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查（缺曠輔導批次）</h3></summary>
+      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查問卷管理</h3></summary>
       <form data-act="save-absence-config" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;">
         <label style="font-weight:700;font-size:0.9rem;">缺曠輔導門檻：</label>
         <span style="font-size:0.88rem;">初始達 <input type="number" min="1" name="absenceBase" value="${c.absenceBase}" style="${inp}width:5rem;"> 節，每增加 <input type="number" min="1" name="absenceStep" value="${c.absenceStep}" style="${inp}width:5rem;"> 節再一張輔導記錄</span>
@@ -4581,28 +4581,34 @@ function teacherWellbeingBlock(c) {
 
     ${teacherAbsenceSurveyBlock(c0)}
 
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-top:1.5rem;">
+    <details data-adm="care-config" ${admOpenAttr('care-config')}>
+    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查管理</h3></summary>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+      <label style="font-weight:700;font-size:0.9rem;">📚 選擇要檢視的問卷：</label>
+      <select data-act="care-admin-select" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;">
+        ${careList.map(b => `<option value="${esc(b.id)}" ${b.id === c.careBatchId ? 'selected' : ''}>${esc(careTitle({ careSubtitle: b.subtitle }))}${b.visible === false ? '（前台隱藏）' : ''}</option>`).join('')}
+      </select>
+      <button class="btn btn-neutral btn-sm" type="button" data-act="delete-care-survey" style="margin:0;color:#dc2626;border-color:#fca5a5;" ${careList.length <= 1 ? 'disabled' : ''}>🗑️ 刪除所選問卷</button>
+    </div>
+    <form data-act="create-care-survey" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+      <label style="font-weight:700;font-size:0.9rem;">➕ 新增學期問卷：</label>
+      <input name="subtitle" maxlength="60" placeholder="例如 1152" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
+      <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增問卷</button>
+      <span class="file-path" style="margin:0;">每份問卷即為獨立問卷，各自有開放時段、填寫紀錄、未完成名單與日誌；舊學期資料不受影響。</span>
+    </form>
+    </details>
+    </div>
+
     <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
     <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 ${esc(careTitle(c))}（時限設定、回覆與日誌）</h3></summary>
 
     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
-      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
-        <label style="font-weight:700;font-size:0.9rem;">📚 生活關懷問卷（每學期一份）：</label>
-        <select data-act="care-admin-select" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;">
-          ${careList.map(b => `<option value="${esc(b.id)}" ${b.id === c.careBatchId ? 'selected' : ''}>${esc(careTitle({ careSubtitle: b.subtitle }))}${b.visible === false ? '（前台隱藏）' : ''}</option>`).join('')}
-        </select>
-        <button class="btn btn-neutral btn-sm" type="button" data-act="delete-care-survey" style="margin:0;color:#dc2626;border-color:#fca5a5;" ${careList.length <= 1 ? 'disabled' : ''}>🗑️ 刪除此份問卷</button>
-      </div>
-      <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
+      <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
         <label style="font-weight:700;font-size:0.9rem;">🏷️ 此份問卷副標題：</label>
         <input name="subtitle" maxlength="60" value="${esc(c.careSubtitle || '')}" placeholder="例如 1151" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
         <button class="btn btn-primary btn-sm" type="submit" style="margin:0;">💾 儲存副標題</button>
         <span class="file-path" style="margin:0;">前台標題顯示為「${esc(careTitle(c))}」。</span>
-      </form>
-      <form data-act="create-care-survey" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
-        <label style="font-weight:700;font-size:0.9rem;">➕ 新增學期問卷：</label>
-        <input name="subtitle" maxlength="60" placeholder="例如 1152" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;width:11rem;">
-        <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增問卷</button>
-        <span class="file-path" style="margin:0;">每份問卷各自有開放時段、填寫紀錄、未完成名單與日誌；舊學期資料不受影響。</span>
       </form>
     </div>
 
