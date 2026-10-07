@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.110.20261007.110725';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.111.20261007.111110';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -78,6 +78,7 @@ let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席次數「超
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
 let wbSection = 'cards';                // 老師後台「問卷管理」目前顯示的樹狀子節點：cards | care-config | care:<id> | abs-config | abs:<id> | log
+let wbTreeOpen = false;                 // 左側樹狀選單「問卷管理」子項目是否展開（預設收折以節省版面）
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
 const admOpen = new Set(); // 後台問卷區塊展開狀態（預設收折）
@@ -2545,8 +2546,11 @@ function courseTree() {
           <button data-act="sys-attendance">📋 點名管理<span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
         </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
-          <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
-          ${wellbeingSubTree()}
+          <div class="tree-node-row">
+            <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
+            <button class="wb-tree-toggle" type="button" data-act="toggle-wb-tree" title="${wbTreeOpen ? '收折全部問卷管理子項目' : '展開全部問卷管理子項目'}">${wbTreeOpen ? '▼' : '▶'}</button>
+          </div>
+          ${wbTreeOpen ? wellbeingSubTree() : ''}
         </li>
         <li class="${teacherView === 'bulletin' ? 'active' : ''}">
           <button data-act="sys-bulletin">📢 公佈欄管理<span class="count">首頁 Block B 顯示筆數設定</span></button>
@@ -6161,6 +6165,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-logs') { return setTeacherView('logs'); }
   if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
   if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
+  if (a === 'toggle-wb-tree') { wbTreeOpen = !wbTreeOpen; return render(); }
   if (a === 'wb-section') {
     wbSection = btn.dataset.sec;
     if (wbSection.startsWith('care:')) {
