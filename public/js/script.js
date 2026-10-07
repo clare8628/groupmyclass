@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.106.20261007.101802';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.107.20261007.102315';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -2579,7 +2579,7 @@ function teacherScreen() {
   } else if (teacherView === 'attendance') {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
   } else if (teacherView === 'wellbeing') {
-    main = teacherSubpageNav('問卷管理', c) + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
+    main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
   } else if (teacherView === 'bulletin') {
     main = teacherSubpageNav('公佈欄管理', c) + teacherBulletinBlock();
   } else if (teacherView === 'system') {
