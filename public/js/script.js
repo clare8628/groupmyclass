@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.100.20261006.173558';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.101.20261007.093142';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -93,6 +93,7 @@ let viewingSurveyModal = null;      // 查看問卷詳情彈窗
 let editingSurveyModal = null;      // 老師修改學生問卷彈窗
 let viewingSurveyLogsModal = null;  // 查看歷程日誌彈窗
 let showPublicUncompletedModal = false; // 前台查看未完成名單彈窗
+let simulateSurveyKey = '';          // 模擬視窗中選取的問卷卡片 key
 let simulatingStudentModal = false; // 老師模擬學生身分登入測試彈窗
 let publicSurveyCard = '';          // 前台問卷子系統目前進入的卡片：'' = 卡片列表 | 'care:<id>' | 'abs:<id>'
 let absPicker = null;               // 老師選擇缺曠輔導學生彈窗：{ surveyId, selected: Set }
@@ -5061,6 +5062,15 @@ function surveyModalsHtml() {
 
   // 5. 老師轉換身分模擬學生登入測試 Modal
   if (simulatingStudentModal && c) {
+    const simCards = surveyCardList(c, true);
+    if (!simCards.some(x => x.key === simulateSurveyKey)) simulateSurveyKey = simCards.length ? simCards[0].key : '';
+    const simSel = simCards.find(x => x.key === simulateSurveyKey);
+    const simTitle = x => x.type === 'care' ? careTitle(careView(c, x.b)) : absenceTitle(x.sv);
+    const simStatus = st => {
+      if (!simSel) return '';
+      if (simSel.type === 'care') return careView(c, simSel.b).students.find(z => z.id === st.id).surveyCompleted ? ' [已完成]' : ' [尚未填寫]';
+      return (simSel.sv.studentIds || []).includes(st.id) ? ' [需填寫]' : ' [無需填寫]';
+    };
     html += `
     <div class="absence-modal-overlay" data-act="close-simulate-modal-bg">
       <div class="absence-modal-content" style="max-width:580px;">
@@ -5070,7 +5080,13 @@ function surveyModalsHtml() {
         </div>
         <div class="absence-modal-body">
           <div style="background:#fefce8;border:1px solid #fef08a;border-radius:8px;padding:0.75rem 1rem;margin-bottom:1rem;font-size:0.88rem;color:#854d0e;line-height:1.5;">
-            💡 選擇任一學生後，系統將立即將您轉換為該學生的真實登入身分，讓您測試填寫生活關懷問卷或組別功能。測試完成後可隨時一鍵返回老師後台，並可於後台隨時清除測試日誌。
+            💡 選擇任一學生後，系統將立即將您轉換為該學生的真實登入身分，讓您測試填寫所選問卷或組別功能。測試完成後可隨時一鍵返回老師後台，並可於後台隨時清除測試日誌。
+          </div>
+          <div class="form-group" style="margin-bottom:1rem;">
+            <label style="font-weight:700;display:block;margin-bottom:0.4rem;">請選擇要測試的問卷：</label>
+            <select id="simulate-survey-select" data-act="simulate-survey-change" style="width:100%;padding:0.6rem 0.8rem;border:1.5px solid #cbd5e1;border-radius:8px;font:inherit;font-size:0.92rem;">
+              ${simCards.map(x => `<option value="${esc(x.key)}" ${x.key === simulateSurveyKey ? 'selected' : ''}>${esc(simTitle(x))}</option>`).join('')}
+            </select>
           </div>
           <div class="form-group" style="margin-bottom:1rem;">
             <label style="font-weight:700;display:block;margin-bottom:0.4rem;">請選擇要模擬的學生：</label>
@@ -5079,7 +5095,7 @@ function surveyModalsHtml() {
                 const grp = st.groupId ? c.groups.find(g => g.id === st.groupId) : null;
                 const grpName = grp ? grp.name : '未分組';
                 const roleName = st.isLeader ? ' (組長)' : st.isVice ? ' (副組長)' : '';
-                const doneTag = st.surveyCompleted ? ' [問卷已完成]' : ' [問卷尚未填寫]';
+                const doneTag = simStatus(st);
                 return `<option value="${esc(st.id)}">${esc(st.name)} (${esc(st.id)}) - ${esc(grpName)}${roleName}${doneTag}</option>`;
               }).join('')}
             </select>
@@ -5413,7 +5429,7 @@ function teacherPreviewBanner() {
       <div class="preview-bar-left">
         <span class="preview-pulse-icon" style="font-size:1.4rem;">🧪</span>
         <span class="preview-text" style="color:#ffffff;">
-          <b>【老師模擬學生測試中】</b> 目前正以學生 <b>${esc(s ? s.name : '')} (${esc(s ? s.id : '')})</b> 身分登入測試生活關懷問卷
+          <b>【老師模擬學生測試中】</b> 目前正以學生 <b>${esc(s ? s.name : '')} (${esc(s ? s.id : '')})</b> 身分登入測試問卷
           ${c ? `（課程：${esc(courseLabel(c))}）` : ''}
         </span>
       </div>
@@ -6441,12 +6457,14 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     const sel = document.getElementById('simulate-student-select');
     if (!sel || !sel.value) return;
     const sid = sel.value;
+    const cardKey = simulateSurveyKey;
     simulatingStudentModal = false;
     return act('teacher:simulate-student', { courseId: c.id, studentId: sid }, {
       after: () => {
         teacherView = 'course';
         loginMode = null;
         publicSubView = 'survey';
+        publicSurveyCard = cardKey;
       }
     });
   }
@@ -6668,7 +6686,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'jump-to-my-survey') {
     publicSubView = 'survey';
-    publicSurveyCard = 'care:' + (btn.dataset.bid || careCur(c || {}).careBatchId);
+    if (btn.dataset.bid || !publicSurveyCard) publicSurveyCard = 'care:' + (btn.dataset.bid || careCur(c || {}).careBatchId);
     render();
     setTimeout(() => {
       const el = document.querySelector('.student-survey-panel');
@@ -6694,6 +6712,15 @@ app.addEventListener('change', e => {
   const id = t.dataset.id;
   const c = cur();
 
+  if (a === 'simulate-survey-change') {
+    simulateSurveyKey = t.value;
+    const stu = document.getElementById('simulate-student-select');
+    const keep = stu ? stu.value : '';
+    render();
+    const again = document.getElementById('simulate-student-select');
+    if (again && keep) again.value = keep;
+    return;
+  }
   if (a === 'survey-cat-filter') {
     surveyCategoryFilter = t.value;
     return render();
