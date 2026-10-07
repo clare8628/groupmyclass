@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.104.20261007.100150';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.105.20261007.100657';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4414,7 +4414,7 @@ function teacherAbsenceSurveyBlock(c) {
     </div>
 
     <div style="${box}">
-      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查問卷管理</h3></summary>
+      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查問卷設定</h3></summary>
       <form data-act="save-absence-config" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;">
         <label style="font-weight:700;font-size:0.9rem;">缺曠輔導門檻：</label>
         <span style="font-size:0.88rem;">初始達 <input type="number" min="1" name="absenceBase" value="${c.absenceBase}" style="${inp}width:5rem;"> 節，每增加 <input type="number" min="1" name="absenceStep" value="${c.absenceStep}" style="${inp}width:5rem;"> 節再一張輔導記錄</span>
@@ -4428,6 +4428,13 @@ function teacherAbsenceSurveyBlock(c) {
         <button class="btn btn-success btn-sm" type="submit" style="margin:0;">➕ 新增並選擇學生</button>
         <span class="file-path" style="margin:0;">每新增一份即為獨立問卷，需重新勾選學生並各自統計。</span>
       </form>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-top:0.9rem;">
+        <label style="font-weight:700;font-size:0.9rem;">🗑️ 刪除問卷：</label>
+        <select data-role="abs-delete-select" style="${inp}">
+          ${surveys.length ? surveys.map(sv => `<option value="${esc(sv.id)}">${esc(absenceTitle(sv))}</option>`).join('') : '<option value="">（尚無問卷）</option>'}
+        </select>
+        <button class="btn btn-neutral btn-sm" type="button" data-act="delete-absence-survey" style="margin:0;color:#dc2626;border-color:#fca5a5;" ${surveys.length ? '' : 'disabled'}>🗑️ 刪除所選問卷</button>
+      </div>
       </details>
     </div>
     ${surveys.map(sv => teacherAbsenceCard(c, sv)).join('')}
@@ -4455,7 +4462,6 @@ function teacherAbsenceCard(c, sv) {
       <button class="btn btn-secondary btn-sm" type="submit" style="margin:0;">💾 儲存</button>
       <button class="btn btn-primary btn-sm" type="button" data-act="open-abs-picker" data-survey="${esc(sv.id)}" style="margin:0;">👥 選擇需填寫學生</button>
       <button class="btn btn-success btn-sm" type="button" data-act="export-absence-csv" data-survey="${esc(sv.id)}" style="margin:0;">📥 匯出填寫內容</button>
-      <button class="btn btn-neutral btn-sm" type="button" data-act="delete-absence-survey" data-survey="${esc(sv.id)}" style="margin:0;color:#dc2626;border-color:#fca5a5;">🗑️ 刪除</button>
     </form>
     <h4 style="margin:0.5rem 0 0.3rem;">⏳ 尚未填寫（${pending.length} 位，依所屬組長）</h4>
     ${pending.length ? Object.keys(byLeader).sort().map(l => `
@@ -4583,7 +4589,7 @@ function teacherWellbeingBlock(c) {
 
     <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-top:1.5rem;">
     <details data-adm="care-config" ${admOpenAttr('care-config')}>
-    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查管理</h3></summary>
+    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查設定</h3></summary>
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
       <label style="font-weight:700;font-size:0.9rem;">📚 選擇要檢視的問卷：</label>
       <select data-act="care-admin-select" style="padding:0.4rem 0.6rem;border:1px solid #cbd5e1;border-radius:6px;">
@@ -6602,7 +6608,8 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return;
   }
   if (a === 'delete-absence-survey') {
-    const sv = c && (c.absenceSurveys || []).find(x => x.id === btn.dataset.survey);
+    const selId = btn.parentElement.querySelector('[data-role="abs-delete-select"]')?.value;
+    const sv = c && (c.absenceSurveys || []).find(x => x.id === selId);
     if (!sv) return;
     if (!confirm(`確定刪除「${absenceTitle(sv)}」？\n該問卷的名單與全部學生填寫內容都會一併刪除，無法復原。`)) return;
     return act('teacher:delete-absence-survey', { courseId: c.id, surveyId: sv.id });
