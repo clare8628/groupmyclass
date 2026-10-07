@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.107.20261007.102315';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.108.20261007.103222';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -77,6 +77,7 @@ let attendanceLeaderboardPage = 1;     // 老師後台組員缺席排行榜目�
 let careAbsenceThreshold = 5;         // 缺席關懷門檻：缺席次數「超過」此值者列入關懷名單
 let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前頁碼（每頁 15 筆）
 let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
+let wbSection = 'cards';                // 老師後台「問卷管理」目前顯示的樹狀子節點：cards | care-config | care:<id> | abs-config | abs:<id> | log
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
 const admOpen = new Set(); // 後台問卷區塊展開狀態（預設收折）
@@ -2118,6 +2119,12 @@ function careCur(c) {
     || { id: '', subtitle: '', visible: true, submissions: [], logs: [], done: {} };
   return careView(c, b);
 }
+/* 問卷管理目前節點；指向已不存在的問卷時退回該問卷的設定節點 */
+function wbSec(c) {
+  if (wbSection.startsWith('care:') && !((c && c.careSurveys) || []).some(b => 'care:' + b.id === wbSection)) return 'care-config';
+  if (wbSection.startsWith('abs:') && !((c && c.absenceSurveys) || []).some(sv => 'abs:' + sv.id === wbSection)) return 'abs-config';
+  return wbSection;
+}
 const absenceTitle = sv => `缺曠原因調查-${sv.subtitle}`;
 
 /* 依老師設定排序的問卷卡片；publicOnly 時略過前台隱藏者 */
@@ -2535,6 +2542,7 @@ function courseTree() {
         </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
+          ${wellbeingSubTree()}
         </li>
         <li class="${teacherView === 'bulletin' ? 'active' : ''}">
           <button data-act="sys-bulletin">📢 公佈欄管理<span class="count">首頁 Block B 顯示筆數設定</span></button>
@@ -2545,6 +2553,21 @@ function courseTree() {
       </ul>
     </div>
   </aside>`;
+}
+
+function wellbeingSubTree() {
+  const c = cur();
+  if (!c) return '';
+  const sec = teacherView === 'wellbeing' ? wbSec(c) : '';
+  const node = (key, label, extra = '') => `<li class="${sec === key ? 'active' : ''}"><button data-act="wb-section" data-sec="${esc(key)}">${label}</button>${extra}</li>`;
+  const careNodes = (c.careSurveys || []).map(b => node('care:' + b.id, esc(careTitle({ careSubtitle: b.subtitle })))).join('');
+  const absNodes = (c.absenceSurveys || []).map(sv => node('abs:' + sv.id, esc(absenceTitle(sv)))).join('');
+  return `<ul class="tree-sub">
+    ${node('cards', '問卷卡片前台顯示與排列')}
+    ${node('care-config', '生活關懷問卷調查設定', careNodes ? `<ul>${careNodes}</ul>` : '')}
+    ${node('abs-config', '缺曠原因調查問卷設定', absNodes ? `<ul>${absNodes}</ul>` : '')}
+    ${node('log', '問卷設定異動日誌')}
+  </ul>`;
 }
 
 function teacherSubpageNav(viewTitle, c) {
@@ -2579,7 +2602,7 @@ function teacherScreen() {
   } else if (teacherView === 'attendance') {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
   } else if (teacherView === 'wellbeing') {
-    main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + activityLogPanel(c, 'survey');
+    main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
   } else if (teacherView === 'bulletin') {
     main = teacherSubpageNav('公佈欄管理', c) + teacherBulletinBlock();
   } else if (teacherView === 'system') {
@@ -4386,7 +4409,7 @@ function leaderSurveyStatusPanel(c, g, s, mates) {
 }
 
 /* ---- 老師後台：問卷卡片管理（排序／顯示）與缺曠原因調查批次 ---- */
-function teacherAbsenceSurveyBlock(c) {
+function teacherAbsenceSurveyBlock(c, sec) {
   const cards = surveyCardList(c, false);
   const surveys = c.absenceSurveys || [];
   const nextThreshold = c.absenceBase + c.absenceStep * surveys.length;
@@ -4396,8 +4419,8 @@ function teacherAbsenceSurveyBlock(c) {
   const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
   return `
   <div class="abs-survey-admin">
-    <div style="${box}">
-      <details data-adm="cards" ${admOpenAttr('cards')}><summary class="adm-sum"><h3>🗂️ 問卷卡片前台顯示與排列</h3></summary>
+    ${sec === 'cards' ? `<div style="${box}">
+      <details data-adm="cards" open><summary class="adm-sum"><h3>🗂️ 問卷卡片前台顯示與排列</h3></summary>
       <p class="file-path" style="margin:0 0 0.7rem;">以滑鼠拖拉 ☰ 調整卡片上下順序（或用 ▲▼ 按鈕）；取消勾選「前台顯示」即可隱藏該問卷。</p>
       <div id="survey-card-sort" style="display:flex;flex-direction:column;gap:0.5rem;">
         ${cards.map((x, i) => `
@@ -4411,10 +4434,10 @@ function teacherAbsenceSurveyBlock(c) {
         </div>`).join('')}
       </div>
       </details>
-    </div>
+    </div>` : ''}
 
-    <div style="${box}">
-      <details data-adm="absence-config" ${admOpenAttr('absence-config')}><summary class="adm-sum"><h3>📝 缺曠原因調查問卷設定</h3></summary>
+    ${sec === 'abs-config' ? `<div style="${box}">
+      <details data-adm="absence-config" open><summary class="adm-sum"><h3>📝 缺曠原因調查問卷設定</h3></summary>
       <form data-act="save-absence-config" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;">
         <label style="font-weight:700;font-size:0.9rem;">缺曠輔導門檻：</label>
         <span style="font-size:0.88rem;">初始達 <input type="number" min="1" name="absenceBase" value="${c.absenceBase}" style="${inp}width:5rem;"> 節，每增加 <input type="number" min="1" name="absenceStep" value="${c.absenceStep}" style="${inp}width:5rem;"> 節再一張輔導記錄</span>
@@ -4436,8 +4459,8 @@ function teacherAbsenceSurveyBlock(c) {
         <button class="btn btn-neutral btn-sm" type="button" data-act="delete-absence-survey" style="margin:0;color:#dc2626;border-color:#fca5a5;" ${surveys.length ? '' : 'disabled'}>🗑️ 刪除所選問卷</button>
       </div>
       </details>
-    </div>
-    ${surveys.map(sv => teacherAbsenceCard(c, sv)).join('')}
+    </div>` : ''}
+    ${surveys.filter(sv => sec === 'abs:' + sv.id).map(sv => teacherAbsenceCard(c, sv)).join('')}
   </div>`;
 }
 
@@ -4450,7 +4473,7 @@ function teacherAbsenceCard(c, sv) {
   const inp = 'padding:0.35rem 0.55rem;border:1px solid #cbd5e1;border-radius:4px;font-size:0.85rem;';
   return `
   <div class="abs-admin-card" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
-    <details data-adm="abs-${esc(sv.id)}" ${admOpenAttr('abs-' + sv.id)}>
+    <details data-adm="abs-${esc(sv.id)}" open>
     <summary class="adm-sum" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.7rem;">
       <h3 style="flex:1;">📝 ${esc(absenceTitle(sv))}</h3>
       <span class="status-badge ${sv.visible ? 'can-edit' : 'is-locked'}">${sv.visible ? '前台顯示中' : '前台已隱藏'}</span>
@@ -4545,6 +4568,8 @@ function teacherWellbeingBlock(c) {
   }
 
   const c0 = c;
+  const sec = wbSec(c0);
+  if (sec.startsWith('care:')) careAdminId = sec.slice(5);
   c = careCur(c0);
   const careList = c0.careSurveys || [];
   const stats = getSurveyStats(c);
@@ -4571,9 +4596,14 @@ function teacherWellbeingBlock(c) {
     );
   }
 
+  if (sec === 'cards' || sec === 'abs-config' || sec.startsWith('abs:')) {
+    return `<div class="teacher-section wellbeing-admin-section">${teacherAbsenceSurveyBlock(c0, sec)}</div>`;
+  }
+  if (sec === 'log') return '';
+
   return `
   <div class="teacher-section wellbeing-admin-section">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
+    ${sec.startsWith('care:') ? `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:1rem;">
       <div>
         <h2 style="margin:0 0 0.35rem 0;">💌 問卷管理 <small>${esc(courseLabel(c))}</small></h2>
         <p class="file-path" style="margin:0;">查閱全班生活關懷問卷回覆、追蹤尚未填寫名單、管理問卷開放時限與匯出完整紀錄。</p>
@@ -4583,12 +4613,10 @@ function teacherWellbeingBlock(c) {
           📥 匯出問卷紀錄（Excel/CSV）
         </button>
       </div>
-    </div>
+    </div>` : ''}
 
-    ${teacherAbsenceSurveyBlock(c0)}
-
-    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-top:1.5rem;">
-    <details data-adm="care-config" ${admOpenAttr('care-config')}>
+    ${sec === 'care-config' ? `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-top:1.5rem;">
+    <details data-adm="care-config" open>
     <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 生活關懷問卷調查設定</h3></summary>
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
       <label style="font-weight:700;font-size:0.9rem;">📚 選擇要檢視的問卷：</label>
@@ -4604,9 +4632,9 @@ function teacherWellbeingBlock(c) {
       <span class="file-path" style="margin:0;">每份問卷即為獨立問卷，各自有開放時段、填寫紀錄、未完成名單與日誌；舊學期資料不受影響。</span>
     </form>
     </details>
-    </div>
+    </div>` : ''}
 
-    <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
+    ${sec.startsWith('care:') ? `<details data-adm="care" open style="margin-top:1.5rem;">
     <summary class="adm-sum" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.75rem;"><h3 style="flex:1;">💌 ${esc(careTitle(c))}</h3><span class="status-badge ${c.careVisible !== false ? 'can-edit' : 'is-locked'}">${c.careVisible !== false ? '前台顯示中' : '前台已隱藏'}</span></summary>
 
     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
@@ -4870,7 +4898,7 @@ function teacherWellbeingBlock(c) {
         `}
       </div>
     ` : ''}
-    </details>
+    </details>` : ''}
   </div>`;
 }
 
@@ -6129,6 +6157,17 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-logs') { return setTeacherView('logs'); }
   if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
   if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
+  if (a === 'wb-section') {
+    wbSection = btn.dataset.sec;
+    if (wbSection.startsWith('care:')) {
+      careAdminId = wbSection.slice(5);
+      surveyGroupFilter = 'all';
+      surveyCategoryFilter = 'all';
+      surveySearchText = '';
+    }
+    if (teacherView !== 'wellbeing') return setTeacherView('wellbeing');
+    return render();
+  }
   if (a === 'sys-bulletin') { return setTeacherView('bulletin'); }
   if (a === 'sys-system') { return setTeacherView('system'); }
   if (a === 'refresh-system-status') { const cc = cur(); return loadSystemStatus(cc ? cc.id : '', true); }
