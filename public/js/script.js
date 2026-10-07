@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.101.20261007.093142';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.102.20261007.094249';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4397,7 +4397,7 @@ function teacherAbsenceSurveyBlock(c) {
   return `
   <div class="abs-survey-admin">
     <div style="${box}">
-      <details data-adm="cards" ${admOpenAttr('cards')}><summary class="adm-sum"><h3>🗂️ 問卷卡片管理（前台「問卷子系統」）</h3></summary>
+      <details data-adm="cards" ${admOpenAttr('cards')}><summary class="adm-sum"><h3>🗂️ 問卷卡片前台顯示與排列</h3></summary>
       <p class="file-path" style="margin:0 0 0.7rem;">以滑鼠拖拉 ☰ 調整卡片上下順序（或用 ▲▼ 按鈕）；取消勾選「前台顯示」即可隱藏該問卷。</p>
       <div id="survey-card-sort" style="display:flex;flex-direction:column;gap:0.5rem;">
         ${cards.map((x, i) => `
@@ -5062,10 +5062,10 @@ function surveyModalsHtml() {
 
   // 5. 老師轉換身分模擬學生登入測試 Modal
   if (simulatingStudentModal && c) {
-    const simCards = surveyCardList(c, true);
+    const simCards = surveyCardList(c, false);
     if (!simCards.some(x => x.key === simulateSurveyKey)) simulateSurveyKey = simCards.length ? simCards[0].key : '';
     const simSel = simCards.find(x => x.key === simulateSurveyKey);
-    const simTitle = x => x.type === 'care' ? careTitle(careView(c, x.b)) : absenceTitle(x.sv);
+    const simTitle = x => (x.type === 'care' ? careTitle(careView(c, x.b)) : absenceTitle(x.sv)) + ((x.type === 'care' ? x.b.visible : x.sv.visible) === false ? '（前台已隱藏）' : '');
     const simStatus = st => {
       if (!simSel) return '';
       if (simSel.type === 'care') return careView(c, simSel.b).students.find(z => z.id === st.id).surveyCompleted ? ' [已完成]' : ' [尚未填寫]';
