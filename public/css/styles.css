@@ -167,6 +167,7 @@ table.roster tr:hover td { background: #fcfcfc; }
 .tree-node-row { display: flex; align-items: center; gap: .15rem; }
 .tree-node-row button[data-act="sys-wellbeing"] { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
 .tree-node-row button[data-act="sys-wellbeing"] .count { display: block; flex: 1 1 auto; min-width: 0; margin-left: .4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-node-row button[data-act="sys-wellbeing"] .wb-title { flex: 0 0 auto; white-space: nowrap; }
 .wb-tree-toggle { flex: 0 0 auto; background: none; border: none; cursor: pointer; color: #999; font-size: .75rem; padding: .2rem .4rem; border-radius: 4px; }
 .wb-tree-toggle:hover { color: #e67e22; background: #f4f8fb; }
 .course-picker { margin-bottom: 1.25rem; }
