@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.113.20261007.113013';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.114.20261007.114106';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -2542,16 +2542,18 @@ function courseTree() {
         <li class="${teacherView === 'logs' ? 'active' : ''}">
           <button data-act="sys-logs">👥 分組管理<span class="count">分組異動日誌</span></button>
         </li>
-        <li class="${teacherView === 'attendance' ? 'active' : ''}">
-          <button data-act="sys-attendance">📋 點名管理<span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
-        </li>
-        <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
-          <div class="tree-node-row">
-            <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
-            <button class="wb-tree-toggle" type="button" data-act="toggle-wb-tree" title="${wbTreeOpen ? '收折全部問卷管理子項目' : '展開全部問卷管理子項目'}">${wbTreeOpen ? '▼' : '▶'}</button>
-          </div>
-          ${wbTreeOpen ? wellbeingSubTree() : ''}
-        </li>
+        <div class="tree-row-pair">
+          <li class="tree-row-item ${teacherView === 'attendance' ? 'active' : ''}">
+            <button data-act="sys-attendance">📋 點名管理<span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
+          </li>
+          <li class="tree-row-item ${teacherView === 'wellbeing' ? 'active' : ''}">
+            <div class="tree-node-row">
+              <button data-act="sys-wellbeing">💌 問卷管理<span class="count">問卷回覆與問卷異動日誌</span></button>
+              <button class="wb-tree-toggle" type="button" data-act="toggle-wb-tree" title="${wbTreeOpen ? '收折全部問卷管理子項目' : '展開全部問卷管理子項目'}">${wbTreeOpen ? '▼' : '▶'}</button>
+            </div>
+          </li>
+        </div>
+        ${wbTreeOpen ? `<li class="tree-row-pair-sub">${wellbeingSubTree()}</li>` : ''}
         <li class="${teacherView === 'bulletin' ? 'active' : ''}">
           <button data-act="sys-bulletin">📢 公佈欄管理<span class="count">首頁 Block B 顯示筆數設定</span></button>
         </li>
