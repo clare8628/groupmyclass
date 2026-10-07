@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班分組與點名系統';
-let APP_VERSION = 'v2.105.20261007.100657';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.106.20261007.101802';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4607,7 +4607,7 @@ function teacherWellbeingBlock(c) {
     </div>
 
     <details data-adm="care" ${admOpenAttr('care')} style="margin-top:1.5rem;">
-    <summary class="adm-sum" style="margin-bottom:0.75rem;"><h3>💌 ${esc(careTitle(c))}</h3></summary>
+    <summary class="adm-sum" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.6rem;margin-bottom:0.75rem;"><h3 style="flex:1;">💌 ${esc(careTitle(c))}</h3><span class="status-badge ${c.careVisible !== false ? 'can-edit' : 'is-locked'}">${c.careVisible !== false ? '前台顯示中' : '前台已隱藏'}</span></summary>
 
     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
       <form data-act="save-care-subtitle" style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
