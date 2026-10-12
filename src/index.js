@@ -41,9 +41,12 @@ export default {
           if (!await verifyLineSignature(env, rawBody, request.headers.get('x-line-signature'))) return bad('簽章驗證失敗', 403);
           const payload = JSON.parse(rawBody || '{}');
           for (const evt of (payload.events || [])) {
-            if (evt.type === 'join' && evt.source && (evt.source.type === 'group' || evt.source.type === 'room')) {
-              const groupId = evt.source.groupId || evt.source.roomId;
-              await replyLineMessage(env, evt.replyToken, `已加入本群組！\n請將以下群組 ID 複製貼到老師後台「點名管理 → 點名自動提醒」設定：\n${groupId}`);
+            const src = evt.source || {};
+            const inGroup = src.type === 'group' || src.type === 'room';
+            const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(evt.message.text || '');
+            if (inGroup && (evt.type === 'join' || askId)) {
+              const groupId = src.groupId || src.roomId;
+              await replyLineMessage(env, evt.replyToken, `本群組 ID：\n${groupId}\n請複製貼到老師後台「點名管理 → 點名自動提醒」的群組 ID 欄位。`);
             }
           }
           return json({ ok: true });

@@ -93,6 +93,8 @@ npx wrangler secret put LINE_CHANNEL_SECRET
      - 「允許加入群組與多人聊天室」不在此頁，位於 **設定 → 帳號設定**，請確認已開啟。
    - 若分頁中找不到 Messaging API，代表此 Channel 尚未啟用 Messaging API，請先在 LINE Official Account Manager 的「設定 → Messaging API」啟用。
 4. 將官方帳號加入班級 LINE 群組；Bot 會自動在群組內回覆群組 ID，複製貼到老師後台「點名管理 → 點名自動提醒」的「LINE 群組 ID」欄位即可。
+   - **Bot 在 Webhook／密鑰設定完成「之前」就已在群組內**：加入事件只會觸發一次，不會補回覆。請在群組內直接輸入 `群組ID`（或 `group id`），Bot 就會回覆該群組 ID；不必退群重加。
+   - 仍無回覆時依序檢查：兩個 wrangler 密鑰已設定且已重新部署、LINE Developers 的 Webhook「Verify」顯示 Success、「Use webhook」已開啟、LINE Official Account Manager 的回應設定中 Webhook 已開啟。回覆失敗的原因會寫在 Worker 日誌（`npx wrangler tail`）。
 
 以上 1～3 步屬於一次性的雲端後台設定（需老師/管理者具備 Cloudflare 與 LINE Developers 帳號權限），設定完成後無需再操作；第 4 步與日常的提醒訊息、延遲分鐘、開關設定則都在「老師後台 → 點名管理 → 點名自動提醒」頁面完成，不需再碰指令列。
 

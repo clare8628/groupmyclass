@@ -1385,11 +1385,12 @@ export async function verifyLineSignature(env, rawBody, signature) {
 /* 老師將 LINE Bot 加入班級群組時，於群組內回覆該群組 ID，方便老師複製貼到「點名自動提醒」設定 */
 export async function replyLineMessage(env, replyToken, text) {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN || !replyToken) return;
-  await fetch('https://api.line.me/v2/bot/message/reply', {
+  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
     body: JSON.stringify({ replyToken, messages: [{ type: 'text', text: String(text || '').slice(0, 2000) }] }),
   });
+  if (!res.ok) console.error('LINE reply failed', res.status, await res.text());
 }
 
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
