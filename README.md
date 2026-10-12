@@ -80,7 +80,9 @@ npx wrangler secret put LINE_CHANNEL_SECRET
    - **指令照原樣輸入，不要把 `LINE_CHANNEL_ACCESS_TOKEN` 換成你的 Token**——它是密鑰「名稱」。
    - 在本專案資料夾開終端機（Mac 的「終端機」App，`cd` 到 `groupmyclass` 目錄；需已 `wrangler login`）執行指令，按 Enter 後會出現提示 `Enter a secret value:`，此時才貼上你的 Token（貼上時畫面不會顯示字元，屬正常），再按 Enter。
    - `LINE_CHANNEL_SECRET` 同樣方式再做一次，值貼 Channel Secret。
-   - Token 在 LINE Developers → Messaging API 分頁最下方「Channel access token (long-lived)」按 Issue；Secret 在 Basic settings 分頁。
+   - **Channel ID（純數字，如 `2011976290`）不是 Token，不要貼給 `LINE_CHANNEL_ACCESS_TOKEN`。** 若已貼錯，重新執行同一條指令、貼上正確 Token 即可覆蓋。
+   - **Channel secret** 可在 LINE Official Account Manager → 設定 → Messaging API 頁面直接複製（貼給 `LINE_CHANNEL_SECRET`）。
+   - **Channel access token 不在 Official Account Manager 的頁面上**，要到 [LINE Developers Console](https://developers.line.biz/console/)（用同一個 LINE 帳號登入）→ 選 Provider → 選該 Channel（如「點名提醒」）→ **「Messaging API」分頁**最下方「Channel access token (long-lived)」→ 按 **Issue** 產生後複製。Official Account Manager 的 Messaging API 頁面底部「LINE Developers Console」連結可直接前往。
 3. 設定 Webhook（在 LINE Developers Console → 選你的 Provider → 選該 Messaging API Channel → **「Messaging API」分頁**，往下捲到 **「Webhook settings」** 區塊）：
    - 在 **Webhook URL** 欄位按 Edit，填入 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，按 Update，再按 **Verify** 確認回傳 Success。
    - 把下方 **Use webhook** 開關打開。
