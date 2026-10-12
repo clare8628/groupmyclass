@@ -77,6 +77,10 @@ npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put LINE_CHANNEL_SECRET
 ```
 
+   - **指令照原樣輸入，不要把 `LINE_CHANNEL_ACCESS_TOKEN` 換成你的 Token**——它是密鑰「名稱」。
+   - 在本專案資料夾開終端機（Mac 的「終端機」App，`cd` 到 `groupmyclass` 目錄；需已 `wrangler login`）執行指令，按 Enter 後會出現提示 `Enter a secret value:`，此時才貼上你的 Token（貼上時畫面不會顯示字元，屬正常），再按 Enter。
+   - `LINE_CHANNEL_SECRET` 同樣方式再做一次，值貼 Channel Secret。
+   - Token 在 LINE Developers → Messaging API 分頁最下方「Channel access token (long-lived)」按 Issue；Secret 在 Basic settings 分頁。
 3. 於 LINE Developers Console 將 Webhook URL 設為 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，並開啟「Use webhook」。
 4. 將官方帳號加入班級 LINE 群組；Bot 會自動在群組內回覆群組 ID，複製貼到老師後台「點名管理 → 點名自動提醒」的「LINE 群組 ID」欄位即可。
 
