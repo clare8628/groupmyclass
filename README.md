@@ -85,6 +85,12 @@ npx wrangler secret put LINE_CHANNEL_SECRET
    - 在 **Webhook URL** 欄位按 Edit，填入 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，按 Update，再按 **Verify** 確認回傳 Success。
    - 把下方 **Use webhook** 開關打開。
    - 同一分頁的 **LINE Official Account features**（點 Auto-reply messages 的 Edit 會跳到 LINE Official Account Manager）建議把「自動回應訊息」與「加入好友的歡迎訊息」關閉；並確認「允許加入群組與多人聊天室（Allow bot to join group chats）」已開啟，否則 Bot 無法被拉進班級群組。
+   - 若你是在 **LINE Official Account Manager → 設定 → 回應設定** 畫面操作（該頁各開關對照）：
+     - **Webhook**：目前為關閉，**必須打開**（等同 Use webhook；需先在 Messaging API 頁填好 Webhook URL）。
+     - **聊天**：可維持開啟（不影響本功能）。
+     - **加入好友的歡迎訊息**：維持關閉即可。
+     - **回應方式**：維持「手動聊天」即可，不要選「Bot」或自動回應，以免干擾 Bot 在群組回覆群組 ID。
+     - 「允許加入群組與多人聊天室」不在此頁，位於 **設定 → 帳號設定**，請確認已開啟。
    - 若分頁中找不到 Messaging API，代表此 Channel 尚未啟用 Messaging API，請先在 LINE Official Account Manager 的「設定 → Messaging API」啟用。
 4. 將官方帳號加入班級 LINE 群組；Bot 會自動在群組內回覆群組 ID，複製貼到老師後台「點名管理 → 點名自動提醒」的「LINE 群組 ID」欄位即可。
 
