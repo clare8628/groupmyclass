@@ -81,7 +81,11 @@ npx wrangler secret put LINE_CHANNEL_SECRET
    - 在本專案資料夾開終端機（Mac 的「終端機」App，`cd` 到 `groupmyclass` 目錄；需已 `wrangler login`）執行指令，按 Enter 後會出現提示 `Enter a secret value:`，此時才貼上你的 Token（貼上時畫面不會顯示字元，屬正常），再按 Enter。
    - `LINE_CHANNEL_SECRET` 同樣方式再做一次，值貼 Channel Secret。
    - Token 在 LINE Developers → Messaging API 分頁最下方「Channel access token (long-lived)」按 Issue；Secret 在 Basic settings 分頁。
-3. 於 LINE Developers Console 將 Webhook URL 設為 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，並開啟「Use webhook」。
+3. 設定 Webhook（在 LINE Developers Console → 選你的 Provider → 選該 Messaging API Channel → **「Messaging API」分頁**，往下捲到 **「Webhook settings」** 區塊）：
+   - 在 **Webhook URL** 欄位按 Edit，填入 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，按 Update，再按 **Verify** 確認回傳 Success。
+   - 把下方 **Use webhook** 開關打開。
+   - 同一分頁的 **LINE Official Account features**（點 Auto-reply messages 的 Edit 會跳到 LINE Official Account Manager）建議把「自動回應訊息」與「加入好友的歡迎訊息」關閉；並確認「允許加入群組與多人聊天室（Allow bot to join group chats）」已開啟，否則 Bot 無法被拉進班級群組。
+   - 若分頁中找不到 Messaging API，代表此 Channel 尚未啟用 Messaging API，請先在 LINE Official Account Manager 的「設定 → Messaging API」啟用。
 4. 將官方帳號加入班級 LINE 群組；Bot 會自動在群組內回覆群組 ID，複製貼到老師後台「點名管理 → 點名自動提醒」的「LINE 群組 ID」欄位即可。
 
 以上 1～3 步屬於一次性的雲端後台設定（需老師/管理者具備 Cloudflare 與 LINE Developers 帳號權限），設定完成後無需再操作；第 4 步與日常的提醒訊息、延遲分鐘、開關設定則都在「老師後台 → 點名管理 → 點名自動提醒」頁面完成，不需再碰指令列。
