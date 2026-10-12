@@ -59,6 +59,7 @@ let state = {
   currentId: localStorage.getItem(CURRENT_KEY) || null,
   bulletin: [],
   bulletinPageSize: 10,
+  lineConfigured: false,
 };
 let bulletinPage = 1;     // 前台 [Block B] 公佈欄目前頁碼（每頁 10 筆）
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
@@ -237,6 +238,7 @@ function apply(data) {
   if (data.session !== undefined) state.session = data.session;
   if (data.bulletin && Array.isArray(data.bulletin)) state.bulletin = data.bulletin;
   if (data.bulletinPageSize) state.bulletinPageSize = Number(data.bulletinPageSize);
+  if (data.lineConfigured !== undefined) state.lineConfigured = !!data.lineConfigured;
   if (state.session && state.session.role === 'student') state.currentId = state.session.courseId;
   if (!state.courses.some(c => c.id === state.currentId)) {
     state.currentId = state.courses.length ? state.courses[0].id : null;
@@ -3463,6 +3465,81 @@ function activityLogPanel(c, category) {
   </div>`;
 }
 
+/* ===== 後台：點名自動提醒（依每週課表，於第一節上課後自動發送 LINE 群組訊息） ===== */
+const WEEKDAY_LABELS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+const DEFAULT_REMINDER_MESSAGE_FE = '提醒各組組長點名，若組長不在請副組長點名';
+function teacherAttendanceReminderBlock(c) {
+  if (!c) return '';
+  const schedule = (c.courseSchedule && c.courseSchedule.length === 7) ? c.courseSchedule : [0, 1, 2, 3, 4, 5, 6].map(w => ({ weekday: w, firstPeriodTime: '', enabled: true }));
+  const r = c.attendanceReminder || { enabled: true, message: '', offsetMinutes: 10, lineGroupId: '', hasScreenshot: false, screenshotName: '' };
+
+  const setupHint = state.lineConfigured ? '' : `
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;color:#78350f;line-height:1.6;">
+      ⚠️ <b>尚未設定 LINE 官方帳號密鑰</b>：請先建立 LINE Messaging API 官方帳號，並以
+      <code>npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN</code> 與
+      <code>npx wrangler secret put LINE_CHANNEL_SECRET</code> 設定密鑰後重新部署，否則訊息無法送出。<br>
+      設定完成後，將官方帳號加入班級 LINE 群組，Bot 會在群組內自動回覆「群組 ID」，複製貼到下方「LINE 群組 ID」欄位即可。
+    </div>`;
+
+  const scheduleRows = schedule.map(d => `
+    <tr>
+      <td><b>${WEEKDAY_LABELS[d.weekday]}</b></td>
+      <td><input type="time" name="time_${d.weekday}" value="${esc(d.firstPeriodTime)}" style="padding:0.3rem 0.5rem;"></td>
+      <td style="text-align:center;"><input type="checkbox" name="enabled_${d.weekday}" ${d.enabled ? 'checked' : ''}></td>
+    </tr>`).join('');
+
+  const scheduleForm = `
+    <form data-act="save-course-schedule" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
+      <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">📅 每週課表（第一節上課時間）</div>
+      <div class="table-wrap" style="width:100%;">
+        <table class="roster" style="background:#fff;">
+          <thead><tr><th>星期</th><th>第一節上課時間</th><th>當天發送提醒</th></tr></thead>
+          <tbody>${scheduleRows}</tbody>
+        </table>
+      </div>
+      <div class="form-group full"><button class="btn btn-primary" type="submit">儲存每週課表</button></div>
+    </form>`;
+
+  const screenshotSection = `
+    <div style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;margin-top:1rem;">
+      <div style="margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">🖼️ 課表截圖（僅供參考存檔，不影響自動發送邏輯）</div>
+      ${r.hasScreenshot ? `
+        <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.6rem;">
+          <img src="/api/attendance-reminder-screenshot?courseId=${encodeURIComponent(c.id)}" alt="課表截圖" style="max-width:220px;border:1px solid #e2e8f0;border-radius:6px;">
+          <div>
+            <div style="font-size:0.85rem;color:#475569;">${esc(r.screenshotName || '課表截圖.png')}</div>
+            <button class="tab-btn" type="button" data-act="delete-attendance-schedule-screenshot" data-id="${esc(c.id)}">🗑️ 刪除截圖</button>
+          </div>
+        </div>` : '<p class="file-path" style="margin:0 0 0.6rem 0;">尚未上傳課表截圖。</p>'}
+      <input type="file" accept="image/png" data-act="upload-attendance-schedule-screenshot" data-id="${esc(c.id)}">
+    </div>`;
+
+  const reminderForm = `
+    <form data-act="save-attendance-reminder" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;margin-top:1rem;">
+      <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">🔔 提醒設定</div>
+      <div class="form-group full">
+        <label><input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''}> 啟用自動提醒（遇寒暑假可取消勾選並儲存，暫停發送）</label>
+      </div>
+      <div class="form-group full"><label>提醒訊息</label><textarea name="message" rows="2" style="width:100%;">${esc(r.message || DEFAULT_REMINDER_MESSAGE_FE)}</textarea></div>
+      <div class="form-group"><label>第一節上課後幾分鐘發送</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
+      <div class="form-group"><label>LINE 群組 ID</label><input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C1234567890abcdef..."></div>
+      <div class="form-group full">
+        <button class="btn btn-primary" type="submit">儲存提醒設定</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
+      </div>
+    </form>`;
+
+  return `
+  <div class="teacher-section">
+    <h2>🔔 點名自動提醒 <small>${esc(courseLabel(c))}</small></h2>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">依每週課表，於當天第一節上課時間加上延遲分鐘數後，自動發送 LINE 群組訊息提醒組長／副組長點名；寒暑假可暫停發送。</p>
+    ${setupHint}
+    ${scheduleForm}
+    ${screenshotSection}
+    ${reminderForm}
+  </div>`;
+}
+
 /* ===== 後台：點名管理 ===== */
 function teacherAttendanceBlock(c) {
   if (!c) {
@@ -3645,6 +3722,8 @@ function teacherAttendanceBlock(c) {
       </table>
     </div>` : '<p class="file-path">尚未設定任何點名時段。</p>'}
   </div>
+
+  ${teacherAttendanceReminderBlock(c)}
 
   ${attendanceEditPanel}
 
@@ -5824,6 +5903,25 @@ app.addEventListener('submit', e => {
       name: f.name.value.trim(),
     }, { after: () => { attendanceEditingId = null; } });
   }
+  if (a === 'save-course-schedule') {
+    const c = needCourse(); if (!c) return;
+    const days = [0, 1, 2, 3, 4, 5, 6].map(w => ({
+      weekday: w,
+      firstPeriodTime: (f[`time_${w}`] ? f[`time_${w}`].value : '').trim(),
+      enabled: !!(f[`enabled_${w}`] && f[`enabled_${w}`].checked),
+    }));
+    return act('teacher:save-course-schedule', { courseId: c.id, days }, { after: () => alert('✅ 每週課表已儲存') });
+  }
+  if (a === 'save-attendance-reminder') {
+    const c = needCourse(); if (!c) return;
+    return act('teacher:save-attendance-reminder', {
+      courseId: c.id,
+      enabled: !!(f.enabled && f.enabled.checked),
+      message: f.message.value.trim(),
+      offsetMinutes: parseInt(f.offsetMinutes.value, 10) || 0,
+      lineGroupId: f.lineGroupId.value.trim(),
+    }, { after: () => alert('✅ 點名自動提醒設定已儲存') });
+  }
   if (a === 'mark-attendance') {
     const c = cur(), s = me();
     if (!c || !s) return;
@@ -6187,6 +6285,13 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     const s = (c.attendanceSessions || []).find(x => x.id === id);
     if (!s || !confirm(`確定刪除點名時段「${attendanceSessionLabel(s) || s.date}」？此時段所有點名紀錄將一併刪除，且無法復原！`)) return;
     return act('teacher:del-attendance-session', { courseId: c.id, sessionId: id });
+  }
+  if (a === 'delete-attendance-schedule-screenshot') {
+    if (!confirm('確定刪除課表截圖？')) return;
+    return act('teacher:delete-attendance-schedule-screenshot', { courseId: id });
+  }
+  if (a === 'send-attendance-reminder-test') {
+    return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
   }
   if (a === 'attendance-unlock-all') {
     if (!c) return;
@@ -6817,6 +6922,18 @@ app.addEventListener('change', e => {
     state.currentId = t.value;
     localStorage.setItem(CURRENT_KEY, state.currentId);
     return render();
+  }
+  if (a === 'upload-attendance-schedule-screenshot') {
+    const file = t.files[0];
+    if (!file) return;
+    if (file.type !== 'image/png') { t.value = ''; return alert('課表截圖僅支援 PNG 格式'); }
+    if (file.size > 4 * 1024 * 1024) { t.value = ''; return alert('課表截圖檔案過大，請控制在 4MB 以內'); }
+    const r = new FileReader();
+    r.onload = ev => {
+      t.value = '';
+      act('teacher:upload-attendance-schedule-screenshot', { courseId: id, dataUrl: ev.target.result, fileName: file.name });
+    };
+    return r.readAsDataURL(file);
   }
   if (a === 'import-file') {
     if (!needCourse()) return;

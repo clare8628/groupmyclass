@@ -206,6 +206,37 @@ CREATE TABLE IF NOT EXISTS absence_responses (
 CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_survey_logs_created ON survey_logs(created_at);
 
+-- 點名自動提醒：每週課表（依星期設定當天第一節上課時間），weekday 0=週日...6=週六
+CREATE TABLE IF NOT EXISTS course_schedule (
+  course_id          TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  weekday            INTEGER NOT NULL,
+  first_period_time  TEXT NOT NULL DEFAULT '',  -- HH:MM，空白表示當天沒課
+  enabled            INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (course_id, weekday)
+);
+
+-- 點名自動提醒：課程層級設定（LINE 群組、提醒訊息、課表截圖、總開關）
+CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
+  course_id        TEXT PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
+  enabled          INTEGER NOT NULL DEFAULT 1,  -- 總開關，寒暑假可關閉
+  message          TEXT NOT NULL DEFAULT '',
+  offset_minutes   INTEGER NOT NULL DEFAULT 10,
+  line_group_id    TEXT NOT NULL DEFAULT '',
+  screenshot       TEXT NOT NULL DEFAULT '',    -- 課表截圖 base64（僅供老師參考，不出現在輪詢資料）
+  screenshot_name  TEXT NOT NULL DEFAULT '',
+  updated_at       INTEGER NOT NULL DEFAULT 0
+);
+
+-- 點名自動提醒：每日發送紀錄，避免同一天重複發送並供老師查看歷史
+CREATE TABLE IF NOT EXISTS attendance_reminder_runs (
+  course_id   TEXT NOT NULL,
+  send_date   TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'ok',
+  detail      TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (course_id, send_date)
+);
+
 -- 系統運行紀錄：每日排程（自動清除逾期日誌）之執行結果，保留最近 180 筆
 CREATE TABLE IF NOT EXISTS system_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

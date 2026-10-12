@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-06b';
+const SCHEMA_REV = '2026-10-12a';
 let _schemaReady = false;
 async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -84,6 +84,7 @@ async function ensureSchema(db) {
     await ensureSurveySchema(db);
     await ensureAbsenceSurveySchema(db);
     await ensureCareSurveySchema(db);
+    await ensureAttendanceReminderSchema(db);
     await ensureGroup3Restored(db);
     await ensurePanReleased(db);
     try {
@@ -238,6 +239,50 @@ async function ensureAttendanceSchema(db) {
     `).run();
   } catch (_) {}
   _ensuredAttendanceSchema = true;
+}
+
+/* 點名自動提醒：每週課表（依星期之第一節上課時間）、課程層級設定（LINE 群組／訊息／截圖）、每日發送紀錄 */
+let _ensuredAttendanceReminderSchema = false;
+async function ensureAttendanceReminderSchema(db) {
+  if (_ensuredAttendanceReminderSchema) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS course_schedule (
+        course_id          TEXT NOT NULL,
+        weekday            INTEGER NOT NULL,
+        first_period_time  TEXT NOT NULL DEFAULT '',
+        enabled            INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (course_id, weekday)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
+        course_id        TEXT PRIMARY KEY,
+        enabled          INTEGER NOT NULL DEFAULT 1,
+        message          TEXT NOT NULL DEFAULT '',
+        offset_minutes   INTEGER NOT NULL DEFAULT 10,
+        line_group_id    TEXT NOT NULL DEFAULT '',
+        screenshot       TEXT NOT NULL DEFAULT '',
+        screenshot_name  TEXT NOT NULL DEFAULT '',
+        updated_at       INTEGER NOT NULL DEFAULT 0
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS attendance_reminder_runs (
+        course_id   TEXT NOT NULL,
+        send_date   TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'ok',
+        detail      TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        PRIMARY KEY (course_id, send_date)
+      )
+    `).run();
+  } catch (_) {}
+  _ensuredAttendanceReminderSchema = true;
 }
 
 let _ensuredSurveySchema = false;
@@ -794,6 +839,9 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM absence_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM absence_responses').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
+    // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
+    db.prepare('SELECT course_id, enabled, message, offset_minutes, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
@@ -822,7 +870,7 @@ function buildAbsenceTargets(c, survey, idOf) {
 export async function loadState(db, rev = null) {
   await ensureSchema(db);
   if (rev === null) rev = await getDataRev(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses, careSurveyRows] = await loadRows(db, rev);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses, careSurveyRows, courseScheduleRows, reminderSettingsRows] = await loadRows(db, rev);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
@@ -951,6 +999,24 @@ export async function loadState(db, rev = null) {
       createdAt: x.created_at,
       updatedAt: x.updated_at,
     }));
+
+    /* 點名自動提醒：每週課表（7 天皆補齊，前台表單直接逐列編輯） */
+    const scheduleByWeekday = {};
+    (courseScheduleRows.results || []).filter(x => x.course_id === c.id).forEach(x => {
+      scheduleByWeekday[x.weekday] = { weekday: x.weekday, firstPeriodTime: x.first_period_time || '', enabled: !!x.enabled };
+    });
+    courseObj.courseSchedule = [0, 1, 2, 3, 4, 5, 6].map(w => scheduleByWeekday[w] || { weekday: w, firstPeriodTime: '', enabled: true });
+
+    const reminderRow = (reminderSettingsRows.results || []).find(x => x.course_id === c.id);
+    courseObj.attendanceReminder = {
+      enabled: reminderRow ? !!reminderRow.enabled : true,
+      message: (reminderRow && reminderRow.message) || DEFAULT_REMINDER_MESSAGE,
+      offsetMinutes: reminderRow && reminderRow.offset_minutes !== undefined && reminderRow.offset_minutes !== null ? Number(reminderRow.offset_minutes) : 10,
+      lineGroupId: (reminderRow && reminderRow.line_group_id) || '',
+      hasScreenshot: !!(reminderRow && Number(reminderRow.screenshot_len) > 0),
+      screenshotName: (reminderRow && reminderRow.screenshot_name) || '',
+      updatedAt: (reminderRow && reminderRow.updated_at) || 0,
+    };
 
     return courseObj;
   });
@@ -1188,7 +1254,7 @@ export async function publicize(db, env, courses, session) {
         myResponse: mineResp ? { reason: mineResp.reason, createdAt: mineResp.createdAt, updatedAt: mineResp.updatedAt } : null,
       };
     });
-    const { careSurveys: _care, absenceSurveys: _abs, absenceResponses: _absResp, ...safeCourse } = c;
+    const { careSurveys: _care, absenceSurveys: _abs, absenceResponses: _absResp, attendanceReminder: _rem, courseSchedule: _sched, ...safeCourse } = c;
     out.push({
       ...safeCourse,
       students,
@@ -1224,5 +1290,148 @@ export async function setBulletinPageSize(db, size) {
   const val = (n > 0 && n <= 100) ? n : 10;
   await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('bulletin_page_size', String(val)).run();
   return val;
+}
+
+/* ===== 點名自動提醒（LINE 群組訊息） ===== */
+export const DEFAULT_REMINDER_MESSAGE = '提醒各組組長點名，若組長不在請副組長點名';
+export const WEEKDAY_LABELS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024; // 課表截圖僅供老師參考顯示，4MB 已足夠一般手機截圖
+
+export function isValidHm(hm) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(hm || ''));
+}
+
+/* 將 "HH:MM" 加上（可為負）分鐘數，溢出以 24 小時制回捲 */
+export function addMinutesToHm(hm, minutes) {
+  const m = String(hm).match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!m) return hm;
+  let total = (parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + (parseInt(minutes, 10) || 0)) % 1440;
+  if (total < 0) total += 1440;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function hmToMinutes(hm) {
+  const m = String(hm).match(/^(\d{1,2}):(\d{1,2})$/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN;
+}
+
+/* Cron 每 5 分鐘觸發一次；判斷視窗需 >= cron 間隔，才不會漏掉落在兩次觸發之間的目標時間 */
+const REMINDER_CHECK_WINDOW_MINUTES = 5;
+
+/* 以 Worker Secret（LINE_CHANNEL_ACCESS_TOKEN）推送文字訊息給指定 LINE 使用者／群組 */
+export async function sendLinePush(env, to, text) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) throw new Error('尚未設定 LINE_CHANNEL_ACCESS_TOKEN（請於 Cloudflare Worker 以 wrangler secret put 設定）');
+  if (!to) throw new Error('缺少 LINE 群組 ID');
+  const res = await fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+    },
+    body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text || '').slice(0, 2000) }] }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`LINE 推送失敗 (${res.status})：${body.slice(0, 300)}`);
+  }
+}
+
+export function validateScreenshotDataUrl(dataUrl) {
+  const m = /^data:image\/png;base64,([a-zA-Z0-9+/=]+)$/.exec(String(dataUrl || '').trim());
+  if (!m) throw new Error('課表截圖僅支援 PNG 格式');
+  const base64 = m[1];
+  const approxBytes = Math.floor(base64.length * 3 / 4);
+  if (approxBytes > MAX_SCREENSHOT_BYTES) throw new Error('課表截圖檔案過大，請控制在 4MB 以內');
+  return base64;
+}
+
+/* 老師後台：讀取／寫入單一課程之點名自動提醒設定（含截圖，供上傳與下載端點直接存取） */
+export async function getReminderSettingsRow(db, courseId) {
+  return db.prepare('SELECT * FROM attendance_reminder_settings WHERE course_id = ?').bind(courseId).first();
+}
+
+export async function upsertReminderSettings(db, courseId, patch) {
+  const existing = await getReminderSettingsRow(db, courseId);
+  const next = {
+    enabled: existing ? existing.enabled : 1,
+    message: existing ? existing.message : '',
+    offset_minutes: existing ? existing.offset_minutes : 10,
+    line_group_id: existing ? existing.line_group_id : '',
+    screenshot: existing ? existing.screenshot : '',
+    screenshot_name: existing ? existing.screenshot_name : '',
+    ...patch,
+    updated_at: Date.now(),
+  };
+  await db.prepare(`
+    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, line_group_id, screenshot, screenshot_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(course_id) DO UPDATE SET
+      enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes,
+      line_group_id = excluded.line_group_id, screenshot = excluded.screenshot, screenshot_name = excluded.screenshot_name,
+      updated_at = excluded.updated_at
+  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
+  return next;
+}
+
+/* LINE Webhook：驗證官方帳號後台設定之 Channel Secret 簽章（HMAC-SHA256, base64） */
+export async function verifyLineSignature(env, rawBody, signature) {
+  if (!env.LINE_CHANNEL_SECRET || !signature) return false;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(env.LINE_CHANNEL_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(rawBody));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))) === signature;
+}
+
+/* 老師將 LINE Bot 加入班級群組時，於群組內回覆該群組 ID，方便老師複製貼到「點名自動提醒」設定 */
+export async function replyLineMessage(env, replyToken, text) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN || !replyToken) return;
+  await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+    body: JSON.stringify({ replyToken, messages: [{ type: 'text', text: String(text || '').slice(0, 2000) }] }),
+  });
+}
+
+/* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
+   命中即發送；以 attendance_reminder_runs 保證當天每門課只發送一次，不受視窗寬度影響 */
+export async function runAttendanceReminders(db, env, now = Date.now()) {
+  const tw = new Date(now + 8 * 3600 * 1000); // 位移至台北時區後，以 UTC 欄位讀出之值即為台北當地時間
+  const weekday = tw.getUTCDay();
+  const nowHm = `${String(tw.getUTCHours()).padStart(2, '0')}:${String(tw.getUTCMinutes()).padStart(2, '0')}`;
+  const nowMinutes = hmToMinutes(nowHm);
+  const dateStr = tw.toISOString().slice(0, 10);
+
+  const rows = await db.prepare(`
+    SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
+           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.line_group_id AS line_group_id
+    FROM course_schedule s
+    JOIN attendance_reminder_settings r ON r.course_id = s.course_id
+    WHERE s.weekday = ?
+  `).bind(weekday).all().catch(() => ({ results: [] }));
+
+  const results = [];
+  for (const row of (rows.results || [])) {
+    if (!row.day_enabled || !row.global_enabled) continue;
+    if (!row.first_period_time || !row.line_group_id) continue;
+    const targetMinutes = hmToMinutes(addMinutesToHm(row.first_period_time, row.offset_minutes));
+    const elapsed = ((nowMinutes - targetMinutes) % 1440 + 1440) % 1440;
+    if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue; // 尚未到時間，或已超出本次 cron 視窗（下一輪會判斷下一個目標）
+
+    const already = await db.prepare('SELECT 1 FROM attendance_reminder_runs WHERE course_id = ? AND send_date = ?')
+      .bind(row.course_id, dateStr).first();
+    if (already) continue;
+
+    let status = 'ok', detail = '';
+    try {
+      await sendLinePush(env, row.line_group_id, row.message || DEFAULT_REMINDER_MESSAGE);
+    } catch (err) {
+      status = 'error';
+      detail = String((err && err.message) || err);
+    }
+    await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(row.course_id, dateStr, status, detail, Date.now()).run();
+    results.push({ courseId: row.course_id, status, detail });
+  }
+  return results;
 }
 

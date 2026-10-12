@@ -23,6 +23,7 @@
 - 匯出 JSON / CSV（含 BOM，Excel 中文不亂碼）
 - 可修改老師登入密碼（預設 `clear6`，以 SHA-256 存於 D1）
 - **點名管理**：設定點名日期、時段與名稱（可不填）；查看各組組長／副組長之點名異動紀錄（組別、學號、姓名、時間）、各組當日缺席標記、依日期或整學期之全班缺席統計，以及尚未完成點名的組別與組員缺席排行榜；可為特定時段（全部或單一組別）開放逾期補登權限
+- **點名自動提醒**：上傳課表截圖（PNG）、設定每週各星期第一節上課時間，系統於上課時間＋可調整延遲分鐘數後自動發送 LINE 群組訊息提醒組長點名；提醒訊息可自訂，寒暑假可關閉總開關暫停發送
 
 **組長／副組長點名（Điểm danh）**
 - 於老師設定之點名時段當天，可為本組組員標記出席／缺席（雙語＋越南文標示，方便越南籍組長辨識）
@@ -65,6 +66,25 @@ npx wrangler deploy
 ```
 
 線上網址：<https://groupmyclass.clare8628.workers.dev>
+
+### 點名自動提醒（LINE）所需設定
+
+1. 於 [LINE Developers](https://developers.line.biz/) 建立 Messaging API 官方帳號頻道，取得 Channel Access Token 與 Channel Secret。
+2. 設定 Worker Secrets：
+
+```bash
+npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+npx wrangler secret put LINE_CHANNEL_SECRET
+```
+
+3. 於 LINE Developers Console 將 Webhook URL 設為 `https://groupmyclass.clare8628.workers.dev/api/line-webhook`，並開啟「Use webhook」。
+4. 將官方帳號加入班級 LINE 群組；Bot 會自動在群組內回覆群組 ID，複製貼到老師後台「點名管理 → 點名自動提醒」的「LINE 群組 ID」欄位即可。
+
+以上 1～3 步屬於一次性的雲端後台設定（需老師/管理者具備 Cloudflare 與 LINE Developers 帳號權限），設定完成後無需再操作；第 4 步與日常的提醒訊息、延遲分鐘、開關設定則都在「老師後台 → 點名管理 → 點名自動提醒」頁面完成，不需再碰指令列。
+
+#### 檢查頻率
+
+Cron 目前設定為**每 5 分鐘**檢查一次（`wrangler.toml` 的 `[triggers] crons`），提醒最慢會比設定時間晚 5 分鐘內送出；系統以 `attendance_reminder_runs` 保證同一課程同一天只送一次，不會因檢查多次而重複發送。這是基礎設施層的設定（寫在 `wrangler.toml`、需重新部署才會生效），無法從老師後台直接調整；若要改回更即時（例如每分鐘）或更省資源（例如每 15 分鐘），請告知 Tom 調整並重新部署。各課程「上課時間＋提醒延遲分鐘」仍可在老師後台自由調整，不受此頻率限制。
 
 要改成 push 後自動部署，可於 Cloudflare Dashboard →
 Workers & Pages → `groupmyclass` → Settings → Builds → Connect to Git，選擇本 repo 與 `main` 分支。

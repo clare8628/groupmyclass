@@ -5,6 +5,7 @@ import {
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
+  WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { fetchNotionBulletin } from './bulletin.js';
@@ -51,7 +52,7 @@ export async function handleState(request, env, db) {
     getBulletinPageSize(db),
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -68,7 +69,7 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, ...extra }, 200, headers);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
@@ -709,6 +710,99 @@ export async function handleAction(request, env, db, body) {
           detail: `老師刪除點名時段「${s.date}${s.timeSlot ? ` ${s.timeSlot}` : ''}${s.name ? ` ${s.name}` : (isDaily ? ' 一般日常點名' : '')}」及其所有點名紀錄`,
         }),
       ]);
+      return ok();
+    }
+    if (op === 'save-course-schedule') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const days = Array.isArray(body.days) ? body.days : [];
+      const byWeekday = new Map(days.map(d => [Number(d.weekday), d]));
+      const stmts = [];
+      for (let weekday = 0; weekday <= 6; weekday++) {
+        const d = byWeekday.get(weekday) || {};
+        const firstPeriodTime = String(d.firstPeriodTime || '').trim();
+        if (firstPeriodTime && !isValidHm(firstPeriodTime)) return bad(`「${WEEKDAY_LABELS[weekday]}」上課時間格式錯誤，請用 HH:MM`, 400);
+        const enabled = d.enabled === false ? 0 : 1;
+        stmts.push(db.prepare(`
+          INSERT INTO course_schedule (course_id, weekday, first_period_time, enabled) VALUES (?,?,?,?)
+          ON CONFLICT(course_id, weekday) DO UPDATE SET first_period_time=excluded.first_period_time, enabled=excluded.enabled
+        `).bind(c.id, weekday, firstPeriodTime, enabled));
+      }
+      stmts.push(makeLogStmt(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'attendance-reminder-schedule-save',
+        detail: '老師更新每週課表（各星期第一節上課時間），用於點名自動提醒排程',
+      }));
+      await db.batch(stmts);
+      return ok();
+    }
+    if (op === 'save-attendance-reminder') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const message = String(body.message || '').trim() || DEFAULT_REMINDER_MESSAGE;
+      const offsetMinutes = Math.max(0, Math.min(120, parseInt(body.offsetMinutes, 10) || 0));
+      const lineGroupId = String(body.lineGroupId || '').trim();
+      const enabled = body.enabled === false ? 0 : 1;
+      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, line_group_id: lineGroupId });
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'attendance-reminder-settings-save',
+        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘`,
+      });
+      return ok();
+    }
+    if (op === 'upload-attendance-schedule-screenshot') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      let base64;
+      try {
+        base64 = validateScreenshotDataUrl(body.dataUrl);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 400);
+      }
+      const fileName = String(body.fileName || '課表截圖.png').trim();
+      await upsertReminderSettings(db, c.id, { screenshot: base64, screenshot_name: fileName });
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'attendance-reminder-schedule-upload',
+        detail: `老師上傳課表截圖「${fileName}」`,
+      });
+      return ok();
+    }
+    if (op === 'delete-attendance-schedule-screenshot') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      await upsertReminderSettings(db, c.id, { screenshot: '', screenshot_name: '' });
+      await logActivity(db, {
+        courseId: c.id,
+        operatorRole: 'teacher',
+        operatorId: 'teacher',
+        operatorName: '老師',
+        actionType: 'attendance-reminder-schedule-upload',
+        detail: '老師刪除課表截圖',
+      });
+      return ok();
+    }
+    if (op === 'send-attendance-reminder-test') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const row = await getReminderSettingsRow(db, c.id);
+      const lineGroupId = (row && row.line_group_id) || '';
+      if (!lineGroupId) return bad('請先設定 LINE 群組 ID', 400);
+      try {
+        await sendLinePush(env, lineGroupId, (row && row.message) || DEFAULT_REMINDER_MESSAGE);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 502);
+      }
       return ok();
     }
     if (op === 'set-attendance-unlock') {
