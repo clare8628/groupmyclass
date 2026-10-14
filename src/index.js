@@ -1,6 +1,6 @@
 /* 學生分組系統 — Worker 進入點
    /api/state、/api/action、/api/bulletin；其餘交給靜態資源（public/）。 */
-import { json, bad, runScheduledCleanup, runAttendanceReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage } from './lib.js';
+import { json, bad, runScheduledCleanup, runAttendanceReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader } from './lib.js';
 import { handleState, handleAction } from './api.js';
 import { fetchNotionBulletin } from './bulletin.js';
 
@@ -44,6 +44,11 @@ export default {
             const src = evt.source || {};
             const inGroup = src.type === 'group' || src.type === 'room';
             const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(evt.message.text || '');
+            const bindM = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*綁定\s*([A-Za-z0-9]+)\s*$/.exec(evt.message.text || '');
+            if (inGroup && bindM && src.userId) {
+              await replyLineMessage(env, evt.replyToken, await bindLineLeader(env.DB, src.groupId || src.roomId, src.userId, bindM[1]));
+              continue;
+            }
             if (inGroup && (evt.type === 'join' || askId)) {
               const groupId = src.groupId || src.roomId;
               await replyLineMessage(env, evt.replyToken, `本群組 ID：\n${groupId}\n請複製貼到老師後台「點名管理 → 點名自動提醒」的群組 ID 欄位。`);

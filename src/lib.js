@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-12a';
+const SCHEMA_REV = '2026-10-14a';
 let _schemaReady = false;
 async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -279,6 +279,17 @@ async function ensureAttendanceReminderSchema(db) {
         detail      TEXT NOT NULL DEFAULT '',
         created_at  INTEGER NOT NULL,
         PRIMARY KEY (course_id, send_date)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS line_bindings (
+        course_id     TEXT NOT NULL,
+        student_id    TEXT NOT NULL,
+        line_user_id  TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        PRIMARY KEY (course_id, student_id)
       )
     `).run();
   } catch (_) {}
@@ -1319,16 +1330,24 @@ function hmToMinutes(hm) {
 const REMINDER_CHECK_WINDOW_MINUTES = 5;
 
 /* 以 Worker Secret（LINE_CHANNEL_ACCESS_TOKEN）推送文字訊息給指定 LINE 使用者／群組 */
-export async function sendLinePush(env, to, text) {
+export async function sendLinePush(env, to, text, mentionUserIds = []) {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) throw new Error('尚未設定 LINE_CHANNEL_ACCESS_TOKEN（請於 Cloudflare Worker 以 wrangler secret put 設定）');
   if (!to) throw new Error('缺少 LINE 群組 ID');
+  /* 有要 tag 的人時改用 textV2：文字中的 {m0}{m1}… 會被替換為 @mention */
+  const message = mentionUserIds.length
+    ? {
+      type: 'textV2',
+      text: String(text || ''),
+      substitution: Object.fromEntries(mentionUserIds.map((uid, i) => [`m${i}`, { type: 'mention', mentionee: { type: 'user', userId: uid } }])),
+    }
+    : { type: 'text', text: String(text || '').slice(0, 2000) };
   const res = await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
     },
-    body: JSON.stringify({ to, messages: [{ type: 'text', text: String(text || '').slice(0, 2000) }] }),
+    body: JSON.stringify({ to, messages: [message] }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -1393,6 +1412,39 @@ export async function replyLineMessage(env, replyToken, text) {
   if (!res.ok) console.error('LINE reply failed', res.status, await res.text());
 }
 
+/* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成 */
+async function findPendingLeaders(db, courseId, dateStr) {
+  await ensureSchema(db);
+  const leaders = (await db.prepare(`
+    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, b.line_user_id AS line_user_id
+    FROM students s
+    LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+    WHERE s.course_id = ? AND s.is_leader = 1 AND s.group_id != ''
+  `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
+  if (!leaders.length) return { hasLeaders: false, leaders: [] };
+  const done = new Set(((await db.prepare(`
+    SELECT DISTINCT group_id FROM attendance_records
+    WHERE course_id = ? AND (session_id = ? OR session_id IN (SELECT id FROM attendance_sessions WHERE course_id = ? AND date = ?))
+  `).bind(courseId, `daily-${dateStr}`, courseId, dateStr).all().catch(() => ({ results: [] }))).results || []).map(r => r.group_id));
+  const pending = leaders.filter(l => !done.has(l.group_id)).map(l => ({
+    name: l.name, lineUserId: l.line_user_id || '', groupName: String(l.group_id).replace(/^g_/, ''),
+  }));
+  return { hasLeaders: true, leaders: pending };
+}
+
+/* LINE 群組內輸入「綁定 學號」：將發言者 LINE userId 對應到該課程組長，供點名提醒 tag 使用 */
+export async function bindLineLeader(db, groupId, lineUserId, studentId) {
+  await ensureSchema(db);
+  const setting = await db.prepare('SELECT course_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind(groupId).first();
+  if (!setting) return '此群組尚未在老師後台設定為點名提醒群組';
+  const st = await db.prepare('SELECT id, name, is_leader, is_vice FROM students WHERE course_id = ? AND UPPER(id) = UPPER(?)')
+    .bind(setting.course_id, studentId).first();
+  if (!st || !(st.is_leader || st.is_vice)) return '找不到該學號，或該學號不是組長／副組長';
+  await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
+    .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
+  return `${st.name} 已綁定，之後尚未點名時會 tag 你`;
+}
+
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
    命中即發送；以 attendance_reminder_runs 保證當天每門課只發送一次，不受視窗寬度影響 */
 export async function runAttendanceReminders(db, env, now = Date.now()) {
@@ -1424,7 +1476,22 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
 
     let status = 'ok', detail = '';
     try {
-      await sendLinePush(env, row.line_group_id, row.message || DEFAULT_REMINDER_MESSAGE);
+      const text = row.message || DEFAULT_REMINDER_MESSAGE;
+      const pending = await findPendingLeaders(db, row.course_id, dateStr);
+      if (pending.hasLeaders && !pending.leaders.length) {
+        status = 'skipped';
+        detail = '所有組長皆已完成點名';
+      } else if (!pending.leaders.length) {
+        await sendLinePush(env, row.line_group_id, text);
+      } else {
+        const bound = pending.leaders.filter(l => l.lineUserId);
+        const unbound = pending.leaders.filter(l => !l.lineUserId);
+        const tags = bound.map((_, i) => `{m${i}}`).join(' ');
+        const names = unbound.map(l => `${l.name}（第${l.groupName}組）`).join('、');
+        const body = [text, '尚未完成點名：', tags, names && `${names}（尚未綁定 LINE，請於群組輸入「綁定 學號」）`].filter(Boolean).join('\n');
+        await sendLinePush(env, row.line_group_id, body, bound.map(l => l.lineUserId));
+        detail = `tag ${bound.length} 人、未綁定 ${unbound.length} 人`;
+      }
     } catch (err) {
       status = 'error';
       detail = String((err && err.message) || err);
