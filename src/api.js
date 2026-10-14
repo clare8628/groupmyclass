@@ -6,7 +6,7 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
-  sendLineBindingInstructions,
+  sendLineBindingInstructions, listLeaderBindings,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { fetchNotionBulletin } from './bulletin.js';
@@ -805,6 +805,11 @@ export async function handleAction(request, env, db, body) {
         return bad(String((err && err.message) || err), 502);
       }
       return ok();
+    }
+    if (op === 'list-attendance-bindings') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      return ok(await listLeaderBindings(db, c.id));
     }
     if (op === 'send-attendance-binding-instructions') {
       const c = course(body.courseId);

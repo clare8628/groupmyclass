@@ -1467,6 +1467,23 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   return `${st.name} 已綁定，之後尚未點名時會 tag 你`;
 }
 
+/* 老師後台：列出本課程所有組長／副組長的 LINE 綁定狀態（逐人，已綁定／未綁定） */
+export async function listLeaderBindings(db, courseId) {
+  await ensureSchema(db);
+  const rows = (await db.prepare(`
+    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, b.line_user_id AS line_user_id, b.created_at AS bound_at
+    FROM students s
+    LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+    WHERE s.course_id = ? AND (s.is_leader = 1 OR s.is_vice = 1) AND s.group_id != ''
+    ORDER BY s.group_id, s.is_leader DESC
+  `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
+  const toItem = r => ({ id: r.id, name: r.name, groupName: String(r.group_id).replace(/^g_/, ''), role: r.is_leader ? '組長' : '副組長', boundAt: r.bound_at || 0 });
+  return {
+    bound: rows.filter(r => r.line_user_id).map(toItem),
+    unbound: rows.filter(r => !r.line_user_id).map(toItem),
+  };
+}
+
 /* 老師後台按鈕「發送綁定教學訊息」：取代老師自己逐一告知組長，改由系統一次推播尚未綁定名單與指令範例 */
 export async function sendLineBindingInstructions(db, env, courseId) {
   await ensureSchema(db);

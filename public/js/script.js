@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.127.20261014.143542';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.128.20261014.154727';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -245,6 +245,19 @@ function apply(data) {
   }
   if (state.currentId) localStorage.setItem(CURRENT_KEY, state.currentId);
   lastSig = JSON.stringify(data.courses || []);
+}
+
+/* 點名提醒：LINE 綁定名單（逐課程暫存於前端，供重繪使用） */
+const bindingLists = {};
+function bindingListHtml(l) {
+  if (!l) return '';
+  const rowsOf = (items, withTime) => items.length
+    ? items.map(x => `<li>第${esc(x.groupName)}組 ${esc(x.role)} ${esc(x.name)}（${esc(x.id)}）${withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : ''}</li>`).join('')
+    : '<li>（無）</li>';
+  return `<div class="form-group full" style="margin-top:0.6rem;">
+    <div style="font-weight:600;color:#15803d;">✅ 已綁定（${l.bound.length}）</div><ul style="margin:0.2rem 0 0.6rem 1.2rem;">${rowsOf(l.bound, true)}</ul>
+    <div style="font-weight:600;color:#b91c1c;">⚠️ 未綁定（${l.unbound.length}）</div><ul style="margin:0.2rem 0 0 1.2rem;">${rowsOf(l.unbound, false)}</ul>
+  </div>`;
 }
 
 /* 送出一個動作，成功後重繪 */
@@ -3527,7 +3540,9 @@ function teacherAttendanceReminderBlock(c) {
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的組長）</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>
       </div>
+      ${bindingListHtml(bindingLists[c.id])}
     </form>`;
 
   return `
@@ -6293,6 +6308,9 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'send-attendance-reminder-test') {
     return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
+  }
+  if (a === 'list-attendance-bindings') {
+    return act('teacher:list-attendance-bindings', { courseId: id }, { after: data => { bindingLists[id] = data; } });
   }
   if (a === 'send-attendance-binding-instructions') {
     return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
