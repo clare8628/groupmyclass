@@ -80,6 +80,8 @@ let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前�
 let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
 let wbSection = 'cards';                // 老師後台「問卷管理」目前顯示的樹狀子節點：cards | care-config | care:<id> | abs-config | abs:<id> | log
 let wbTreeOpen = false;                 // 左側樹狀選單「問卷管理」子項目是否展開（預設收折以節省版面）
+let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | records | progress | leaderboard | log
+let atdTreeOpen = false;                // 左側樹狀選單「點名管理」子項目是否展開（預設收折以節省版面）
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
 const admOpen = new Set(); // 後台問卷區塊展開狀態（預設收折）
@@ -2558,7 +2560,11 @@ function courseTree() {
           <button data-act="sys-logs">👥 分組管理<span class="count">分組異動日誌</span></button>
         </li>
         <li class="${teacherView === 'attendance' ? 'active' : ''}">
-          <button data-act="sys-attendance">📋 點名管理<span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
+          <div class="tree-node-row">
+            <button data-act="sys-attendance"><span class="wb-title">📋 點名管理</span><span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
+            <button class="wb-tree-toggle" type="button" data-act="toggle-atd-tree" title="${atdTreeOpen ? '收折全部點名管理子項目' : '展開全部點名管理子項目'}">${atdTreeOpen ? '▼' : '▶'}</button>
+          </div>
+          ${atdTreeOpen ? attendanceSubTree() : ''}
         </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <div class="tree-node-row">
@@ -2593,6 +2599,19 @@ function wellbeingSubTree() {
   </ul>`;
 }
 
+function attendanceSubTree() {
+  const sec = teacherView === 'attendance' ? atdSection : '';
+  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}">${label}</button></li>`;
+  return `<ul class="tree-sub">
+    ${node('sessions', '點名時段設定')}
+    ${node('reminder', '點名自動提醒（LINE）')}
+    ${node('records', '依日期調閱／修改紀錄')}
+    ${node('progress', '各組點名完成進度')}
+    ${node('leaderboard', '表現排行榜與缺席統計')}
+    ${node('log', '點名異動日誌')}
+  </ul>`;
+}
+
 function teacherSubpageNav(viewTitle, c) {
   return `
   <div class="teacher-subpage-nav">
@@ -2623,7 +2642,7 @@ function teacherScreen() {
   } else if (teacherView === 'logs') {
     main = teacherSubpageNav('分組管理', c) + activityLogPanel(c, 'group');
   } else if (teacherView === 'attendance') {
-    main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + activityLogPanel(c, 'attendance');
+    main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + (atdSection === 'log' ? activityLogPanel(c, 'attendance') : '');
   } else if (teacherView === 'wellbeing') {
     main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
   } else if (teacherView === 'bulletin') {
@@ -3726,7 +3745,7 @@ function teacherAttendanceBlock(c) {
   const leaderboardStartIndex = (attendanceLeaderboardPage - 1) * leaderboardPageSize;
   const leaderboard = leaderboardAll.slice(leaderboardStartIndex, leaderboardStartIndex + leaderboardPageSize);
 
-  return `
+  const sessionsBlock = `
   <div class="teacher-section">
     <h2>📋 點名管理 <small>${esc(courseLabel(c))}</small></h2>
     ${noticeBanner}
@@ -3738,10 +3757,9 @@ function teacherAttendanceBlock(c) {
         <tbody>${sessionRows}</tbody>
       </table>
     </div>` : '<p class="file-path">尚未設定任何點名時段。</p>'}
-  </div>
+  </div>`;
 
-  ${teacherAttendanceReminderBlock(c)}
-
+  const recordsBlock = `
   ${attendanceEditPanel}
 
   <div class="teacher-section">
@@ -3769,8 +3787,9 @@ function teacherAttendanceBlock(c) {
         }).join('')}</tbody>
       </table>
     </div>` : '<p class="file-path">尚未建立組別。</p>'}
-  </div>
+  </div>`;
 
+  const progressBlock = `
   <div class="teacher-section attendance-progress-dashboard">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
       <h2 style="margin:0;">📊 各組點名完成進度即時看板</h2>
@@ -3896,8 +3915,9 @@ function teacherAttendanceBlock(c) {
         </div>` : '<div class="alert-box neutral-alert" style="padding:0.85rem 1rem;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;">該時段尚無組別完成點名。</div>'}
       </div>
     `}
-  </div>
+  </div>`;
 
+  const leaderboardBlock = `
   <div class="teacher-section marker-leaderboard-section">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.75rem;">
       <div>
@@ -4053,6 +4073,13 @@ function teacherAttendanceBlock(c) {
     </div>` : ''}
     ` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
+
+  if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
+  if (atdSection === 'records') return recordsBlock;
+  if (atdSection === 'progress') return progressBlock;
+  if (atdSection === 'leaderboard') return leaderboardBlock;
+  if (atdSection === 'log') return '';
+  return sessionsBlock;
 }
 
 function teacherPasswordBlock(c) {
@@ -6291,6 +6318,12 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       surveySearchText = '';
     }
     if (teacherView !== 'wellbeing') return setTeacherView('wellbeing');
+    return render();
+  }
+  if (a === 'toggle-atd-tree') { atdTreeOpen = !atdTreeOpen; return render(); }
+  if (a === 'atd-section') {
+    atdSection = btn.dataset.sec;
+    if (teacherView !== 'attendance') return setTeacherView('attendance');
     return render();
   }
   if (a === 'sys-bulletin') { return setTeacherView('bulletin'); }
