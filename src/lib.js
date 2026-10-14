@@ -1430,7 +1430,7 @@ async function groupLeadersByGroup(db, courseId) {
 }
 
 /* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成。
-   tag 對象優先用組長的綁定，組長未綁定時改用副組長的綁定（兩者皆可代表該組被 tag）。 */
+   tag 對象：該組組長、副組長只要已綁定就都 tag（兩位都綁定則兩位都 tag）；兩位都未綁定才以文字列出。 */
 async function findPendingLeaders(db, courseId, dateStr) {
   await ensureSchema(db);
   const byGroup = await groupLeadersByGroup(db, courseId);
@@ -1443,13 +1443,13 @@ async function findPendingLeaders(db, courseId, dateStr) {
   const pending = [];
   for (const [groupId, g] of byGroup) {
     if (!g.leader || done.has(groupId)) continue;
-    const boundRow = g.leader.line_user_id ? g.leader : (g.vice && g.vice.line_user_id ? g.vice : null);
-    const names = [g.leader, g.vice].filter(Boolean).map(x => x.name);
-    pending.push({
-      name: boundRow ? boundRow.name : names.join('／'),
-      lineUserId: boundRow ? boundRow.line_user_id : '',
-      groupName: String(groupId).replace(/^g_/, ''),
-    });
+    const groupName = String(groupId).replace(/^g_/, '');
+    const boundRows = [g.leader, g.vice].filter(x => x && x.line_user_id);
+    if (boundRows.length) {
+      for (const r of boundRows) pending.push({ name: r.name, lineUserId: r.line_user_id, groupName });
+    } else {
+      pending.push({ name: [g.leader, g.vice].filter(Boolean).map(x => x.name).join('／'), lineUserId: '', groupName });
+    }
   }
   return { hasLeaders: true, leaders: pending };
 }
