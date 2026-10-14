@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
   enabled          INTEGER NOT NULL DEFAULT 1,  -- 總開關，寒暑假可關閉
   message          TEXT NOT NULL DEFAULT '',
   offset_minutes   INTEGER NOT NULL DEFAULT 10,
+  vice_delay_minutes INTEGER NOT NULL DEFAULT 5,  -- 組長逾此分鐘仍未點名才 tag 副組長
   line_group_id    TEXT NOT NULL DEFAULT '',
   screenshot       TEXT NOT NULL DEFAULT '',    -- 課表截圖 base64（僅供老師參考，不出現在輪詢資料）
   screenshot_name  TEXT NOT NULL DEFAULT '',
