@@ -745,16 +745,18 @@ export async function handleAction(request, env, db, body) {
       if (!c) return bad('課程不存在', 404);
       const message = String(body.message || '').trim() || DEFAULT_REMINDER_MESSAGE;
       const offsetMinutes = Math.max(0, Math.min(120, parseInt(body.offsetMinutes, 10) || 0));
+      const viceDelayParsed = parseInt(body.viceDelayMinutes, 10);
+      const viceDelayMinutes = Math.max(0, Math.min(120, Number.isNaN(viceDelayParsed) ? 5 : viceDelayParsed));
       const lineGroupId = String(body.lineGroupId || '').trim();
       const enabled = body.enabled === false ? 0 : 1;
-      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, line_group_id: lineGroupId });
+      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, line_group_id: lineGroupId });
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
         operatorId: 'teacher',
         operatorName: '老師',
         actionType: 'attendance-reminder-settings-save',
-        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘`,
+        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長`,
       });
       return ok();
     }

@@ -271,6 +271,9 @@ async function ensureAttendanceReminderSchema(db) {
     `).run();
   } catch (_) {}
   try {
+    await db.prepare('ALTER TABLE attendance_reminder_settings ADD COLUMN vice_delay_minutes INTEGER NOT NULL DEFAULT 5').run();
+  } catch (_) {}
+  try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS attendance_reminder_runs (
         course_id   TEXT NOT NULL,
@@ -852,7 +855,7 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
     // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
-    db.prepare('SELECT course_id, enabled, message, offset_minutes, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
@@ -1023,6 +1026,7 @@ export async function loadState(db, rev = null) {
       enabled: reminderRow ? !!reminderRow.enabled : true,
       message: (reminderRow && reminderRow.message) || DEFAULT_REMINDER_MESSAGE,
       offsetMinutes: reminderRow && reminderRow.offset_minutes !== undefined && reminderRow.offset_minutes !== null ? Number(reminderRow.offset_minutes) : 10,
+      viceDelayMinutes: reminderRow && reminderRow.vice_delay_minutes !== undefined && reminderRow.vice_delay_minutes !== null ? Number(reminderRow.vice_delay_minutes) : 5,
       lineGroupId: (reminderRow && reminderRow.line_group_id) || '',
       hasScreenshot: !!(reminderRow && Number(reminderRow.screenshot_len) > 0),
       screenshotName: (reminderRow && reminderRow.screenshot_name) || '',
@@ -1375,6 +1379,7 @@ export async function upsertReminderSettings(db, courseId, patch) {
     enabled: existing ? existing.enabled : 1,
     message: existing ? existing.message : '',
     offset_minutes: existing ? existing.offset_minutes : 10,
+    vice_delay_minutes: existing && existing.vice_delay_minutes !== undefined && existing.vice_delay_minutes !== null ? existing.vice_delay_minutes : 5,
     line_group_id: existing ? existing.line_group_id : '',
     screenshot: existing ? existing.screenshot : '',
     screenshot_name: existing ? existing.screenshot_name : '',
@@ -1382,13 +1387,13 @@ export async function upsertReminderSettings(db, courseId, patch) {
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, line_group_id, screenshot, screenshot_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, line_group_id, screenshot, screenshot_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(course_id) DO UPDATE SET
-      enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes,
+      enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes, vice_delay_minutes = excluded.vice_delay_minutes,
       line_group_id = excluded.line_group_id, screenshot = excluded.screenshot, screenshot_name = excluded.screenshot_name,
       updated_at = excluded.updated_at
-  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
+  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
   return next;
 }
 
@@ -1430,8 +1435,9 @@ async function groupLeadersByGroup(db, courseId) {
 }
 
 /* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成。
-   tag 對象：該組組長、副組長只要已綁定就都 tag（兩位都綁定則兩位都 tag）；兩位都未綁定才以文字列出。 */
-async function findPendingLeaders(db, courseId, dateStr) {
+   stage='leader'（第一次提醒）：tag 已綁定的組長；組長未綁定但副組長已綁定時改 tag 副組長（否則該組無人可通知）。
+   stage='vice'（組長逾時仍未點名的再提醒）：只 tag 兩位都已綁定之組的副組長。兩位都未綁定才以文字列出。 */
+async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
   await ensureSchema(db);
   const byGroup = await groupLeadersByGroup(db, courseId);
   const hasLeaders = [...byGroup.values()].some(g => g.leader);
@@ -1444,9 +1450,14 @@ async function findPendingLeaders(db, courseId, dateStr) {
   for (const [groupId, g] of byGroup) {
     if (!g.leader || done.has(groupId)) continue;
     const groupName = String(groupId).replace(/^g_/, '');
-    const boundRows = [g.leader, g.vice].filter(x => x && x.line_user_id);
-    if (boundRows.length) {
-      for (const r of boundRows) pending.push({ name: r.name, lineUserId: r.line_user_id, groupName });
+    const leaderBound = !!g.leader.line_user_id;
+    const viceBound = !!(g.vice && g.vice.line_user_id);
+    if (stage === 'vice') {
+      if (leaderBound && viceBound) pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName });
+    } else if (leaderBound) {
+      pending.push({ name: g.leader.name, lineUserId: g.leader.line_user_id, groupName });
+    } else if (viceBound) {
+      pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName });
     } else {
       pending.push({ name: [g.leader, g.vice].filter(Boolean).map(x => x.name).join('／'), lineUserId: '', groupName });
     }
@@ -1517,7 +1528,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
 
   const rows = await db.prepare(`
     SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
-           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.line_group_id AS line_group_id
+           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.line_group_id AS line_group_id
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
     WHERE s.weekday = ?
@@ -1527,39 +1538,55 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
   for (const row of (rows.results || [])) {
     if (!row.day_enabled || !row.global_enabled) continue;
     if (!row.first_period_time || !row.line_group_id) continue;
-    const targetMinutes = hmToMinutes(addMinutesToHm(row.first_period_time, row.offset_minutes));
-    const elapsed = ((nowMinutes - targetMinutes) % 1440 + 1440) % 1440;
-    if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue; // 尚未到時間，或已超出本次 cron 視窗（下一輪會判斷下一個目標）
+    const viceDelay = row.vice_delay_minutes === null || row.vice_delay_minutes === undefined ? 5 : Number(row.vice_delay_minutes);
+    const baseHm = addMinutesToHm(row.first_period_time, row.offset_minutes);
+    // 兩個階段：組長提醒（key＝日期）；組長逾時未點名後再 tag 副組長（key＝日期:vice），各自每天只發一次
+    const stages = [
+      { stage: 'leader', key: dateStr, hm: baseHm },
+      { stage: 'vice', key: `${dateStr}:vice`, hm: addMinutesToHm(baseHm, viceDelay) },
+    ];
+    for (const st of stages) {
+      const elapsed = ((nowMinutes - hmToMinutes(st.hm)) % 1440 + 1440) % 1440;
+      if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue; // 尚未到時間，或已超出本次 cron 視窗（下一輪會判斷下一個目標）
 
-    const already = await db.prepare('SELECT 1 FROM attendance_reminder_runs WHERE course_id = ? AND send_date = ?')
-      .bind(row.course_id, dateStr).first();
-    if (already) continue;
+      const already = await db.prepare('SELECT 1 FROM attendance_reminder_runs WHERE course_id = ? AND send_date = ?')
+        .bind(row.course_id, st.key).first();
+      if (already) continue;
 
-    let status = 'ok', detail = '';
-    try {
-      const text = row.message || DEFAULT_REMINDER_MESSAGE;
-      const pending = await findPendingLeaders(db, row.course_id, dateStr);
-      if (pending.hasLeaders && !pending.leaders.length) {
-        status = 'skipped';
-        detail = '所有組長皆已完成點名';
-      } else if (!pending.leaders.length) {
-        await sendLinePush(env, row.line_group_id, text);
-      } else {
-        const bound = pending.leaders.filter(l => l.lineUserId);
-        const unbound = pending.leaders.filter(l => !l.lineUserId);
-        const tags = bound.map((_, i) => `{m${i}}`).join(' ');
-        const names = unbound.map(l => `${l.name}（第${l.groupName}組）`).join('、');
-        const body = [text, '尚未完成點名：', tags, names && `${names}（尚未綁定 LINE，請於群組輸入「綁定 學號」）`].filter(Boolean).join('\n');
-        await sendLinePush(env, row.line_group_id, body, bound.map(l => l.lineUserId));
-        detail = `tag ${bound.length} 人、未綁定 ${unbound.length} 人`;
+      let status = 'ok', detail = '';
+      try {
+        const pending = await findPendingLeaders(db, row.course_id, dateStr, st.stage);
+        if (st.stage === 'vice') {
+          if (!pending.leaders.length) {
+            status = 'skipped';
+            detail = '無需再提醒副組長';
+          } else {
+            const tags = pending.leaders.map((_, i) => `{m${i}}`).join(' ');
+            await sendLinePush(env, row.line_group_id, `組長尚未完成點名，請副組長協助：\n${tags}`, pending.leaders.map(l => l.lineUserId));
+            detail = `副組長 tag ${pending.leaders.length} 人`;
+          }
+        } else if (pending.hasLeaders && !pending.leaders.length) {
+          status = 'skipped';
+          detail = '所有組長皆已完成點名';
+        } else if (!pending.leaders.length) {
+          await sendLinePush(env, row.line_group_id, row.message || DEFAULT_REMINDER_MESSAGE);
+        } else {
+          const bound = pending.leaders.filter(l => l.lineUserId);
+          const unbound = pending.leaders.filter(l => !l.lineUserId);
+          const tags = bound.map((_, i) => `{m${i}}`).join(' ');
+          const names = unbound.map(l => `${l.name}（第${l.groupName}組）`).join('、');
+          const body = [row.message || DEFAULT_REMINDER_MESSAGE, '尚未完成點名：', tags, names && `${names}（尚未綁定 LINE，請於群組輸入「綁定 學號」）`].filter(Boolean).join('\n');
+          await sendLinePush(env, row.line_group_id, body, bound.map(l => l.lineUserId));
+          detail = `tag ${bound.length} 人、未綁定 ${unbound.length} 人`;
+        }
+      } catch (err) {
+        status = 'error';
+        detail = String((err && err.message) || err);
       }
-    } catch (err) {
-      status = 'error';
-      detail = String((err && err.message) || err);
+      await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(row.course_id, st.key, status, detail, Date.now()).run();
+      results.push({ courseId: row.course_id, status, detail });
     }
-    await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
-      .bind(row.course_id, dateStr, status, detail, Date.now()).run();
-    results.push({ courseId: row.course_id, status, detail });
   }
   return results;
 }
