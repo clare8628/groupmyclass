@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.126.20261014.110739';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.127.20261014.143542';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -3526,6 +3526,7 @@ function teacherAttendanceReminderBlock(c) {
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的組長）</button>
       </div>
     </form>`;
 
@@ -6292,6 +6293,9 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'send-attendance-reminder-test') {
     return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
+  }
+  if (a === 'send-attendance-binding-instructions') {
+    return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'attendance-unlock-all') {
     if (!c) return;

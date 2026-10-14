@@ -6,6 +6,7 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
+  sendLineBindingInstructions,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { fetchNotionBulletin } from './bulletin.js';
@@ -804,6 +805,24 @@ export async function handleAction(request, env, db, body) {
         return bad(String((err && err.message) || err), 502);
       }
       return ok();
+    }
+    if (op === 'send-attendance-binding-instructions') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      try {
+        const result = await sendLineBindingInstructions(db, env, c.id);
+        await logActivity(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'attendance-reminder-binding-notice',
+          detail: `老師發送 LINE 綁定教學訊息：${result.detail}`,
+        });
+        return ok(result);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 502);
+      }
     }
     if (op === 'set-attendance-unlock') {
       const c = course(body.courseId);

@@ -1412,23 +1412,45 @@ export async function replyLineMessage(env, replyToken, text) {
   if (!res.ok) console.error('LINE reply failed', res.status, await res.text());
 }
 
-/* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成 */
-async function findPendingLeaders(db, courseId, dateStr) {
-  await ensureSchema(db);
-  const leaders = (await db.prepare(`
-    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, b.line_user_id AS line_user_id
+/* 依 (course_id) 取出所有組長／副組長，並依 group_id 分組，各自帶出是否已綁定 LINE */
+async function groupLeadersByGroup(db, courseId) {
+  const rows = (await db.prepare(`
+    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice, b.line_user_id AS line_user_id
     FROM students s
     LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
-    WHERE s.course_id = ? AND s.is_leader = 1 AND s.group_id != ''
+    WHERE s.course_id = ? AND (s.is_leader = 1 OR s.is_vice = 1) AND s.group_id != ''
   `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
-  if (!leaders.length) return { hasLeaders: false, leaders: [] };
+  const byGroup = new Map();
+  for (const r of rows) {
+    const g = byGroup.get(r.group_id) || {};
+    if (r.is_leader) g.leader = r; else g.vice = r;
+    byGroup.set(r.group_id, g);
+  }
+  return byGroup;
+}
+
+/* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成。
+   tag 對象優先用組長的綁定，組長未綁定時改用副組長的綁定（兩者皆可代表該組被 tag）。 */
+async function findPendingLeaders(db, courseId, dateStr) {
+  await ensureSchema(db);
+  const byGroup = await groupLeadersByGroup(db, courseId);
+  const hasLeaders = [...byGroup.values()].some(g => g.leader);
+  if (!hasLeaders) return { hasLeaders: false, leaders: [] };
   const done = new Set(((await db.prepare(`
     SELECT DISTINCT group_id FROM attendance_records
     WHERE course_id = ? AND (session_id = ? OR session_id IN (SELECT id FROM attendance_sessions WHERE course_id = ? AND date = ?))
   `).bind(courseId, `daily-${dateStr}`, courseId, dateStr).all().catch(() => ({ results: [] }))).results || []).map(r => r.group_id));
-  const pending = leaders.filter(l => !done.has(l.group_id)).map(l => ({
-    name: l.name, lineUserId: l.line_user_id || '', groupName: String(l.group_id).replace(/^g_/, ''),
-  }));
+  const pending = [];
+  for (const [groupId, g] of byGroup) {
+    if (!g.leader || done.has(groupId)) continue;
+    const boundRow = g.leader.line_user_id ? g.leader : (g.vice && g.vice.line_user_id ? g.vice : null);
+    const names = [g.leader, g.vice].filter(Boolean).map(x => x.name);
+    pending.push({
+      name: boundRow ? boundRow.name : names.join('／'),
+      lineUserId: boundRow ? boundRow.line_user_id : '',
+      groupName: String(groupId).replace(/^g_/, ''),
+    });
+  }
   return { hasLeaders: true, leaders: pending };
 }
 
@@ -1443,6 +1465,28 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
     .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
   return `${st.name} 已綁定，之後尚未點名時會 tag 你`;
+}
+
+/* 老師後台按鈕「發送綁定教學訊息」：取代老師自己逐一告知組長，改由系統一次推播尚未綁定名單與指令範例 */
+export async function sendLineBindingInstructions(db, env, courseId) {
+  await ensureSchema(db);
+  const row = await getReminderSettingsRow(db, courseId);
+  if (!row || !row.line_group_id) throw new Error('請先設定 LINE 群組 ID');
+  const byGroup = await groupLeadersByGroup(db, courseId);
+  const unbound = [];
+  for (const [groupId, g] of byGroup) {
+    if (!g.leader) continue;
+    if (g.leader.line_user_id || (g.vice && g.vice.line_user_id)) continue;
+    const names = [g.leader, g.vice].filter(Boolean).map(x => x.name).join('／');
+    unbound.push(`${names}（第${String(groupId).replace(/^g_/, '')}組）`);
+  }
+  if (!unbound.length) return { sent: false, detail: '所有組長／副組長皆已綁定，不需發送' };
+  const text = [
+    '請尚未綁定 LINE 的組長／副組長，在本群組輸入「綁定 學號」完成綁定（例如：綁定 B10912345），之後點名提醒才能標記到您：',
+    unbound.join('、'),
+  ].join('\n');
+  await sendLinePush(env, row.line_group_id, text);
+  return { sent: true, detail: `已通知 ${unbound.length} 組尚未綁定` };
 }
 
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
