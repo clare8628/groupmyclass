@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.139.20261016.161929';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.140.20261016.163709';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -9,7 +9,7 @@ const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目�
 function parseViewFromHash() {
   const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
   // 老師後台視圖
-  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
+  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'b1'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
   // 前台子系統視圖
   if (['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(h)) return { type: 'public', view: h };
   // 相容舊 hash
@@ -27,11 +27,11 @@ function parseSubViewFromHash() {
 function getInitialTeacherView() {
   const parsed = parseViewFromHash();
   if (parsed && parsed.type === 'teacher') return parsed.view;
-  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(window.history.state.teacherView)) {
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin', 'b1'].includes(window.history.state.teacherView)) {
     return window.history.state.teacherView;
   }
   const saved = localStorage.getItem(TEACHER_VIEW_KEY);
-  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(saved)) {
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin', 'b1'].includes(saved)) {
     return saved;
   }
   return 'course';
@@ -81,7 +81,10 @@ let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前�
 let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
 let wbSection = 'cards';                // 老師後台「問卷管理」目前顯示的樹狀子節點：cards | care-config | care:<id> | abs-config | abs:<id> | log
 let wbTreeOpen = false;                 // 左側樹狀選單「問卷管理」子項目是否展開（預設收折以節省版面）
+let b1Section = 'roster';               // 老師後台「華語B1輔導課修課點名」目前子節點：roster | reminder | selfcheck
+let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
 let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | records | progress | leaderboard | log
+let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
 let atdTreeOpen = false;                // 左側樹狀選單「點名管理」子項目是否展開（預設收折以節省版面）
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
@@ -2556,7 +2559,7 @@ function courseTreePublic() {
 }
 
 /* ---- 後台：左側課程樹 ----
-   「115-1華語B1輔導班」不列入一般學年度分組清單，改納入「點名管理」專項「華語B1輔導課修課點名」 */
+   「115-1華語B1輔導班」不列入一般學年度分組清單，改由與「點名管理」同層的「華語B1輔導課修課點名」專區管理 */
 function courseTree() {
   const byYear = {};
   state.courses.forEach(c => {
@@ -2598,6 +2601,13 @@ function courseTree() {
           </div>
           ${atdTreeOpen ? attendanceSubTree() : ''}
         </li>
+        <li class="${teacherView === 'b1' ? 'active' : ''}">
+          <div class="tree-node-row">
+            <button data-act="sys-b1"><span class="wb-title">🗣️ 華語B1輔導課修課點名</span><span class="count">修課名單、自動提醒、專屬自主點名</span></button>
+            <button class="wb-tree-toggle" type="button" data-act="toggle-b1-tree" title="${b1TreeOpen ? '收折子項目' : '展開子項目'}">${b1TreeOpen ? '▼' : '▶'}</button>
+          </div>
+          ${b1TreeOpen ? b1SubTree() : ''}
+        </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <div class="tree-node-row">
             <button data-act="sys-wellbeing"><span class="wb-title">💌 問卷管理</span><span class="count">問卷回覆與問卷異動日誌</span></button>
@@ -2635,14 +2645,22 @@ function attendanceSubTree() {
   const sec = teacherView === 'attendance' ? atdSection : '';
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}">${label}</button></li>`;
   return `<ul class="tree-sub">
-    <li class="${sec === 'b1roster' ? 'active' : ''}"><button data-act="atd-b1roster">華語B1輔導課修課點名</button></li>
     ${node('sessions', '點名時段設定')}
     ${node('reminder', '點名自動提醒（LINE）')}
-    ${node('selfcheck', '自主點名審核（照片）')}
     ${node('records', '依日期調閱／修改紀錄')}
     ${node('progress', '各組點名完成進度')}
     ${node('leaderboard', '表現排行榜與缺席統計')}
     ${node('log', '點名異動日誌')}
+  </ul>`;
+}
+
+function b1SubTree() {
+  const sec = teacherView === 'b1' ? b1Section : '';
+  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}">${label}</button></li>`;
+  return `<ul class="tree-sub">
+    ${node('roster', '修課名單（勾選／匯入）')}
+    ${node('reminder', '點名自動提醒（LINE 群組 ID）')}
+    ${node('selfcheck', '自主點名審核（照片）')}
   </ul>`;
 }
 
@@ -2677,6 +2695,8 @@ function teacherScreen() {
     main = teacherSubpageNav('分組管理', c) + activityLogPanel(c, 'group');
   } else if (teacherView === 'attendance') {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + (atdSection === 'log' ? activityLogPanel(c, 'attendance') : '');
+  } else if (teacherView === 'b1') {
+    main = teacherSubpageNav('華語B1輔導課修課點名', c) + teacherB1Block(c);
   } else if (teacherView === 'wellbeing') {
     main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
   } else if (teacherView === 'bulletin') {
@@ -3534,7 +3554,7 @@ function activityLogPanel(c, category) {
 /* ===== 後台：點名自動提醒（依每週課表，於第一節上課後自動發送 LINE 群組訊息） ===== */
 const WEEKDAY_LABELS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
 const DEFAULT_REMINDER_MESSAGE_FE = '提醒各組組長點名，若組長不在請副組長點名';
-function teacherAttendanceReminderBlock(c) {
+function teacherAttendanceReminderBlock(c, b1 = false) {
   if (!c) return '';
   const schedule = (c.courseSchedule && c.courseSchedule.length === 7) ? c.courseSchedule : [0, 1, 2, 3, 4, 5, 6].map(w => ({ weekday: w, firstPeriodTime: '', enabled: true }));
   const r = c.attendanceReminder || { enabled: true, message: '', offsetMinutes: 10, viceDelayMinutes: 5, startDate: '', endDate: '', excludedDates: [], lineGroupId: '', hasScreenshot: false, screenshotName: '' };
@@ -3590,31 +3610,33 @@ function teacherAttendanceReminderBlock(c) {
       </div>
       <div class="form-group full"><label>提醒訊息</label><textarea name="message" rows="2" style="width:100%;">${esc(r.message || DEFAULT_REMINDER_MESSAGE_FE)}</textarea></div>
       <div class="form-group"><label>第一節上課後幾分鐘發送</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
-      <div class="form-group"><label>組長逾幾分鐘未點名，再 tag 副組長（兩位都綁定時）</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>
+      ${b1 ? `<input type="hidden" name="viceDelayMinutes" value="5">` : `<div class="form-group"><label>組長逾幾分鐘未點名，再 tag 副組長（兩位都綁定時）</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>`}
       <div class="form-group"><label>學期開學日（此日起才發送，空白＝不限）</label><input type="date" name="startDate" value="${esc(r.startDate || '')}"></div>
       <div class="form-group"><label>課程結束日（此日後停止發送，空白＝不限）</label><input type="date" name="endDate" value="${esc(r.endDate || '')}"></div>
       <div class="form-group full"><label>排除日期（國定假日等不發送的日子，每行或以逗號分隔一個，格式 YYYY-MM-DD）</label><textarea name="excludedDates" rows="3" style="width:100%;" placeholder="2026-10-26\n2026-12-25">${esc((r.excludedDates || []).join('\n'))}</textarea></div>
       <div class="form-group"><label>LINE 群組 ID</label><input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C1234567890abcdef..."></div>
+      ${b1 ? `
       <div class="form-group full" style="border-top:1px dashed #cbd5e1;padding-top:.6rem;">
-        <label><input type="checkbox" name="selfCheckin" ${r.selfCheckin ? 'checked' : ''}> 自主點名模式（全班學生綁定 LINE 後，於上課後提醒其上網拍照點名；第二次提醒間隔 10 分鐘，再 10 分鐘後列出未完成者。此模式不提醒組長）</label>
+        <label><input type="checkbox" name="selfCheckin" checked disabled> 自主點名模式（輔導班固定啟用）（全班學生綁定 LINE 後，於上課後提醒其上網拍照點名；第二次提醒間隔 10 分鐘，再 10 分鐘後列出未完成者。此模式不提醒組長）</label>
       </div>
       <div class="form-group"><label>教室緯度（空白＝不檢查定位）</label><input name="geoLat" value="${esc(r.geoLat ? String(r.geoLat) : '')}"></div>
       <div class="form-group"><label>教室經度</label><input name="geoLng" value="${esc(r.geoLng ? String(r.geoLng) : '')}"></div>
       <div class="form-group"><label>容許半徑（公尺，0＝不檢查）</label><input type="number" name="geoRadius" min="0" max="5000" value="${esc(String(r.geoRadius || 0))}"></div>
       <div class="form-group"><button class="btn btn-secondary" type="button" data-act="set-geo-here">📍 以目前位置設為教室（請在教室使用）</button></div>
+      ` : ''}
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的組長）</button>
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>
+        ${b1 ? '' : `<button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的組長）</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>`}
       </div>
-      ${bindingListHtml(bindingLists[c.id])}
+      ${b1 ? '' : bindingListHtml(bindingLists[c.id])}
     </form>`;
 
   return `
   <div class="teacher-section">
-    <h2>🔔 點名自動提醒 <small>${esc(courseLabel(c))}</small></h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">依每週課表，於當天第一節上課時間加上延遲分鐘數後，自動發送 LINE 群組訊息提醒組長／副組長點名；寒暑假可暫停發送。</p>
+    <h2>🔔 ${b1 ? '華語B1輔導課點名自動提醒' : '點名自動提醒'} <small>${esc(courseLabel(c))}</small></h2>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">${b1 ? '依輔導班每週課表，於上課後提醒修課學生上網自主點名（第二次提醒後列出未完成者於本班專屬 LINE 群組）；寒暑假可暫停發送。' : '依每週課表，於當天第一節上課時間加上延遲分鐘數後，自動發送 LINE 群組訊息提醒組長／副組長點名；寒暑假可暫停發送。'}</p>
     ${setupHint}
     ${scheduleForm}
     ${screenshotSection}
@@ -4120,9 +4142,7 @@ function teacherAttendanceBlock(c) {
     ` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
 
-  if (atdSection === 'b1roster') return teacherB1RosterBlock(c);
   if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
-  if (atdSection === 'selfcheck') return selfCheckinBlock(c);
   if (atdSection === 'records') return recordsBlock;
   if (atdSection === 'progress') return progressBlock;
   if (atdSection === 'leaderboard') return leaderboardBlock;
@@ -4133,6 +4153,13 @@ function teacherAttendanceBlock(c) {
 /* ---- 點名管理專項：華語B1輔導課修課點名 ----
    與一般課程不同：組長／副組長通常已通過B1無需修課，故名單由老師於此勾選或匯入決定（非沿用班級全體名單）；
    輔導班無組長／副組長可協助點名，修課學生一律自主點名（拍照＋驗證碼＋定位，見「自主點名審核（照片）」子項目）。 */
+function teacherB1Block(c) {
+  if (!c) return teacherB1RosterBlock(c);
+  if (b1Section === 'reminder') return teacherAttendanceReminderBlock(c, true);
+  if (b1Section === 'selfcheck') return selfCheckinBlock(c);
+  return teacherB1RosterBlock(c);
+}
+
 function teacherB1RosterBlock(c) {
   if (!c) {
     return `
@@ -4168,7 +4195,7 @@ function teacherB1RosterBlock(c) {
     <h2>🗣️ 華語B1輔導課修課點名 <small>${esc(courseLabel(c))}</small></h2>
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;font-size:0.88rem;color:#1e3a8a;line-height:1.5;">
       💡 本項為「華語B1輔導課」修課點名專項，<b>並非全體學生都需修課</b>：各組組長／副組長通常自律性較高、已通過B1，無需再修此輔導課，因此修課名單由老師於下方<b>勾選</b>或<b>匯入</b>決定，而非沿用班級全體名單。<br>
-      📸 本輔導班沒有組長／副組長可協助點名，修課學生一律採<b>自主點名（拍照＋驗證碼＋定位防弊）</b>，請至左側「自主點名審核（照片）」與「點名自動提醒（LINE）」子項目設定提醒時段與審核照片。
+      📸 本輔導班沒有組長／副組長可協助點名，修課學生一律採<b>自主點名（拍照＋驗證碼＋定位防弊）</b>，本專區之「點名自動提醒」「LINE 群組 ID」「自主點名審核」皆為輔導班專屬設定，與一般「點名管理」完全獨立。
     </div>
   </div>
 
@@ -6117,10 +6144,10 @@ app.addEventListener('submit', e => {
       endDate: f.endDate.value,
       excludedDates: f.excludedDates.value.split(/[\s,，、]+/).filter(Boolean),
       lineGroupId: f.lineGroupId.value.trim(),
-      selfCheckin: !!(f.selfCheckin && f.selfCheckin.checked),
-      geoLat: parseFloat(f.geoLat.value) || 0,
-      geoLng: parseFloat(f.geoLng.value) || 0,
-      geoRadius: parseInt(f.geoRadius.value, 10) || 0,
+      selfCheckin: c.id === state.selfCheckinCourseId,
+      geoLat: f.geoLat ? parseFloat(f.geoLat.value) || 0 : 0,
+      geoLng: f.geoLng ? parseFloat(f.geoLng.value) || 0 : 0,
+      geoRadius: f.geoRadius ? parseInt(f.geoRadius.value, 10) || 0 : 0,
     }, { after: () => alert('✅ 點名自動提醒設定已儲存') });
   }
   if (a === 'mark-attendance') {
@@ -6375,6 +6402,11 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     state.currentId = courseId;
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
+  if (newView !== 'b1' && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+    const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
+    state.currentId = other ? other.id : null;
+    if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
+  }
   if (teacherView !== newView) { logActionFilter = 'all'; logSearchText = ''; resetLogPages(); }
   teacherView = newView;
   localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
@@ -6493,14 +6525,15 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (teacherView !== 'attendance') return setTeacherView('attendance');
     return render();
   }
-  if (a === 'atd-b1roster') {
-    attendanceEditingId = null;
-    atdSection = 'b1roster';
-    if (state.selfCheckinCourseId) {
+  if (a === 'toggle-b1-tree') { b1TreeOpen = !b1TreeOpen; return render(); }
+  if (a === 'sys-b1' || a === 'b1-section') {
+    if (a === 'b1-section') b1Section = btn.dataset.sec;
+    if (state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
+      lastGeneralCourseId = state.currentId;
       state.currentId = state.selfCheckinCourseId;
       localStorage.setItem(CURRENT_KEY, state.currentId);
     }
-    if (teacherView !== 'attendance') return setTeacherView('attendance');
+    if (teacherView !== 'b1') return setTeacherView('b1');
     return render();
   }
   if (a === 'sys-bulletin') { return setTeacherView('bulletin'); }
@@ -6591,7 +6624,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return;
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system' || teacherView === 'bulletin') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system' || teacherView === 'bulletin' || teacherView === 'b1') ? teacherView : 'course';
     if (!state.session || state.session.role !== 'teacher') {
       publicSubView = 'dashboard';
     }
