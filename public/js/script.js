@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.134.20261016.122815';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.135.20261016.123223';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -3522,7 +3522,7 @@ function teacherAttendanceReminderBlock(c) {
     </tr>`).join('');
 
   const scheduleForm = `
-    <form data-act="save-course-schedule" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
+    <form data-act="save-course-schedule" class="form-row" style="display:block;background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
       <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">📅 每週課表（第一節上課時間）</div>
       <p class="file-path" style="margin:0 0 0.6rem 0;">點選「撤銷」可清除該天上課時間並停止當天發送提醒（例如該週臨時停課）；記得按下方「儲存每週課表」才會生效。</p>
       <div class="table-wrap" style="width:100%;">
