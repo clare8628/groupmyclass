@@ -334,7 +334,7 @@ async function ensureAttendanceReminderSchema(db) {
   _ensuredAttendanceReminderSchema = true;
 }
 
-/* 115-1華語B1輔導班（歸入 115 學年度，與「115-1 班級分組」同層）：無分組、全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
+/* 115-1華語B1輔導班：無分組、修課名單由老師後台「點名管理 → 華語B1輔導課修課點名」勾選或匯入決定（非全體學生），全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
 export const SELF_CHECKIN_COURSE_ID = 'c_hb1_1151';
 const SELF_CHECKIN_ROSTER = [
   ['41461D06', '鄧中南'], ['41461D14', '阮梅鳳'], ['41461D15', '范玉欣'], ['41461D21', '鄭梅莊'], ['41461D35', '阮文順'],

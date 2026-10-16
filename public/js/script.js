@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.137.20261016.151142';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.139.20261016.161929';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -60,6 +60,7 @@ let state = {
   bulletin: [],
   bulletinPageSize: 10,
   lineConfigured: false,
+  selfCheckinCourseId: null,  // 華語B1輔導課修課點名之固定課程 id，由後端回傳（見點名管理「華語B1輔導課修課點名」專項）
 };
 let bulletinPage = 1;     // 前台 [Block B] 公佈欄目前頁碼（每頁 10 筆）
 let loginMode = null;   // 前台登入區：null | 'student' | 'teacher'
@@ -241,6 +242,7 @@ function apply(data) {
   if (data.bulletin && Array.isArray(data.bulletin)) state.bulletin = data.bulletin;
   if (data.bulletinPageSize) state.bulletinPageSize = Number(data.bulletinPageSize);
   if (data.lineConfigured !== undefined) state.lineConfigured = !!data.lineConfigured;
+  if (data.selfCheckinCourseId !== undefined) state.selfCheckinCourseId = data.selfCheckinCourseId;
   if (state.session && state.session.role === 'student') state.currentId = state.session.courseId;
   if (!state.courses.some(c => c.id === state.currentId)) {
     state.currentId = state.courses.length ? state.courses[0].id : null;
@@ -2553,10 +2555,12 @@ function courseTreePublic() {
   </aside>`;
 }
 
-/* ---- 後台：左側課程樹 ---- */
+/* ---- 後台：左側課程樹 ----
+   「115-1華語B1輔導班」不列入一般學年度分組清單，改納入「點名管理」專項「華語B1輔導課修課點名」 */
 function courseTree() {
   const byYear = {};
   state.courses.forEach(c => {
+    if (c.id === state.selfCheckinCourseId) return;
     const y = c.year || '未分類';
     (byYear[y] = byYear[y] || []).push(c);
   });
@@ -2631,6 +2635,7 @@ function attendanceSubTree() {
   const sec = teacherView === 'attendance' ? atdSection : '';
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}">${label}</button></li>`;
   return `<ul class="tree-sub">
+    <li class="${sec === 'b1roster' ? 'active' : ''}"><button data-act="atd-b1roster">華語B1輔導課修課點名</button></li>
     ${node('sessions', '點名時段設定')}
     ${node('reminder', '點名自動提醒（LINE）')}
     ${node('selfcheck', '自主點名審核（照片）')}
@@ -4115,6 +4120,7 @@ function teacherAttendanceBlock(c) {
     ` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
 
+  if (atdSection === 'b1roster') return teacherB1RosterBlock(c);
   if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
   if (atdSection === 'selfcheck') return selfCheckinBlock(c);
   if (atdSection === 'records') return recordsBlock;
@@ -4122,6 +4128,92 @@ function teacherAttendanceBlock(c) {
   if (atdSection === 'leaderboard') return leaderboardBlock;
   if (atdSection === 'log') return '';
   return sessionsBlock;
+}
+
+/* ---- 點名管理專項：華語B1輔導課修課點名 ----
+   與一般課程不同：組長／副組長通常已通過B1無需修課，故名單由老師於此勾選或匯入決定（非沿用班級全體名單）；
+   輔導班無組長／副組長可協助點名，修課學生一律自主點名（拍照＋驗證碼＋定位，見「自主點名審核（照片）」子項目）。 */
+function teacherB1RosterBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section">
+      <h2>🗣️ 華語B1輔導課修課點名</h2>
+      <p class="file-path">找不到本課程資料，請重新整理頁面。</p>
+    </div>`;
+  }
+
+  const seen = new Map();
+  state.courses.forEach(course => {
+    if (course.id === c.id) return;
+    (course.students || []).forEach(s => {
+      if (!seen.has(s.id)) {
+        seen.set(s.id, { id: s.id, name: s.name, courseLabel: courseLabel(course), isLeader: !!s.isLeader, isVice: !!s.isVice });
+      }
+    });
+  });
+  const candidates = Array.from(seen.values()).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const enrolledIds = new Set(c.students.map(s => s.id));
+
+  const checklistRows = candidates.map(s => `
+    <tr>
+      <td style="text-align:center;"><input type="checkbox" data-act="b1-roster-check" value="${esc(s.id)}" data-name="${esc(s.name)}" ${enrolledIds.has(s.id) ? 'checked' : ''}></td>
+      <td>${esc(s.id)}</td>
+      <td><b>${esc(s.name)}</b></td>
+      <td>${esc(s.courseLabel)}</td>
+      <td>${s.isLeader ? '<span class="tag-inline leader">組長</span>' : s.isVice ? '<span class="tag-inline">副組長</span>' : ''}</td>
+    </tr>`).join('');
+
+  return `
+  <div class="teacher-section">
+    <h2>🗣️ 華語B1輔導課修課點名 <small>${esc(courseLabel(c))}</small></h2>
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;font-size:0.88rem;color:#1e3a8a;line-height:1.5;">
+      💡 本項為「華語B1輔導課」修課點名專項，<b>並非全體學生都需修課</b>：各組組長／副組長通常自律性較高、已通過B1，無需再修此輔導課，因此修課名單由老師於下方<b>勾選</b>或<b>匯入</b>決定，而非沿用班級全體名單。<br>
+      📸 本輔導班沒有組長／副組長可協助點名，修課學生一律採<b>自主點名（拍照＋驗證碼＋定位防弊）</b>，請至左側「自主點名審核（照片）」與「點名自動提醒（LINE）」子項目設定提醒時段與審核照片。
+    </div>
+  </div>
+
+  <div class="teacher-section">
+    <h2>勾選需修課學生名單</h2>
+    <p class="file-path">自其他班級名單中勾選需參加本輔導課之學生；勾選後按「套用勾選結果」，系統將新增勾選者、移除取消勾選者，同步至下方「目前修課名單」。</p>
+    ${candidates.length ? `
+    <form data-act="apply-b1-roster">
+      <div class="table-wrap" style="max-height:420px;overflow:auto;">
+        <table class="roster" style="background:#fff;">
+          <thead><tr><th style="width:2.5rem;"></th><th>學號</th><th>姓名</th><th>原班級</th><th>職務</th></tr></thead>
+          <tbody>${checklistRows}</tbody>
+        </table>
+      </div>
+      <button class="btn btn-primary" type="submit" style="margin-top:0.75rem;">✅ 套用勾選結果</button>
+    </form>` : '<p class="file-path">尚無其他班級學生名單可供勾選，請先於「學年度分組清單」建立班級並匯入學生。</p>'}
+  </div>
+
+  <div class="teacher-section">
+    <h2>目前修課名單（${c.students.length} 人）</h2>
+    <div class="form-group">
+      <label>匯入文字檔 .txt / .csv（每行：學號 姓名）</label>
+      <input type="file" accept=".txt,.csv" data-act="import-file">
+      <div class="file-path">格式範例：<code>410123 王小明</code> 或 <code>410123,王小明</code>；標題列（學號 / 姓名）會自動略過。</div>
+    </div>
+    <form data-act="add-student" class="form-row">
+      <div class="form-group"><label>學號 ID</label><input name="id" required></div>
+      <div class="form-group"><label>姓名</label><input name="name" required></div>
+      <div class="form-group full"><button class="btn btn-primary" type="submit">新增學生</button></div>
+    </form>
+    ${b1RosterTable(c)}
+  </div>`;
+}
+
+function b1RosterTable(c) {
+  if (!c.students.length) return '<p class="file-path">尚無學生，請於上方勾選或匯入名單。</p>';
+  return `<div class="table-wrap"><table class="roster">
+    <thead><tr><th>學號</th><th>姓名</th><th>動作</th></tr></thead>
+    <tbody>${c.students.map(s => `
+    <tr>
+      <td>${esc(s.id)}</td>
+      <td>${esc(s.name)}</td>
+      <td><button class="tab-btn" data-act="del-student" data-id="${esc(keyOf(s))}">刪除</button></td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
 }
 
 function teacherPasswordBlock(c) {
@@ -5979,6 +6071,21 @@ app.addEventListener('submit', e => {
     const c = needCourse(); if (!c) return;
     return act('teacher:add-students', { courseId: c.id, students: [{ id: f.id.value.trim(), name: f.name.value.trim() }] });
   }
+  if (a === 'apply-b1-roster') {
+    const c = needCourse(); if (!c) return;
+    const boxes = Array.from(f.querySelectorAll('input[data-act="b1-roster-check"]'));
+    const currentIds = new Set(c.students.map(s => s.id));
+    const toAdd = boxes.filter(b => b.checked && !currentIds.has(b.value)).map(b => ({ id: b.value, name: b.dataset.name }));
+    const toRemove = boxes.filter(b => !b.checked && currentIds.has(b.value)).map(b => b.value);
+    if (!toAdd.length && !toRemove.length) return alert('勾選名單與目前修課名單相同，無需變更');
+    if (!confirm(`將新增 ${toAdd.length} 位、移除 ${toRemove.length} 位學生，確定套用勾選結果？`)) return;
+    return (async () => {
+      if (toAdd.length) await act('teacher:add-students', { courseId: c.id, students: toAdd });
+      for (const sid of toRemove) await act('teacher:del-student', { courseId: c.id, studentId: sid });
+      alert(`已套用勾選結果：新增 ${toAdd.length} 位、移除 ${toRemove.length} 位。`);
+      render();
+    })();
+  }
   if (a === 'save-attendance-session') {
     const c = needCourse(); if (!c) return;
     return act('teacher:save-attendance-session', {
@@ -6383,6 +6490,16 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'toggle-atd-tree') { atdTreeOpen = !atdTreeOpen; return render(); }
   if (a === 'atd-section') {
     atdSection = btn.dataset.sec;
+    if (teacherView !== 'attendance') return setTeacherView('attendance');
+    return render();
+  }
+  if (a === 'atd-b1roster') {
+    attendanceEditingId = null;
+    atdSection = 'b1roster';
+    if (state.selfCheckinCourseId) {
+      state.currentId = state.selfCheckinCourseId;
+      localStorage.setItem(CURRENT_KEY, state.currentId);
+    }
     if (teacherView !== 'attendance') return setTeacherView('attendance');
     return render();
   }

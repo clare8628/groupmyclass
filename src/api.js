@@ -6,7 +6,7 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
-  sendLineBindingInstructions, listLeaderBindings,
+  sendLineBindingInstructions, listLeaderBindings, SELF_CHECKIN_COURSE_ID,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin } from './checkin.js';
@@ -54,7 +54,7 @@ export async function handleState(request, env, db) {
     getBulletinPageSize(db),
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -71,7 +71,7 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, ...extra }, 200, headers);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
