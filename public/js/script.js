@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.130.20261014.160830';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.133.20261016.122152';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -3518,14 +3518,16 @@ function teacherAttendanceReminderBlock(c) {
       <td><b>${WEEKDAY_LABELS[d.weekday]}</b></td>
       <td><input type="time" name="time_${d.weekday}" value="${esc(d.firstPeriodTime)}" style="padding:0.3rem 0.5rem;"></td>
       <td style="text-align:center;"><input type="checkbox" name="enabled_${d.weekday}" ${d.enabled ? 'checked' : ''}></td>
+      <td style="text-align:center;"><button type="button" class="tab-btn" data-act="clear-course-schedule-day" data-weekday="${d.weekday}">撤銷</button></td>
     </tr>`).join('');
 
   const scheduleForm = `
     <form data-act="save-course-schedule" class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
       <div style="width:100%;margin-bottom:0.4rem;font-weight:600;color:#1e293b;font-size:0.95rem;">📅 每週課表（第一節上課時間）</div>
+      <p class="file-path" style="margin:0 0 0.6rem 0;">點選「撤銷」可清除該天上課時間並停止當天發送提醒（例如該週臨時停課）；記得按下方「儲存每週課表」才會生效。</p>
       <div class="table-wrap" style="width:100%;">
         <table class="roster" style="background:#fff;">
-          <thead><tr><th>星期</th><th>第一節上課時間</th><th>當天發送提醒</th></tr></thead>
+          <thead><tr><th>星期</th><th>第一節上課時間</th><th>當天發送提醒</th><th>操作</th></tr></thead>
           <tbody>${scheduleRows}</tbody>
         </table>
       </div>
@@ -6105,6 +6107,17 @@ app.addEventListener('click', e => {
       viewingAbsenceModal = null;
       return render();
     }
+  }
+  if (a === 'clear-course-schedule-day') {
+    const w = btn.dataset.weekday;
+    const row = btn.closest('tr');
+    if (row) {
+      const timeInput = row.querySelector(`input[name="time_${w}"]`);
+      const enabledInput = row.querySelector(`input[name="enabled_${w}"]`);
+      if (timeInput) timeInput.value = '';
+      if (enabledInput) enabledInput.checked = false;
+    }
+    return;
   }
   if (a === 'export-marker-leaderboard-csv') {
     if (!c) return;
