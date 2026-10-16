@@ -334,7 +334,7 @@ async function ensureAttendanceReminderSchema(db) {
   _ensuredAttendanceReminderSchema = true;
 }
 
-/* 115-1華語B1輔導課修課點名單：無分組、全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
+/* 115-1華語B1輔導班（歸入 115 學年度，與「115-1 班級分組」同層）：無分組、全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
 export const SELF_CHECKIN_COURSE_ID = 'c_hb1_1151';
 const SELF_CHECKIN_ROSTER = [
   ['41461D06', '鄧中南'], ['41461D14', '阮梅鳳'], ['41461D15', '范玉欣'], ['41461D21', '鄭梅莊'], ['41461D35', '阮文順'],
@@ -345,9 +345,13 @@ async function ensureSelfCheckinRoster(db) {
   try {
     const now = Date.now();
     const exists = await db.prepare('SELECT id FROM courses WHERE id = ?').bind(SELF_CHECKIN_COURSE_ID).first();
-    if (exists) return;
+    if (exists) {
+      // 舊名稱（GRO-27 建立）一次性改名並歸入 115 學年度；老師已自行改過的不覆蓋
+      await db.prepare("UPDATE courses SET year='115', subject='115-1華語B1輔導班' WHERE id=? AND year='115-1' AND subject='華語B1輔導課修課點名單'").bind(SELF_CHECKIN_COURSE_ID).run();
+      return;
+    }
     const stmts = [
-      db.prepare("INSERT OR IGNORE INTO courses (id, year, subject, group_size, tolerance, max_bonus, created_at) VALUES (?, '115-1', '華語B1輔導課修課點名單', 4, 1, 10, ?)")
+      db.prepare("INSERT OR IGNORE INTO courses (id, year, subject, group_size, tolerance, max_bonus, created_at) VALUES (?, '115', '115-1華語B1輔導班', 4, 1, 10, ?)")
         .bind(SELF_CHECKIN_COURSE_ID, now),
       db.prepare("INSERT OR IGNORE INTO care_surveys (id, course_id, subtitle, visible, seq, created_at) VALUES (?, ?, '', 1, 1, ?)")
         .bind(DEFAULT_CARE_ID, SELF_CHECKIN_COURSE_ID, now),

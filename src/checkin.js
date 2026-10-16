@@ -10,7 +10,9 @@ import {
   parseJsonArray, addMinutesToHm, hmToMinutes, sendLinePush,
 } from './lib.js';
 
-const WINDOW_BEFORE_MIN = 10;      // 上課前幾分鐘起可點名
+const courseLabel = (c) => { const y = c.year || '', s = c.subject || ''; return s.startsWith(y) ? s : `${y}${s}`; };
+
+const WINDOW_BEFORE_MIN = 10;     // 上課前幾分鐘起可點名
 const WINDOW_AFTER_MIN = 90;       // 上課後幾分鐘截止
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const CHALLENGE_MIN_MS = 3000;     // 開始拍照到送出至少需幾毫秒（擋機器腳本）
@@ -70,7 +72,7 @@ export async function handleCheckin(request, env, db, url) {
 
   if (url.pathname === '/api/checkin/status' && request.method === 'GET') {
     return json({
-      ok: true, courseName: `${course.year || ''}${course.subject || ''}`, name: student.name || '', date: win.date,
+      ok: true, courseName: courseLabel(course), name: student.name || '', date: win.date,
       open: win.open, reason: win.reason, done: !!existing && existing.status === 'ok', rejected: !!existing && existing.status === 'rejected',
       doneAt: existing ? existing.created_at : 0, geo,
     });
@@ -240,7 +242,7 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
     if ((row.start_date && date < row.start_date) || (row.end_date && date > row.end_date) || parseJsonArray(row.excluded_dates).includes(date)) continue;
     const base = addMinutesToHm(row.first_period_time, row.offset_minutes);
     const link = `${env.PUBLIC_BASE_URL || DEFAULT_BASE_URL}/checkin.html?c=${encodeURIComponent(row.course_id)}`;
-    const label = `${row.year || ''}${row.subject || ''}`;
+    const label = courseLabel(row);
     const stages = [
       { key: 'self1', hm: base },
       { key: 'self2', hm: addMinutesToHm(base, REMINDER_GAP_MIN) },
