@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自主點名</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;margin:0;background:#f1f5f9;color:#1e293b}
+  main{max-width:480px;margin:0 auto;padding:1rem}
+  .card{background:#fff;border-radius:12px;padding:1rem 1.1rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+  h1{font-size:1.2rem;margin:.2rem 0 .6rem} label{display:block;font-size:.85rem;margin:.6rem 0 .2rem}
+  input{width:100%;box-sizing:border-box;padding:.6rem;border:1px solid #cbd5e1;border-radius:8px;font-size:1rem}
+  button{width:100%;padding:.8rem;margin-top:.8rem;border:0;border-radius:8px;background:#2563eb;color:#fff;font-size:1rem;font-weight:600}
+  button.sec{background:#64748b} button:disabled{opacity:.5}
+  video,canvas,img{width:100%;border-radius:8px;background:#000;display:block}
+  .msg{padding:.7rem;border-radius:8px;font-size:.9rem;margin-top:.8rem;line-height:1.5}
+  .err{background:#fee2e2;color:#991b1b}.okk{background:#dcfce7;color:#166534}.info{background:#e0f2fe;color:#075985}
+  .code{font-size:2rem;font-weight:800;letter-spacing:.3rem;text-align:center;color:#b45309}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1 id="title">自主點名</h1>
+    <div id="who" style="font-size:.9rem;color:#475569"></div>
+    <div id="status" class="msg info">載入中…</div>
+  </div>
+
+  <div class="card" id="loginCard" hidden>
+    <label>姓名（或學號）</label><input id="name" autocomplete="username">
+    <label>密碼（預設為學號）</label><input id="pw" type="password" autocomplete="current-password">
+    <button id="loginBtn">登入</button>
+  </div>
+
+  <div class="card" id="shotCard" hidden>
+    <div class="msg info">請在<b>教室內</b>用手機鏡頭拍下教室畫面（含黑板／座位）。照片會自動印上姓名、時間與<b>驗證碼</b>，不能使用相簿舊照片。</div>
+    <div class="code" id="code"></div>
+    <video id="video" playsinline muted autoplay hidden></video>
+    <canvas id="canvas" hidden></canvas>
+    <button id="startBtn">開啟相機</button>
+    <button id="snapBtn" hidden>📸 拍照</button>
+    <button id="retakeBtn" class="sec" hidden>重拍</button>
+    <button id="sendBtn" hidden>送出點名</button>
+  </div>
+</main>
+<script src="/js/checkin.js"></script>
+</body>
+</html>

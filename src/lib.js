@@ -73,9 +73,9 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-16a';
+const SCHEMA_REV = '2026-10-16b';
 let _schemaReady = false;
-async function ensureSchema(db) {
+export async function ensureSchema(db) {
   if (_schemaReady) return;
   const row = await db.prepare("SELECT value FROM settings WHERE key = 'schema_rev'").first().catch(() => null);
   if (!row || row.value !== SCHEMA_REV) {
@@ -85,6 +85,7 @@ async function ensureSchema(db) {
     await ensureAbsenceSurveySchema(db);
     await ensureCareSurveySchema(db);
     await ensureAttendanceReminderSchema(db);
+    await ensureSelfCheckinRoster(db);
     await ensureGroup3Restored(db);
     await ensurePanReleased(db);
     try {
@@ -277,6 +278,10 @@ async function ensureAttendanceReminderSchema(db) {
     "ALTER TABLE attendance_reminder_settings ADD COLUMN start_date TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE attendance_reminder_settings ADD COLUMN end_date TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE attendance_reminder_settings ADD COLUMN excluded_dates TEXT NOT NULL DEFAULT '[]'",
+    'ALTER TABLE attendance_reminder_settings ADD COLUMN self_checkin INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_lat REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_lng REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_radius INTEGER NOT NULL DEFAULT 0',
   ]) {
     try { await db.prepare(ddl).run(); } catch (_) {}
   }
@@ -303,7 +308,59 @@ async function ensureAttendanceReminderSchema(db) {
       )
     `).run();
   } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS selfcheckin_records (
+        course_id  TEXT NOT NULL,
+        date       TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'ok',
+        photo      TEXT NOT NULL DEFAULT '',
+        photo_hash TEXT NOT NULL DEFAULT '',
+        code       TEXT NOT NULL DEFAULT '',
+        lat        REAL,
+        lng        REAL,
+        accuracy   REAL,
+        distance   REAL,
+        device_id  TEXT NOT NULL DEFAULT '',
+        ip         TEXT NOT NULL DEFAULT '',
+        flags      TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (course_id, date, student_id)
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_selfcheckin_hash ON selfcheckin_records(course_id, photo_hash)').run();
+  } catch (_) {}
   _ensuredAttendanceReminderSchema = true;
+}
+
+/* 115-1華語B1輔導課修課點名單：無分組、全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
+export const SELF_CHECKIN_COURSE_ID = 'c_hb1_1151';
+const SELF_CHECKIN_ROSTER = [
+  ['41461D06', '鄧中南'], ['41461D14', '阮梅鳳'], ['41461D15', '范玉欣'], ['41461D21', '鄭梅莊'], ['41461D35', '阮文順'],
+  ['41461D50', '武德勝'], ['41461D52', '阮林心如'], ['41461D54', '阮氏秋'], ['41461D55', '甲光俊'], ['41461D56', '胡氏玉英'],
+  ['41461D59', '羅氏銀串'], ['41461D62', '楊黃創'], ['41461D63', '阮登財'], ['41461D66', '阮氏秋'], ['41461D68', '杜氏金銀'],
+];
+async function ensureSelfCheckinRoster(db) {
+  try {
+    const now = Date.now();
+    const exists = await db.prepare('SELECT id FROM courses WHERE id = ?').bind(SELF_CHECKIN_COURSE_ID).first();
+    if (exists) return;
+    const stmts = [
+      db.prepare("INSERT OR IGNORE INTO courses (id, year, subject, group_size, tolerance, max_bonus, created_at) VALUES (?, '115-1', '華語B1輔導課修課點名單', 4, 1, 10, ?)")
+        .bind(SELF_CHECKIN_COURSE_ID, now),
+      db.prepare("INSERT OR IGNORE INTO care_surveys (id, course_id, subtitle, visible, seq, created_at) VALUES (?, ?, '', 1, 1, ?)")
+        .bind(DEFAULT_CARE_ID, SELF_CHECKIN_COURSE_ID, now),
+      db.prepare("INSERT OR IGNORE INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, self_checkin, updated_at) VALUES (?, 1, '', 10, 1, ?)")
+        .bind(SELF_CHECKIN_COURSE_ID, now),
+    ];
+    SELF_CHECKIN_ROSTER.forEach(([id, name], i) => {
+      stmts.push(db.prepare('INSERT OR IGNORE INTO students (course_id, id, name, seq) VALUES (?,?,?,?)').bind(SELF_CHECKIN_COURSE_ID, id, name, i + 1));
+    });
+    await db.batch(stmts);
+  } catch (err) {
+    console.error('ensureSelfCheckinRoster failed', err);
+  }
 }
 
 let _ensuredSurveySchema = false;
@@ -862,13 +919,13 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
     // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
-    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, self_checkin, geo_lat, geo_lng, geo_radius, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
 }
 
-function parseJsonArray(v) {
+export function parseJsonArray(v) {
   try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; }
 }
 
@@ -1038,6 +1095,10 @@ export async function loadState(db, rev = null) {
       endDate: (reminderRow && reminderRow.end_date) || '',
       excludedDates: parseJsonArray(reminderRow && reminderRow.excluded_dates),
       lineGroupId: (reminderRow && reminderRow.line_group_id) || '',
+      selfCheckin: !!(reminderRow && reminderRow.self_checkin),
+      geoLat: (reminderRow && Number(reminderRow.geo_lat)) || 0,
+      geoLng: (reminderRow && Number(reminderRow.geo_lng)) || 0,
+      geoRadius: (reminderRow && Number(reminderRow.geo_radius)) || 0,
       hasScreenshot: !!(reminderRow && Number(reminderRow.screenshot_len) > 0),
       screenshotName: (reminderRow && reminderRow.screenshot_name) || '',
       updatedAt: (reminderRow && reminderRow.updated_at) || 0,
@@ -1335,7 +1396,7 @@ export function addMinutesToHm(hm, minutes) {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
-function hmToMinutes(hm) {
+export function hmToMinutes(hm) {
   const m = String(hm).match(/^(\d{1,2}):(\d{1,2})$/);
   return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN;
 }
@@ -1394,20 +1455,25 @@ export async function upsertReminderSettings(db, courseId, patch) {
     end_date: existing && existing.end_date ? existing.end_date : '',
     excluded_dates: existing && existing.excluded_dates ? existing.excluded_dates : '[]',
     line_group_id: existing ? existing.line_group_id : '',
+    self_checkin: existing && existing.self_checkin ? 1 : 0,
+    geo_lat: existing && existing.geo_lat ? existing.geo_lat : 0,
+    geo_lng: existing && existing.geo_lng ? existing.geo_lng : 0,
+    geo_radius: existing && existing.geo_radius ? existing.geo_radius : 0,
     screenshot: existing ? existing.screenshot : '',
     screenshot_name: existing ? existing.screenshot_name : '',
     ...patch,
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot, screenshot_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot, screenshot_name, updated_at, self_checkin, geo_lat, geo_lng, geo_radius)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(course_id) DO UPDATE SET
       enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes, vice_delay_minutes = excluded.vice_delay_minutes,
       start_date = excluded.start_date, end_date = excluded.end_date, excluded_dates = excluded.excluded_dates,
       line_group_id = excluded.line_group_id, screenshot = excluded.screenshot, screenshot_name = excluded.screenshot_name,
-      updated_at = excluded.updated_at
-  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.start_date, next.end_date, next.excluded_dates, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
+      updated_at = excluded.updated_at, self_checkin = excluded.self_checkin,
+      geo_lat = excluded.geo_lat, geo_lng = excluded.geo_lng, geo_radius = excluded.geo_radius
+  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.start_date, next.end_date, next.excluded_dates, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at, next.self_checkin, next.geo_lat, next.geo_lng, next.geo_radius).run();
   return next;
 }
 
@@ -1482,11 +1548,12 @@ async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
 /* LINE 群組內輸入「綁定 學號」：將發言者 LINE userId 對應到該課程組長，供點名提醒 tag 使用 */
 export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   await ensureSchema(db);
-  const setting = await db.prepare('SELECT course_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind(groupId).first();
+  const setting = await db.prepare('SELECT course_id, self_checkin FROM attendance_reminder_settings WHERE line_group_id = ?').bind(groupId).first();
   if (!setting) return '此群組尚未在老師後台設定為點名提醒群組';
   const st = await db.prepare('SELECT id, name, is_leader, is_vice FROM students WHERE course_id = ? AND UPPER(id) = UPPER(?)')
     .bind(setting.course_id, studentId).first();
-  if (!st || !(st.is_leader || st.is_vice)) return '找不到該學號，或該學號不是組長／副組長';
+  // 自主點名課程：全體修課學生皆可綁定；一般課程僅組長／副組長
+  if (!st || !(setting.self_checkin || st.is_leader || st.is_vice)) return '找不到該學號，或該學號不是組長／副組長';
   await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
     .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
   return `${st.name} 已綁定`;
@@ -1545,7 +1612,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
            r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
-    WHERE s.weekday = ?
+    WHERE s.weekday = ? AND COALESCE(r.self_checkin, 0) = 0
   `).bind(weekday).all().catch(() => ({ results: [] }));
 
   const results = [];

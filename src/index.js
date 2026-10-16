@@ -3,6 +3,7 @@
 import { json, bad, runScheduledCleanup, runAttendanceReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader } from './lib.js';
 import { handleState, handleAction } from './api.js';
 import { fetchNotionBulletin } from './bulletin.js';
+import { handleCheckin, runSelfCheckinReminders, getSelfCheckinPhoto } from './checkin.js';
 
 export default {
   async fetch(request, env) {
@@ -33,6 +34,17 @@ export default {
           if (!row || !row.screenshot) return bad('尚未上傳課表截圖', 404);
           const bytes = Uint8Array.from(atob(row.screenshot), ch => ch.charCodeAt(0));
           return new Response(bytes, { status: 200, headers: { 'content-type': 'image/png', 'cache-control': 'private, no-cache' } });
+        }
+
+        /* 自主點名：學生端（status / challenge / submit） */
+        if (url.pathname.startsWith('/api/checkin/')) return await handleCheckin(request, env, db, url);
+
+        /* 老師後台：調閱自主點名照片（不隨 /api/state 傳送） */
+        if (url.pathname === '/api/selfcheckin-photo' && request.method === 'GET') {
+          const session = await readSession(db, env, request);
+          if (!session || session.role !== 'teacher') return bad('需要老師權限', 403);
+          const res = await getSelfCheckinPhoto(db, url.searchParams.get('courseId') || '', url.searchParams.get('date') || '', url.searchParams.get('studentId') || '');
+          return res || bad('找不到照片', 404);
         }
 
         /* LINE Webhook：老師將 Bot 加入班級群組時，於群組內回覆群組 ID 供老師複製貼上設定 */
@@ -74,6 +86,7 @@ export default {
     if (!env.DB) return;
     if (event.cron === '*/5 * * * *') {
       ctx.waitUntil(runAttendanceReminders(env.DB, env).then(r => { if (r.length) console.log('attendance-reminder', JSON.stringify(r)); }));
+      ctx.waitUntil(runSelfCheckinReminders(env.DB, env).then(r => { if (r.length) console.log('selfcheckin-reminder', JSON.stringify(r)); }));
       return;
     }
     ctx.waitUntil(runScheduledCleanup(env.DB).then(r => console.log('log-cleanup', JSON.stringify(r))));

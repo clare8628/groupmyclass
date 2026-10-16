@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.136.20261016.125917';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.137.20261016.151142';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -247,6 +247,34 @@ function apply(data) {
   }
   if (state.currentId) localStorage.setItem(CURRENT_KEY, state.currentId);
   lastSig = JSON.stringify(data.courses || []);
+}
+
+/* 自主點名審核：當日名單暫存（逐課程），照片以 /api/selfcheckin-photo 按需載入 */
+const selfCheckinLists = {};
+function selfCheckinBlock(c) {
+  if (!c) return '';
+  const l = selfCheckinLists[c.id];
+  const fmt = ms => ms ? new Date(ms).toLocaleTimeString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' }) : '';
+  const rows = l ? l.items.map(it => {
+    const flags = [it.flags && it.flags.includes('no-geo') ? '無定位' : '', it.sharedDevice ? '⚠️同裝置多人' : '', it.distance !== null && it.distance !== undefined ? `距教室約 ${it.distance} 公尺` : ''].filter(Boolean).join('、');
+    const photo = it.status === 'none' ? '' : `<a href="/api/selfcheckin-photo?courseId=${encodeURIComponent(c.id)}&date=${l.date}&studentId=${encodeURIComponent(it.id)}" target="_blank"><img src="/api/selfcheckin-photo?courseId=${encodeURIComponent(c.id)}&date=${l.date}&studentId=${encodeURIComponent(it.id)}" loading="lazy" style="width:90px;border-radius:6px;"></a>`;
+    const stText = it.status === 'ok' ? '✅ 已點名' : it.status === 'rejected' ? '❌ 已退回' : '— 未完成';
+    const btns = it.status === 'ok' ? `<button class="tab-btn" data-act="selfcheckin-review" data-id="${esc(it.id)}" data-decision="reject">退回</button>`
+      : it.status === 'rejected' ? `<button class="tab-btn" data-act="selfcheckin-review" data-id="${esc(it.id)}" data-decision="accept">恢復出席</button>` : '';
+    return `<tr><td>${esc(it.name)}<br><small>${esc(it.id)}</small></td><td>${stText}<br><small>${fmt(it.createdAt)}</small></td><td>${it.code ? `<b>${esc(it.code)}</b>` : ''}</td><td>${photo}</td><td><small>${esc(flags)}${it.bound ? '' : '（未綁定 LINE）'}</small></td><td>${btns}</td></tr>`;
+  }).join('') : '';
+  const missing = l ? l.items.filter(it => it.status !== 'ok').length : 0;
+  return `
+  <div class="teacher-section">
+    <h2>📸 自主點名審核 <small>${esc(courseLabel(c))}</small></h2>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">學生以手機即時拍攝教室畫面上傳；照片上須印有系統當次簽發的驗證碼（與表中「驗證碼」欄比對），舊照片不可能符合。可退回可疑照片，退回即改記缺席。</p>
+    <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem;">
+      <input type="date" id="selfCheckinDate" value="${esc(l ? l.date : '')}">
+      <button class="btn btn-primary" type="button" data-act="selfcheckin-load" data-id="${esc(c.id)}">載入名單</button>
+      ${l ? `<span>未完成／已退回：<b>${missing}</b> / ${l.items.length}</span>` : ''}
+    </div>
+    ${l ? `<div class="table-wrap"><table class="roster"><thead><tr><th>學生</th><th>狀態</th><th>驗證碼</th><th>照片</th><th>備註</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="file-path">按「載入名單」查看當日自主點名結果（預設今天）。</p>'}
+  </div>`;
 }
 
 /* 點名提醒：LINE 綁定名單（逐課程暫存於前端，供重繪使用） */
@@ -2605,6 +2633,7 @@ function attendanceSubTree() {
   return `<ul class="tree-sub">
     ${node('sessions', '點名時段設定')}
     ${node('reminder', '點名自動提醒（LINE）')}
+    ${node('selfcheck', '自主點名審核（照片）')}
     ${node('records', '依日期調閱／修改紀錄')}
     ${node('progress', '各組點名完成進度')}
     ${node('leaderboard', '表現排行榜與缺席統計')}
@@ -3561,6 +3590,13 @@ function teacherAttendanceReminderBlock(c) {
       <div class="form-group"><label>課程結束日（此日後停止發送，空白＝不限）</label><input type="date" name="endDate" value="${esc(r.endDate || '')}"></div>
       <div class="form-group full"><label>排除日期（國定假日等不發送的日子，每行或以逗號分隔一個，格式 YYYY-MM-DD）</label><textarea name="excludedDates" rows="3" style="width:100%;" placeholder="2026-10-26\n2026-12-25">${esc((r.excludedDates || []).join('\n'))}</textarea></div>
       <div class="form-group"><label>LINE 群組 ID</label><input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C1234567890abcdef..."></div>
+      <div class="form-group full" style="border-top:1px dashed #cbd5e1;padding-top:.6rem;">
+        <label><input type="checkbox" name="selfCheckin" ${r.selfCheckin ? 'checked' : ''}> 自主點名模式（全班學生綁定 LINE 後，於上課後提醒其上網拍照點名；第二次提醒間隔 10 分鐘，再 10 分鐘後列出未完成者。此模式不提醒組長）</label>
+      </div>
+      <div class="form-group"><label>教室緯度（空白＝不檢查定位）</label><input name="geoLat" value="${esc(r.geoLat ? String(r.geoLat) : '')}"></div>
+      <div class="form-group"><label>教室經度</label><input name="geoLng" value="${esc(r.geoLng ? String(r.geoLng) : '')}"></div>
+      <div class="form-group"><label>容許半徑（公尺，0＝不檢查）</label><input type="number" name="geoRadius" min="0" max="5000" value="${esc(String(r.geoRadius || 0))}"></div>
+      <div class="form-group"><button class="btn btn-secondary" type="button" data-act="set-geo-here">📍 以目前位置設為教室（請在教室使用）</button></div>
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
@@ -4080,6 +4116,7 @@ function teacherAttendanceBlock(c) {
   </div>`;
 
   if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
+  if (atdSection === 'selfcheck') return selfCheckinBlock(c);
   if (atdSection === 'records') return recordsBlock;
   if (atdSection === 'progress') return progressBlock;
   if (atdSection === 'leaderboard') return leaderboardBlock;
@@ -5973,6 +6010,10 @@ app.addEventListener('submit', e => {
       endDate: f.endDate.value,
       excludedDates: f.excludedDates.value.split(/[\s,，、]+/).filter(Boolean),
       lineGroupId: f.lineGroupId.value.trim(),
+      selfCheckin: !!(f.selfCheckin && f.selfCheckin.checked),
+      geoLat: parseFloat(f.geoLat.value) || 0,
+      geoLng: parseFloat(f.geoLng.value) || 0,
+      geoRadius: parseInt(f.geoRadius.value, 10) || 0,
     }, { after: () => alert('✅ 點名自動提醒設定已儲存') });
   }
   if (a === 'mark-attendance') {
@@ -6362,6 +6403,25 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'send-attendance-reminder-test') {
     return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
+  }
+  if (a === 'set-geo-here') {
+    const form = btn.closest('form');
+    if (!navigator.geolocation) return alert('此瀏覽器不支援定位');
+    return navigator.geolocation.getCurrentPosition(p => {
+      form.geoLat.value = p.coords.latitude.toFixed(6);
+      form.geoLng.value = p.coords.longitude.toFixed(6);
+      if (!parseInt(form.geoRadius.value, 10)) form.geoRadius.value = 150;
+      alert(`已填入目前位置（精度約 ${Math.round(p.coords.accuracy)} 公尺），請按「儲存提醒設定」`);
+    }, () => alert('無法取得定位，請允許定位權限'), { enableHighAccuracy: true, timeout: 15000 });
+  }
+  if (a === 'selfcheckin-load') {
+    const dateEl = document.getElementById('selfCheckinDate');
+    return act('teacher:selfcheckin-list', { courseId: id, date: dateEl ? dateEl.value : '' }, { after: data => { selfCheckinLists[id] = data; } });
+  }
+  if (a === 'selfcheckin-review') {
+    const c = cur(); const l = c && selfCheckinLists[c.id]; if (!l) return;
+    if (btn.dataset.decision === 'reject' && !confirm('退回這張照片並改記缺席？')) return;
+    return act('teacher:selfcheckin-review', { courseId: c.id, date: l.date, studentId: id, decision: btn.dataset.decision }, { after: data => { selfCheckinLists[c.id] = data; } });
   }
   if (a === 'list-attendance-bindings') {
     return act('teacher:list-attendance-bindings', { courseId: id }, { after: data => { bindingLists[id] = data; } });

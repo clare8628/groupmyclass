@@ -226,6 +226,10 @@ CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
   end_date         TEXT NOT NULL DEFAULT '',    -- 有效期間迄（課程結束日，空白＝不限）
   excluded_dates   TEXT NOT NULL DEFAULT '[]',  -- 期間內排除日（國定假日等）JSON 陣列
   line_group_id    TEXT NOT NULL DEFAULT '',
+  self_checkin     INTEGER NOT NULL DEFAULT 0,  -- 1＝自主點名模式（學生上傳現場照片，取代組長點名提醒）
+  geo_lat          REAL NOT NULL DEFAULT 0,     -- 教室座標與容許半徑（公尺，0＝不檢查定位）
+  geo_lng          REAL NOT NULL DEFAULT 0,
+  geo_radius       INTEGER NOT NULL DEFAULT 0,
   screenshot       TEXT NOT NULL DEFAULT '',    -- 課表截圖 base64（僅供老師參考，不出現在輪詢資料）
   screenshot_name  TEXT NOT NULL DEFAULT '',
   updated_at       INTEGER NOT NULL DEFAULT 0
@@ -250,3 +254,24 @@ CREATE TABLE IF NOT EXISTS system_runs (
   finished_at INTEGER NOT NULL,
   detail      TEXT NOT NULL DEFAULT ''       -- JSON：各類刪除筆數或錯誤訊息
 );
+
+-- 自主點名：學生當日上傳之現場照片與防弊資訊（照片為壓縮後 JPEG base64，不隨 /api/state 傳送）
+CREATE TABLE IF NOT EXISTS selfcheckin_records (
+  course_id  TEXT NOT NULL,
+  date       TEXT NOT NULL,
+  student_id TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'ok',   -- 'ok' | 'rejected'（老師退回）
+  photo      TEXT NOT NULL DEFAULT '',
+  photo_hash TEXT NOT NULL DEFAULT '',
+  code       TEXT NOT NULL DEFAULT '',     -- 伺服器簽發之當次驗證碼（照片上須出現）
+  lat        REAL,
+  lng        REAL,
+  accuracy   REAL,
+  distance   REAL,
+  device_id  TEXT NOT NULL DEFAULT '',
+  ip         TEXT NOT NULL DEFAULT '',
+  flags      TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (course_id, date, student_id)
+);
+CREATE INDEX IF NOT EXISTS idx_selfcheckin_hash ON selfcheckin_records(course_id, photo_hash);

@@ -9,6 +9,7 @@ import {
   sendLineBindingInstructions, listLeaderBindings,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
+import { listSelfCheckin, reviewSelfCheckin } from './checkin.js';
 import { fetchNotionBulletin } from './bulletin.js';
 
 /* 生活關懷問卷批次：依 id 取得；未指定 id 時取第一份 */
@@ -66,7 +67,7 @@ export async function handleAction(request, env, db, body) {
   const session = await readSession(db, env, request);
   const courses = await loadState(db);
   const course = id => courses.find(c => c.id === id);
-  const readOnly = ['login-teacher', 'login-student', 'exit-simulation', 'logout', 'teacher:simulate-student'].includes(action);
+  const readOnly = ['login-teacher', 'login-student', 'exit-simulation', 'logout', 'teacher:simulate-student', 'teacher:selfcheckin-list'].includes(action);
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
@@ -758,7 +759,10 @@ export async function handleAction(request, env, db, body) {
       const rawExcluded = Array.isArray(body.excludedDates) ? body.excludedDates.map(s => String(s).trim()) : [];
       if (rawExcluded.some(s => !isYmd(s))) return bad('排除日期格式錯誤，請用 YYYY-MM-DD', 400);
       const excludedDates = [...new Set(rawExcluded)].sort();
-      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, start_date: startDate, end_date: endDate, excluded_dates: JSON.stringify(excludedDates), line_group_id: lineGroupId });
+      const geoLat = Number(body.geoLat) || 0, geoLng = Number(body.geoLng) || 0;
+      const geoRadius = Math.max(0, Math.min(5000, parseInt(body.geoRadius, 10) || 0));
+      if (geoRadius > 0 && (Math.abs(geoLat) > 90 || Math.abs(geoLng) > 180 || (!geoLat && !geoLng))) return bad('教室座標無效', 400);
+      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, start_date: startDate, end_date: endDate, excluded_dates: JSON.stringify(excludedDates), line_group_id: lineGroupId, self_checkin: body.selfCheckin ? 1 : 0, geo_lat: geoLat, geo_lng: geoLng, geo_radius: geoRadius });
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
@@ -768,6 +772,21 @@ export async function handleAction(request, env, db, body) {
         detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長；有效期間 ${startDate || '不限'} ~ ${endDate || '不限'}，排除 ${excludedDates.length} 天`,
       });
       return ok();
+    }
+    if (op === 'selfcheckin-list') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      return ok(await listSelfCheckin(db, c.id, String(body.date || '')));
+    }
+    if (op === 'selfcheckin-review') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      try {
+        await reviewSelfCheckin(db, c.id, String(body.date || ''), String(body.studentId || ''), body.decision === 'reject' ? 'reject' : 'accept');
+      } catch (err) {
+        return bad(String((err && err.message) || err), 404);
+      }
+      return ok(await listSelfCheckin(db, c.id, String(body.date || '')));
     }
     if (op === 'upload-attendance-schedule-screenshot') {
       const c = course(body.courseId);
