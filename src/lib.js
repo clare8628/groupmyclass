@@ -1489,7 +1489,7 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   if (!st || !(st.is_leader || st.is_vice)) return '找不到該學號，或該學號不是組長／副組長';
   await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
     .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
-  return `${st.name} 已綁定，之後尚未點名時會 tag 你`;
+  return `${st.name} 已綁定`;
 }
 
 /* 老師後台：列出本課程所有組長／副組長的 LINE 綁定狀態（逐人，已綁定／未綁定） */
