@@ -749,14 +749,23 @@ export async function handleAction(request, env, db, body) {
       const viceDelayMinutes = Math.max(0, Math.min(120, Number.isNaN(viceDelayParsed) ? 5 : viceDelayParsed));
       const lineGroupId = String(body.lineGroupId || '').trim();
       const enabled = body.enabled === false ? 0 : 1;
-      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, line_group_id: lineGroupId });
+      const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+      const startDate = String(body.startDate || '').trim();
+      const endDate = String(body.endDate || '').trim();
+      if (startDate && !isYmd(startDate)) return bad('開學日格式錯誤', 400);
+      if (endDate && !isYmd(endDate)) return bad('課程結束日格式錯誤', 400);
+      if (startDate && endDate && startDate > endDate) return bad('開學日不可晚於課程結束日', 400);
+      const rawExcluded = Array.isArray(body.excludedDates) ? body.excludedDates.map(s => String(s).trim()) : [];
+      if (rawExcluded.some(s => !isYmd(s))) return bad('排除日期格式錯誤，請用 YYYY-MM-DD', 400);
+      const excludedDates = [...new Set(rawExcluded)].sort();
+      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, start_date: startDate, end_date: endDate, excluded_dates: JSON.stringify(excludedDates), line_group_id: lineGroupId });
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
         operatorId: 'teacher',
         operatorName: '老師',
         actionType: 'attendance-reminder-settings-save',
-        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長`,
+        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長；有效期間 ${startDate || '不限'} ~ ${endDate || '不限'}，排除 ${excludedDates.length} 天`,
       });
       return ok();
     }

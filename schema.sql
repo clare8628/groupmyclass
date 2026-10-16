@@ -222,6 +222,9 @@ CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
   message          TEXT NOT NULL DEFAULT '',
   offset_minutes   INTEGER NOT NULL DEFAULT 10,
   vice_delay_minutes INTEGER NOT NULL DEFAULT 5,  -- 組長逾此分鐘仍未點名才 tag 副組長
+  start_date       TEXT NOT NULL DEFAULT '',    -- 有效期間起（開學日 YYYY-MM-DD，空白＝不限）
+  end_date         TEXT NOT NULL DEFAULT '',    -- 有效期間迄（課程結束日，空白＝不限）
+  excluded_dates   TEXT NOT NULL DEFAULT '[]',  -- 期間內排除日（國定假日等）JSON 陣列
   line_group_id    TEXT NOT NULL DEFAULT '',
   screenshot       TEXT NOT NULL DEFAULT '',    -- 課表截圖 base64（僅供老師參考，不出現在輪詢資料）
   screenshot_name  TEXT NOT NULL DEFAULT '',

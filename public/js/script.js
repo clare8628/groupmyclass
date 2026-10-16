@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.133.20261016.122152';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.134.20261016.122815';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -3503,7 +3503,7 @@ const DEFAULT_REMINDER_MESSAGE_FE = '提醒各組組長點名，若組長不在�
 function teacherAttendanceReminderBlock(c) {
   if (!c) return '';
   const schedule = (c.courseSchedule && c.courseSchedule.length === 7) ? c.courseSchedule : [0, 1, 2, 3, 4, 5, 6].map(w => ({ weekday: w, firstPeriodTime: '', enabled: true }));
-  const r = c.attendanceReminder || { enabled: true, message: '', offsetMinutes: 10, viceDelayMinutes: 5, lineGroupId: '', hasScreenshot: false, screenshotName: '' };
+  const r = c.attendanceReminder || { enabled: true, message: '', offsetMinutes: 10, viceDelayMinutes: 5, startDate: '', endDate: '', excludedDates: [], lineGroupId: '', hasScreenshot: false, screenshotName: '' };
 
   const setupHint = state.lineConfigured ? '' : `
     <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;color:#78350f;line-height:1.6;">
@@ -3557,6 +3557,9 @@ function teacherAttendanceReminderBlock(c) {
       <div class="form-group full"><label>提醒訊息</label><textarea name="message" rows="2" style="width:100%;">${esc(r.message || DEFAULT_REMINDER_MESSAGE_FE)}</textarea></div>
       <div class="form-group"><label>第一節上課後幾分鐘發送</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
       <div class="form-group"><label>組長逾幾分鐘未點名，再 tag 副組長（兩位都綁定時）</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>
+      <div class="form-group"><label>學期開學日（此日起才發送，空白＝不限）</label><input type="date" name="startDate" value="${esc(r.startDate || '')}"></div>
+      <div class="form-group"><label>課程結束日（此日後停止發送，空白＝不限）</label><input type="date" name="endDate" value="${esc(r.endDate || '')}"></div>
+      <div class="form-group full"><label>排除日期（國定假日等不發送的日子，每行或以逗號分隔一個，格式 YYYY-MM-DD）</label><textarea name="excludedDates" rows="3" style="width:100%;" placeholder="2026-10-26\n2026-12-25">${esc((r.excludedDates || []).join('\n'))}</textarea></div>
       <div class="form-group"><label>LINE 群組 ID</label><input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C1234567890abcdef..."></div>
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
@@ -5966,6 +5969,9 @@ app.addEventListener('submit', e => {
       message: f.message.value.trim(),
       offsetMinutes: parseInt(f.offsetMinutes.value, 10) || 0,
       viceDelayMinutes: Number.isNaN(parseInt(f.viceDelayMinutes.value, 10)) ? 5 : parseInt(f.viceDelayMinutes.value, 10),
+      startDate: f.startDate.value,
+      endDate: f.endDate.value,
+      excludedDates: f.excludedDates.value.split(/[\s,，、]+/).filter(Boolean),
       lineGroupId: f.lineGroupId.value.trim(),
     }, { after: () => alert('✅ 點名自動提醒設定已儲存') });
   }

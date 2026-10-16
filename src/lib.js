@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-14b';
+const SCHEMA_REV = '2026-10-16a';
 let _schemaReady = false;
 async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -273,6 +273,13 @@ async function ensureAttendanceReminderSchema(db) {
   try {
     await db.prepare('ALTER TABLE attendance_reminder_settings ADD COLUMN vice_delay_minutes INTEGER NOT NULL DEFAULT 5').run();
   } catch (_) {}
+  for (const ddl of [
+    "ALTER TABLE attendance_reminder_settings ADD COLUMN start_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE attendance_reminder_settings ADD COLUMN end_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE attendance_reminder_settings ADD COLUMN excluded_dates TEXT NOT NULL DEFAULT '[]'",
+  ]) {
+    try { await db.prepare(ddl).run(); } catch (_) {}
+  }
   try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS attendance_reminder_runs (
@@ -855,7 +862,7 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
     // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
-    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
@@ -1027,6 +1034,9 @@ export async function loadState(db, rev = null) {
       message: (reminderRow && reminderRow.message) || DEFAULT_REMINDER_MESSAGE,
       offsetMinutes: reminderRow && reminderRow.offset_minutes !== undefined && reminderRow.offset_minutes !== null ? Number(reminderRow.offset_minutes) : 10,
       viceDelayMinutes: reminderRow && reminderRow.vice_delay_minutes !== undefined && reminderRow.vice_delay_minutes !== null ? Number(reminderRow.vice_delay_minutes) : 5,
+      startDate: (reminderRow && reminderRow.start_date) || '',
+      endDate: (reminderRow && reminderRow.end_date) || '',
+      excludedDates: parseJsonArray(reminderRow && reminderRow.excluded_dates),
       lineGroupId: (reminderRow && reminderRow.line_group_id) || '',
       hasScreenshot: !!(reminderRow && Number(reminderRow.screenshot_len) > 0),
       screenshotName: (reminderRow && reminderRow.screenshot_name) || '',
@@ -1380,6 +1390,9 @@ export async function upsertReminderSettings(db, courseId, patch) {
     message: existing ? existing.message : '',
     offset_minutes: existing ? existing.offset_minutes : 10,
     vice_delay_minutes: existing && existing.vice_delay_minutes !== undefined && existing.vice_delay_minutes !== null ? existing.vice_delay_minutes : 5,
+    start_date: existing && existing.start_date ? existing.start_date : '',
+    end_date: existing && existing.end_date ? existing.end_date : '',
+    excluded_dates: existing && existing.excluded_dates ? existing.excluded_dates : '[]',
     line_group_id: existing ? existing.line_group_id : '',
     screenshot: existing ? existing.screenshot : '',
     screenshot_name: existing ? existing.screenshot_name : '',
@@ -1387,13 +1400,14 @@ export async function upsertReminderSettings(db, courseId, patch) {
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, line_group_id, screenshot, screenshot_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot, screenshot_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(course_id) DO UPDATE SET
       enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes, vice_delay_minutes = excluded.vice_delay_minutes,
+      start_date = excluded.start_date, end_date = excluded.end_date, excluded_dates = excluded.excluded_dates,
       line_group_id = excluded.line_group_id, screenshot = excluded.screenshot, screenshot_name = excluded.screenshot_name,
       updated_at = excluded.updated_at
-  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
+  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.start_date, next.end_date, next.excluded_dates, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at).run();
   return next;
 }
 
@@ -1528,7 +1542,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
 
   const rows = await db.prepare(`
     SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
-           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.line_group_id AS line_group_id
+           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
     WHERE s.weekday = ?
@@ -1538,6 +1552,10 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
   for (const row of (rows.results || [])) {
     if (!row.day_enabled || !row.global_enabled) continue;
     if (!row.first_period_time || !row.line_group_id) continue;
+    // 有效日期區間（開學日～課程結束日）與排除日（國定假日等）：不在區間內或命中排除日則不發送
+    if (row.start_date && dateStr < row.start_date) continue;
+    if (row.end_date && dateStr > row.end_date) continue;
+    if (parseJsonArray(row.excluded_dates).includes(dateStr)) continue;
     const viceDelay = row.vice_delay_minutes === null || row.vice_delay_minutes === undefined ? 5 : Number(row.vice_delay_minutes);
     const baseHm = addMinutesToHm(row.first_period_time, row.offset_minutes);
     // 兩個階段：組長提醒（key＝日期）；組長逾時未點名後再 tag 副組長（key＝日期:vice），各自每天只發一次
