@@ -286,10 +286,13 @@ function selfCheckinBlock(c) {
 const bindingLists = {};
 function bindingListHtml(l) {
   if (!l) return '';
+  const label = x => x.groupName ? `第${esc(x.groupName)}組 ${esc(x.role)} ${esc(x.name)}（${esc(x.id)}）` : `${esc(x.name)}（${esc(x.id)}）`;
   const rowsOf = (items, withTime) => items.length
-    ? items.map(x => `<li>第${esc(x.groupName)}組 ${esc(x.role)} ${esc(x.name)}（${esc(x.id)}）${withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : ''}</li>`).join('')
+    ? items.map(x => `<li>${label(x)}${withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : ''}</li>`).join('')
     : '<li>（無）</li>';
+  const total = l.total !== undefined ? l.total : (l.bound.length + l.unbound.length);
   return `<div class="form-group full" style="margin-top:0.6rem;">
+    <div style="font-weight:600;color:#1e293b;margin-bottom:0.3rem;">📊 統計：共 ${total} 人，已綁定 ${l.bound.length} 人，未綁定 ${l.unbound.length} 人</div>
     <div style="font-weight:600;color:#15803d;">✅ 已綁定（${l.bound.length}）</div><ul style="margin:0.2rem 0 0.6rem 1.2rem;">${rowsOf(l.bound, true)}</ul>
     <div style="font-weight:600;color:#b91c1c;">⚠️ 未綁定（${l.unbound.length}）</div><ul style="margin:0.2rem 0 0 1.2rem;">${rowsOf(l.unbound, false)}</ul>
   </div>`;
@@ -3629,10 +3632,10 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
-        ${b1 ? '' : `<button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的組長）</button>
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>`}
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定${b1 ? '的同學' : '的組長'}）</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看${b1 ? '全班' : ''}綁定名單</button>
       </div>
-      ${b1 ? '' : bindingListHtml(bindingLists[c.id])}
+      ${bindingListHtml(bindingLists[c.id])}
     </form>`;
 
   return `

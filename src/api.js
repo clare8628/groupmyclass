@@ -6,7 +6,7 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
-  sendLineBindingInstructions, listLeaderBindings, SELF_CHECKIN_COURSE_ID,
+  sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin } from './checkin.js';
@@ -839,7 +839,7 @@ export async function handleAction(request, env, db, body) {
     if (op === 'list-attendance-bindings') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
-      return ok(await listLeaderBindings(db, c.id));
+      return ok(await listAttendanceBindings(db, c.id));
     }
     if (op === 'send-attendance-binding-instructions') {
       const c = course(body.courseId);

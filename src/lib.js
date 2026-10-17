@@ -1563,21 +1563,37 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   return `${st.name} 已綁定`;
 }
 
-/* 老師後台：列出本課程所有組長／副組長的 LINE 綁定狀態（逐人，已綁定／未綁定） */
-export async function listLeaderBindings(db, courseId) {
+/* 老師後台：列出本課程 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計。
+   自主點名課程（self_checkin）無組長／副組長，改列出全班修課學生；一般課程僅列組長／副組長。 */
+export async function listAttendanceBindings(db, courseId) {
   await ensureSchema(db);
-  const rows = (await db.prepare(`
-    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, b.line_user_id AS line_user_id, b.created_at AS bound_at
-    FROM students s
-    LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
-    WHERE s.course_id = ? AND (s.is_leader = 1 OR s.is_vice = 1) AND s.group_id != ''
-    ORDER BY s.group_id, s.is_leader DESC
-  `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
-  const toItem = r => ({ id: r.id, name: r.name, groupName: String(r.group_id).replace(/^g_/, ''), role: r.is_leader ? '組長' : '副組長', boundAt: r.bound_at || 0 });
-  return {
-    bound: rows.filter(r => r.line_user_id).map(toItem),
-    unbound: rows.filter(r => !r.line_user_id).map(toItem),
-  };
+  const settingsRow = await getReminderSettingsRow(db, courseId);
+  const selfCheckin = !!(settingsRow && settingsRow.self_checkin);
+  const rows = selfCheckin
+    ? (await db.prepare(`
+        SELECT s.id AS id, s.name AS name, b.line_user_id AS line_user_id, b.created_at AS bound_at
+        FROM students s
+        LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+        WHERE s.course_id = ?
+        ORDER BY s.seq, s.id
+      `).bind(courseId).all().catch(() => ({ results: [] }))).results || []
+    : (await db.prepare(`
+        SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, b.line_user_id AS line_user_id, b.created_at AS bound_at
+        FROM students s
+        LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+        WHERE s.course_id = ? AND (s.is_leader = 1 OR s.is_vice = 1) AND s.group_id != ''
+        ORDER BY s.group_id, s.is_leader DESC
+      `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
+  const toItem = r => ({
+    id: r.id,
+    name: r.name,
+    groupName: r.group_id ? String(r.group_id).replace(/^g_/, '') : '',
+    role: selfCheckin ? '' : (r.is_leader ? '組長' : '副組長'),
+    boundAt: r.bound_at || 0,
+  });
+  const bound = rows.filter(r => r.line_user_id).map(toItem);
+  const unbound = rows.filter(r => !r.line_user_id).map(toItem);
+  return { bound, unbound, total: rows.length, boundCount: bound.length, unboundCount: unbound.length };
 }
 
 /* 老師後台按鈕「發送綁定教學訊息」：取代老師自己逐一告知組長，改由系統一次推播尚未綁定名單與指令範例 */
@@ -1585,6 +1601,16 @@ export async function sendLineBindingInstructions(db, env, courseId) {
   await ensureSchema(db);
   const row = await getReminderSettingsRow(db, courseId);
   if (!row || !row.line_group_id) throw new Error('請先設定 LINE 群組 ID');
+  if (row.self_checkin) {
+    const { unbound } = await listAttendanceBindings(db, courseId);
+    if (!unbound.length) return { sent: false, detail: '全班皆已綁定，不需發送' };
+    const text = [
+      '請尚未綁定 LINE 的同學，在本群組輸入「綁定 學號」完成綁定（例如：綁定 B10912345），之後點名提醒與未完成名單才能標記到您：',
+      unbound.map(x => `${x.name}（${x.id}）`).join('、'),
+    ].join('\n');
+    await sendLinePush(env, row.line_group_id, text);
+    return { sent: true, detail: `已通知 ${unbound.length} 人尚未綁定` };
+  }
   const byGroup = await groupLeadersByGroup(db, courseId);
   const unbound = [];
   for (const [groupId, g] of byGroup) {
