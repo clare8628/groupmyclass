@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.140.20261016.163709';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.145.20261017.232556';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -9,7 +9,7 @@ const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目�
 function parseViewFromHash() {
   const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
   // 老師後台視圖
-  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'b1'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
+  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
   // 前台子系統視圖
   if (['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(h)) return { type: 'public', view: h };
   // 相容舊 hash
@@ -27,11 +27,11 @@ function parseSubViewFromHash() {
 function getInitialTeacherView() {
   const parsed = parseViewFromHash();
   if (parsed && parsed.type === 'teacher') return parsed.view;
-  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin', 'b1'].includes(window.history.state.teacherView)) {
+  if (window.history.state && window.history.state.teacherView && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(window.history.state.teacherView)) {
     return window.history.state.teacherView;
   }
   const saved = localStorage.getItem(TEACHER_VIEW_KEY);
-  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin', 'b1'].includes(saved)) {
+  if (saved && ['attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'bulletin'].includes(saved)) {
     return saved;
   }
   return 'course';
@@ -83,7 +83,7 @@ let wbSection = 'cards';                // 老師後台「問卷管理」目前�
 let wbTreeOpen = false;                 // 左側樹狀選單「問卷管理」子項目是否展開（預設收折以節省版面）
 let b1Section = 'roster';               // 老師後台「華語B1輔導課修課點名」目前子節點：roster | reminder | selfcheck
 let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
-let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | records | progress | leaderboard | log
+let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | bindings | b1 | records | progress | leaderboard | log
 let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
 let atdTreeOpen = false;                // 左側樹狀選單「點名管理」子項目是否展開（預設收折以節省版面）
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
@@ -288,7 +288,7 @@ function bindingListHtml(l) {
   if (!l) return '';
   const label = x => x.groupName ? `第${esc(x.groupName)}組 ${esc(x.role)} ${esc(x.name)}（${esc(x.id)}）` : `${esc(x.name)}（${esc(x.id)}）`;
   const rowsOf = (items, withTime) => items.length
-    ? items.map(x => `<li>${label(x)}${withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : ''}</li>`).join('')
+    ? items.map(x => `<li>${label(x)}${x.exemptViaB1 ? ' <small style="color:#0369a1;">（已於輔導班綁定，免重複）</small>' : (withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : '')}</li>`).join('')
     : '<li>（無）</li>';
   const total = l.total !== undefined ? l.total : (l.bound.length + l.unbound.length);
   return `<div class="form-group full" style="margin-top:0.6rem;">
@@ -2606,13 +2606,6 @@ function courseTree() {
           </div>
           ${atdTreeOpen ? attendanceSubTree() : ''}
         </li>
-        <li class="${teacherView === 'b1' ? 'active' : ''}">
-          <div class="tree-node-row">
-            <button data-act="sys-b1"><span class="wb-title">🗣️ 華語B1輔導課修課點名</span><span class="count">修課名單、自動提醒、專屬自主點名</span></button>
-            <button class="wb-tree-toggle" type="button" data-act="toggle-b1-tree" title="${b1TreeOpen ? '收折子項目' : '展開子項目'}">${b1TreeOpen ? '▼' : '▶'}</button>
-          </div>
-          ${b1TreeOpen ? b1SubTree() : ''}
-        </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <div class="tree-node-row">
             <button data-act="sys-wellbeing"><span class="wb-title">💌 問卷管理</span><span class="count">問卷回覆與問卷異動日誌</span></button>
@@ -2652,6 +2645,14 @@ function attendanceSubTree() {
   return `<ul class="tree-sub">
     ${node('sessions', '點名時段設定')}
     ${node('reminder', '點名自動提醒（LINE）')}
+    ${node('bindings', '綁定查詢與統計')}
+    <li class="${sec === 'b1' ? 'active' : ''}">
+      <div class="tree-node-row">
+        <button data-act="atd-section" data-sec="b1"><span class="wb-title">🗣️ 華語B1輔導課修課點名</span></button>
+        <button class="wb-tree-toggle" type="button" data-act="toggle-b1-tree" title="${b1TreeOpen ? '收折子項目' : '展開子項目'}">${b1TreeOpen ? '▼' : '▶'}</button>
+      </div>
+      ${b1TreeOpen ? b1SubTree() : ''}
+    </li>
     ${node('records', '依日期調閱／修改紀錄')}
     ${node('progress', '各組點名完成進度')}
     ${node('leaderboard', '表現排行榜與缺席統計')}
@@ -2660,7 +2661,7 @@ function attendanceSubTree() {
 }
 
 function b1SubTree() {
-  const sec = teacherView === 'b1' ? b1Section : '';
+  const sec = (teacherView === 'attendance' && atdSection === 'b1') ? b1Section : '';
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}">${label}</button></li>`;
   return `<ul class="tree-sub">
     ${node('roster', '修課名單（勾選／匯入）')}
@@ -2700,8 +2701,6 @@ function teacherScreen() {
     main = teacherSubpageNav('分組管理', c) + activityLogPanel(c, 'group');
   } else if (teacherView === 'attendance') {
     main = teacherSubpageNav('點名管理', c) + teacherAttendanceBlock(c) + (atdSection === 'log' ? activityLogPanel(c, 'attendance') : '');
-  } else if (teacherView === 'b1') {
-    main = teacherSubpageNav('華語B1輔導課修課點名', c) + teacherB1Block(c);
   } else if (teacherView === 'wellbeing') {
     main = teacherSubpageNav('問卷管理', c) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
   } else if (teacherView === 'bulletin') {
@@ -3643,11 +3642,13 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定${b1 ? '的同學' : '的組長'}）</button>
-        ${b1 ? `<button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>` : ''}
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看${b1 ? '全班' : ''}綁定名單</button>
+        ${b1 ? `
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的同學）</button>
+        <button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看全班綁定名單</button>
+        ` : '<p class="file-path" style="margin:0.5rem 0 0;width:100%;">💡 綁定名單與統計已移至「點名管理 → 綁定查詢與統計」。</p>'}
       </div>
-      ${bindingListHtml(bindingLists[c.id])}
+      ${b1 ? bindingListHtml(bindingLists[c.id]) : ''}
     </form>`;
 
   return `
@@ -4160,11 +4161,41 @@ function teacherAttendanceBlock(c) {
   </div>`;
 
   if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
+  if (atdSection === 'bindings') return teacherBindingStatsBlock(c);
+  if (atdSection === 'b1') return teacherB1Block(c);
   if (atdSection === 'records') return recordsBlock;
   if (atdSection === 'progress') return progressBlock;
   if (atdSection === 'leaderboard') return leaderboardBlock;
   if (atdSection === 'log') return '';
   return sessionsBlock;
+}
+
+/* ---- 點名管理專項：綁定查詢與統計（全班綁定；供未來問卷提醒等功能使用）----
+   原班級 LINE 群組已開放全班綁定（非僅組長／副組長）；已於本群組（幹部群組）綁定之組長／副組長，
+   或已於「華語B1輔導課修課點名」綁定之同學，視為已滿足綁定，不需再重複綁定（見 listAttendanceBindings 的跨課程綁定檢查）。 */
+function teacherBindingStatsBlock(c) {
+  if (!c) {
+    return `
+    <div class="teacher-section">
+      <h2>🔗 綁定查詢與統計</h2>
+      <p class="file-path">請先從左側點選或建立課程。</p>
+    </div>`;
+  }
+  return `
+  <div class="teacher-section">
+    <h2>🔗 綁定查詢與統計 <small>${esc(courseLabel(c))}</small></h2>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">
+      原班級 LINE 群組已開放<b>全班綁定</b>（任何學生皆可在群組輸入「綁定 學號」完成綁定，供日後問卷提醒等功能使用，不限組長／副組長）。<br>
+      💡 已於本群組（幹部群組）綁定之組長／副組長，或已於「華語B1輔導課修課點名」綁定之同學，視為已滿足綁定，<b>不需再重複綁定</b>。
+    </p>
+    <div class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
+      <div class="form-group full">
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的同學）</button>
+      </div>
+      ${bindingListHtml(bindingLists[c.id])}
+    </div>
+  </div>`;
 }
 
 /* ---- 點名管理專項：華語B1輔導課修課點名 ----
@@ -6419,7 +6450,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     state.currentId = courseId;
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
-  if (newView !== 'b1' && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+  if (!(newView === 'attendance' && atdSection === 'b1') && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
     const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
     state.currentId = other ? other.id : null;
     if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
@@ -6538,19 +6569,28 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'toggle-atd-tree') { atdTreeOpen = !atdTreeOpen; return render(); }
   if (a === 'atd-section') {
-    atdSection = btn.dataset.sec;
+    const nextSec = btn.dataset.sec;
+    const enteringB1 = nextSec === 'b1';
+    const leavingB1 = atdSection === 'b1' && !enteringB1;
+    atdSection = nextSec;
+    if (enteringB1) {
+      // 「華語B1輔導課修課點名」是獨立課程紀錄，進入子項目時暫時切換目前課程為該輔導課
+      if (state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
+        lastGeneralCourseId = state.currentId;
+        state.currentId = state.selfCheckinCourseId;
+        localStorage.setItem(CURRENT_KEY, state.currentId);
+      }
+    } else if (leavingB1 && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+      const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
+      state.currentId = other ? other.id : null;
+      if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
+    }
     if (teacherView !== 'attendance') return setTeacherView('attendance');
     return render();
   }
   if (a === 'toggle-b1-tree') { b1TreeOpen = !b1TreeOpen; return render(); }
-  if (a === 'sys-b1' || a === 'b1-section') {
-    if (a === 'b1-section') b1Section = btn.dataset.sec;
-    if (state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
-      lastGeneralCourseId = state.currentId;
-      state.currentId = state.selfCheckinCourseId;
-      localStorage.setItem(CURRENT_KEY, state.currentId);
-    }
-    if (teacherView !== 'b1') return setTeacherView('b1');
+  if (a === 'b1-section') {
+    b1Section = btn.dataset.sec;
     return render();
   }
   if (a === 'sys-bulletin') { return setTeacherView('bulletin'); }
@@ -6659,7 +6699,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return;
   }
   if (a === 'pick-course-node' || a === 'pick-course') {
-    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system' || teacherView === 'bulletin' || teacherView === 'b1') ? teacherView : 'course';
+    const nextView = (teacherView === 'eval' || teacherView === 'logs' || teacherView === 'attendance' || teacherView === 'wellbeing' || teacherView === 'settings' || teacherView === 'system' || teacherView === 'bulletin') ? teacherView : 'course';
     if (!state.session || state.session.role !== 'teacher') {
       publicSubView = 'dashboard';
     }
