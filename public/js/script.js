@@ -272,7 +272,7 @@ function selfCheckinBlock(c) {
   return `
   <div class="teacher-section">
     <h2>📸 自主點名審核 <small>${esc(courseLabel(c))}</small></h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">學生以手機即時拍攝教室畫面上傳；照片上須印有系統當次簽發的驗證碼（與表中「驗證碼」欄比對），舊照片不可能符合。可退回可疑照片，退回即改記缺席。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">學生以手機即時拍攝教室畫面上傳；照片上須印有系統當次簽發的驗證碼（與表中「驗證碼」欄比對），舊照片不可能符合（無相簿入口、照片不含 EXIF，驗證碼 5 分鐘內有效，相同照片 hash 不得重複使用，因此無法預拍存放）。可退回可疑照片，退回即改記缺席。</p>
     <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem;">
       <input type="date" id="selfCheckinDate" value="${esc(l ? l.date : '')}">
       <button class="btn btn-primary" type="button" data-act="selfcheckin-load" data-id="${esc(c.id)}">載入名單</button>
@@ -3638,6 +3638,16 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full file-path" style="margin:0;">
         ℹ️ 定位僅作為輔助比對（學生座標與上方座標之距離在半徑內即算通過，手機定位本身有誤差，系統已預留容許值），<b>驗證碼仍會保留</b>：定位只能證明「人在哪裡」，無法證明「照片是不是剛剛才拍的」，拍照當下才簽發、5 分鐘內有效的驗證碼才能防止用舊照片蒙混；兩者分工不同，不能互相取代。
       </div>
+      <details class="form-group full file-path" style="margin:0;">
+        <summary style="cursor:pointer;"><b>❓ 為什麼學生無法預先拍照、日後重複使用？</b></summary>
+        <ul style="margin:.4rem 0 0 1.2rem;padding:0;">
+          <li>照片只能用<b>即時相機畫面</b>拍攝，沒有「從相簿選圖」的入口；照片是 canvas 重繪的，本來就不帶 EXIF 時間或 GPS。系統不解析 EXIF：拿不到，也不可信，因為 EXIF 可以偽造。</li>
+          <li>每次拍照前，伺服器都會簽發一組<b>隨機驗證碼</b>，只在點名時段內發放，5 分鐘內有效，太快送出也會被擋。</li>
+          <li>驗證碼和（伺服器簽發的）時間會壓印在照片上，老師審核時看得到。預先拍的照片不可能有當次的驗證碼。</li>
+          <li>同一張照片的 hash 已被使用過會被拒絕，同一支手機替別人點名也會被擋。</li>
+          <li>所以「預先多拍幾張日後使用」會被驗證碼擋掉，這也是驗證碼要保留的原因。</li>
+        </ul>
+      </details>
       ` : ''}
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
