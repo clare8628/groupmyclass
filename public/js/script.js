@@ -2476,10 +2476,12 @@ function howto() {
   </section>`;
 }
 
-/* ---- [Block C] 左側選單區：前台課程樹狀結構區塊（學年度 → 科目 → 子系統） ---- */
+/* ---- [Block C] 左側選單區：前台課程樹狀結構區塊（學年度 → 科目 → 子系統） ----
+   「華語B1輔導課修課點名」已併入老師後台並與「點名管理」同層，不對外公開，故不列入前台課程清單 */
 function courseTreePublic() {
   const byYear = {};
   state.courses.forEach(c => {
+    if (c.id === state.selfCheckinCourseId) return;
     const y = c.year || '未分類';
     (byYear[y] = byYear[y] || []).push(c);
   });
