@@ -6,10 +6,10 @@ import {
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
   getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
-  sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID,
+  sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
-import { listSelfCheckin, reviewSelfCheckin } from './checkin.js';
+import { listSelfCheckin, reviewSelfCheckin, sendSelfCheckinInstructions } from './checkin.js';
 import { fetchNotionBulletin } from './bulletin.js';
 
 /* 生活關懷問卷批次：依 id 取得；未指定 id 時取第一份 */
@@ -771,6 +771,25 @@ export async function handleAction(request, env, db, body) {
         actionType: 'attendance-reminder-settings-save',
         detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長；有效期間 ${startDate || '不限'} ~ ${endDate || '不限'}，排除 ${excludedDates.length} 天`,
       });
+      return ok();
+    }
+    if (op === 'geocode-address') {
+      let hit;
+      try {
+        hit = await geocodeAddress(body.address);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 400);
+      }
+      return json({ ok: true, lat: hit.lat, lng: hit.lng, display: hit.display, approx: hit.approx });
+    }
+    if (op === 'send-selfcheckin-instructions') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      try {
+        await sendSelfCheckinInstructions(db, env, c.id);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 400);
+      }
       return ok();
     }
     if (op === 'selfcheckin-list') {

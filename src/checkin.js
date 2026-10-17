@@ -196,6 +196,34 @@ export async function reviewSelfCheckin(db, courseId, date, studentId, decision)
   });
 }
 
+/* 老師後台按鈕「發送自主點名流程說明」：開學前先讓全班了解流程，避免上課當天手忙腳亂、老師也忘了交代 */
+export async function sendSelfCheckinInstructions(db, env, courseId) {
+  await ensureSchema(db);
+  const set = await db.prepare('SELECT * FROM attendance_reminder_settings WHERE course_id = ?').bind(courseId).first();
+  if (!set || !set.self_checkin) throw new Error('本課程未啟用自主點名');
+  if (!set.line_group_id) throw new Error('請先設定 LINE 群組 ID');
+  const course = (await db.prepare('SELECT subject, year FROM courses WHERE id = ?').bind(courseId).first()) || {};
+  const link = `${env.PUBLIC_BASE_URL || DEFAULT_BASE_URL}/checkin.html?c=${encodeURIComponent(courseId)}`;
+  const steps = [
+    `點此連結登入：${link}（姓名＋密碼，預設密碼為學號）`,
+    '上課時間內（上課前 10 分鐘～上課後 90 分鐘），用手機鏡頭即時拍下教室畫面，不能使用相簿舊照片',
+    '照片會自動印上姓名、時間與系統當次簽發的驗證碼',
+    Number(set.geo_radius) > 0 ? '請允許手機定位權限，系統會確認您是否在教室範圍內' : '',
+    '送出後即完成點名；每人每天限一次，重複使用的照片會被拒絕',
+  ].filter(Boolean);
+  const text = [
+    `【${courseLabel(course)}】自主點名流程說明（開學前請先看過）：`,
+    ...steps.map((s, i) => `${i + 1}. ${s}`),
+    '若逾時未點名，系統會於群組自動提醒；如有疑問請洽老師。',
+  ].join('\n');
+  await sendLinePush(env, set.line_group_id, text);
+  await logActivity(db, {
+    courseId, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+    actionType: 'attendance-selfcheckin-instructions', detail: '老師發送自主點名流程說明給全班',
+  });
+  return { sent: true };
+}
+
 /* ===== Cron：自主點名提醒（每 5 分鐘）=====
    第一次提醒（上課後 offset 分鐘）→ +10 分鐘第二次提醒 → +10 分鐘列出仍未完成者；每階段每天每課程只發一次 */
 async function pendingStudents(db, courseId, date) {

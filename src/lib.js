@@ -1434,6 +1434,33 @@ export async function sendLinePush(env, to, text, mentionUserIds = []) {
   }
 }
 
+/* 老師後台「輸入地址→帶入座標」：呼叫 OpenStreetMap Nominatim 免金鑰地理編碼服務。
+   台灣門牌（如「…路2號」）常查無完整結果，此時退回路名層級座標（較不精確但仍可供半徑比對使用，並以 approx 標示）。 */
+async function nominatimSearch(query) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=zh-TW&q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { headers: { 'user-agent': 'groupmyclass-attendance-geocoder (https://groupmyclass.clare8628.workers.dev)' } });
+  if (!res.ok) throw new Error(`地址查詢失敗 (${res.status})，請稍後再試`);
+  const list = await res.json().catch(() => []);
+  return Array.isArray(list) ? list[0] : null;
+}
+
+export async function geocodeAddress(address) {
+  const q = String(address || '').trim();
+  if (!q) throw new Error('請輸入地址');
+  let hit = await nominatimSearch(q);
+  let approx = false;
+  if (!hit) {
+    const simplified = q.replace(/\d+[\-\d]*號.*$/, '').trim();
+    if (simplified && simplified !== q) {
+      hit = await nominatimSearch(simplified);
+      approx = !!hit;
+    }
+  }
+  const lat = hit && Number(hit.lat), lng = hit && Number(hit.lon);
+  if (!hit || !Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('查無此地址，請改用更完整的地址，或改按「以目前位置設為教室」');
+  return { lat, lng, display: hit.display_name || q, approx };
+}
+
 export function validateScreenshotDataUrl(dataUrl) {
   const m = /^data:image\/png;base64,([a-zA-Z0-9+/=]+)$/.exec(String(dataUrl || '').trim());
   if (!m) throw new Error('課表截圖僅支援 PNG 格式');

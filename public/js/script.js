@@ -3624,15 +3624,27 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full" style="border-top:1px dashed #cbd5e1;padding-top:.6rem;">
         <label><input type="checkbox" name="selfCheckin" checked disabled> 自主點名模式（輔導班固定啟用）（全班學生綁定 LINE 後，於上課後提醒其上網拍照點名；第二次提醒間隔 10 分鐘，再 10 分鐘後列出未完成者。此模式不提醒組長）</label>
       </div>
+      <div class="form-group full" style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;padding:.6rem;">
+        <label>學校／教室地址（輸入後按「查詢地址」自動帶入下方座標，例如：台北市北投區學園路2號）</label>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+          <input name="geoAddress" style="flex:1;min-width:200px;" placeholder="輸入地址後按右側按鈕查詢">
+          <button class="btn btn-secondary" type="button" data-act="geocode-address">🔎 查詢地址</button>
+        </div>
+        <div id="geoAddressResult" class="file-path" style="margin:.3rem 0 0;"></div>
+      </div>
       <div class="form-group"><label>教室緯度（空白＝不檢查定位）</label><input name="geoLat" value="${esc(r.geoLat ? String(r.geoLat) : '')}"></div>
       <div class="form-group"><label>教室經度</label><input name="geoLng" value="${esc(r.geoLng ? String(r.geoLng) : '')}"></div>
-      <div class="form-group"><label>容許半徑（公尺，0＝不檢查）</label><input type="number" name="geoRadius" min="0" max="5000" value="${esc(String(r.geoRadius || 0))}"></div>
-      <div class="form-group"><button class="btn btn-secondary" type="button" data-act="set-geo-here">📍 以目前位置設為教室（請在教室使用）</button></div>
+      <div class="form-group"><label>容許半徑（公尺，0＝不檢查；學校地址誤差較大，建議至少 150～300 公尺）</label><input type="number" name="geoRadius" min="0" max="5000" value="${esc(String(r.geoRadius || 0))}"></div>
+      <div class="form-group"><button class="btn btn-secondary" type="button" data-act="set-geo-here">📍 以目前位置設為教室（請在教室使用，較準確）</button></div>
+      <div class="form-group full file-path" style="margin:0;">
+        ℹ️ 定位僅作為輔助比對（學生座標與上方座標之距離在半徑內即算通過，手機定位本身有誤差，系統已預留容許值），<b>驗證碼仍會保留</b>：定位只能證明「人在哪裡」，無法證明「照片是不是剛剛才拍的」，拍照當下才簽發、5 分鐘內有效的驗證碼才能防止用舊照片蒙混；兩者分工不同，不能互相取代。
+      </div>
       ` : ''}
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定${b1 ? '的同學' : '的組長'}）</button>
+        ${b1 ? `<button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>` : ''}
         <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看${b1 ? '全班' : ''}綁定名單</button>
       </div>
       ${bindingListHtml(bindingLists[c.id])}
@@ -6558,6 +6570,24 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'send-attendance-reminder-test') {
     return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
+  }
+  if (a === 'geocode-address') {
+    // 直接呼叫 API（不走 act()/render()），避免整個表單重繪時被 state 中尚未儲存的舊座標覆蓋掉剛帶入的值
+    const form = btn.closest('form');
+    const address = form.geoAddress.value.trim();
+    const resultEl = document.getElementById('geoAddressResult');
+    if (!address) { if (resultEl) resultEl.textContent = '請先輸入地址'; return; }
+    if (resultEl) resultEl.textContent = '查詢中…';
+    return apiPost('teacher:geocode-address', { address }).then(data => {
+      form.geoLat.value = data.lat.toFixed(6);
+      form.geoLng.value = data.lng.toFixed(6);
+      if (!parseInt(form.geoRadius.value, 10)) form.geoRadius.value = data.approx ? 400 : 200;
+      const approxNote = data.approx ? '⚠️ 查無完整門牌，僅定位到路名層級（精確度較低，已自動調高建議半徑），' : '';
+      if (resultEl) resultEl.textContent = `✅ ${approxNote}已帶入座標，請確認地點：${data.display}（請按「儲存提醒設定」才會生效，若地點有誤請改用「以目前位置設為教室」）`;
+    }).catch(err => { if (resultEl) resultEl.textContent = `❌ ${err.message}`; });
+  }
+  if (a === 'send-selfcheckin-instructions') {
+    return act('teacher:send-selfcheckin-instructions', { courseId: id }, { after: () => alert('✅ 已發送自主點名流程說明至 LINE 群組') });
   }
   if (a === 'set-geo-here') {
     const form = btn.closest('form');
