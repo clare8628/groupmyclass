@@ -64,7 +64,7 @@
     c.width = Math.round((v.videoWidth || 960) * scale); c.height = Math.round((v.videoHeight || 720) * scale);
     const g = c.getContext('2d');
     g.drawImage(v, 0, 0, c.width, c.height);
-    const stamp = `${st.name}  ${new Date().toLocaleString('zh-TW', { hour12: false })}  驗證碼 ${challenge.code}`;
+    const stamp = `${st.name}  ${new Date(challenge.issuedAt).toLocaleString('zh-TW', { hour12: false, timeZone: 'Asia/Taipei' })}  驗證碼 ${challenge.code}`;
     g.font = `bold ${Math.round(c.width / 22)}px sans-serif`;
     g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(0, c.height - c.width / 14, c.width, c.width / 14);
     g.fillStyle = '#fff'; g.fillText(stamp, 10, c.height - c.width / 40);

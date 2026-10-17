@@ -120,6 +120,7 @@ export async function handleCheckin(request, env, db, url) {
       distance = haversineMeters(lat, lng, Number(set.geo_lat), Number(set.geo_lng));
     }
     if (!hasGeo) flags.push('no-geo');
+    flags.push(`elapsed:${Math.round(age / 1000)}s`);
 
     const now = Date.now();
     const ip = request.headers.get('cf-connecting-ip') || '';
