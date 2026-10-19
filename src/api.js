@@ -4,7 +4,7 @@ import {
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
-  getBulletinPageSize, setBulletinPageSize, DEFAULT_CARE_ID,
+  getBulletinPageSize, setBulletinPageSize, getDefaultCourseId, setDefaultCourseId, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
 } from './lib.js';
@@ -54,7 +54,7 @@ export async function handleState(request, env, db) {
     getBulletinPageSize(db),
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db) },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -71,7 +71,7 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, ...extra }, 200, headers);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
@@ -165,6 +165,13 @@ export async function handleAction(request, env, db, body) {
     if (op === 'system-status') {
       const courseId = body.courseId ? String(body.courseId) : '';
       return json({ ok: true, status: await getSystemStatus(db, courseId) });
+    }
+
+    if (op === 'set-default-course') {
+      const id = body.courseId ? String(body.courseId) : '';
+      if (id && !course(id)) return bad('找不到課程', 404);
+      await setDefaultCourseId(db, id);
+      return ok();
     }
 
     if (op === 'set-bulletin-settings') {

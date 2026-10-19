@@ -1375,6 +1375,15 @@ export async function getBulletinPageSize(db) {
   return (n > 0 && n <= 100) ? n : 10;
 }
 
+export async function getDefaultCourseId(db) {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('default_course_id').first().catch(() => null);
+  return row ? row.value : '';
+}
+
+export async function setDefaultCourseId(db, id) {
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('default_course_id', String(id || '')).run();
+}
+
 export async function setBulletinPageSize(db, size) {
   const n = parseInt(size, 10);
   const val = (n > 0 && n <= 100) ? n : 10;
