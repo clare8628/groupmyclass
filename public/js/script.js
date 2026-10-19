@@ -6439,6 +6439,14 @@ app.addEventListener('click', e => {
     // 表單已展開時（常在畫面下方）不再切換關閉，改為捲動到表單並聚焦姓名欄；關閉請用表單右上 ✕
     loginMode = 'student';
     render();
+    // 首頁／問卷等頁面沒有登入表單：切到點名子系統（有登入表單）後再重繪
+    if (!document.getElementById('login') && cur()) {
+      publicSubView = 'attendance';
+      try {
+        window.history.pushState({ publicSubView, currentId: state.currentId }, '', window.location.pathname + window.location.search + '#attendance');
+      } catch (_) {}
+      render();
+    }
     document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     document.querySelector('#login input[name="name"]')?.focus({ preventScroll: true });
     return;
