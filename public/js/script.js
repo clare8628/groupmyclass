@@ -6436,9 +6436,11 @@ app.addEventListener('click', e => {
   if (a === 'open-leader-login') {
     // 申請擔任組長：停留在目前分組頁面顯示登入表單，登入後未分組學生即可開組挑選組員（不像 show-student-login 會跳轉去問卷頁）
     e.preventDefault();
-    loginMode = loginMode === 'student' ? null : 'student';
+    // 表單已展開時（常在畫面下方）不再切換關閉，改為捲動到表單並聚焦姓名欄；關閉請用表單右上 ✕
+    loginMode = 'student';
     render();
     document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.querySelector('#login input[name="name"]')?.focus({ preventScroll: true });
     return;
   }
   if (a === 'quick-student-fill') {
