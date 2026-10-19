@@ -102,7 +102,8 @@ export async function handleAction(request, env, db, body) {
       return bad('請輸入學生姓名與密碼（Vui lòng nhập họ tên cùng mật khẩu）', 400);
     }
     // 依姓名尋找學生（若有多位同名學生，搭配學號密碼比對）
-    const matchingByName = c.students.filter(x => x.name.trim() === inputAccount);
+    const normName = v => String(v || '').normalize('NFKC').replace(/\s+/g, '');
+    const matchingByName = c.students.filter(x => normName(x.name) === normName(inputAccount));
     let s = null;
     if (matchingByName.length === 1) {
       s = matchingByName[0];
@@ -121,7 +122,13 @@ export async function handleAction(request, env, db, body) {
       // 容錯支援：若學生誤輸入學號，亦允許對應以維持最佳操作體驗
       s = c.students.find(x => x.id === inputAccount);
     }
-    if (!s) return bad('找不到該學生姓名，或不在本課程修課名單中（Không tìm thấy họ tên sinh viên trong khóa học này）', 401);
+    if (!s) {
+      // 提示：該姓名可能在其他課程名單中（常見情形：學生停在錯誤的課程分頁登入）
+      const norm = v => String(v || '').normalize('NFKC').replace(/\s+/g, '');
+      const other = courses.find(oc => oc.id !== c.id && oc.students.some(x => norm(x.name) === norm(inputAccount) || x.id === inputAccount));
+      const hint = other ? `；此姓名在課程「${other.year} ${other.subject}」名單中，請先切換到該課程再登入（Vui lòng chuyển sang đúng khóa học rồi đăng nhập）` : '';
+      return bad(`找不到該學生姓名，或不在本課程修課名單中（Không tìm thấy họ tên sinh viên trong khóa học này）${hint}`, 401);
+    }
 
     // 驗證密碼：若有自訂密碼 hash 則比對雜湊；若尚未自訂則預設密碼為學號
     let valid = false;
