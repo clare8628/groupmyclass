@@ -2973,11 +2973,14 @@ function teacherCourse(c) {
   return `
   <div class="teacher-section">
     <h2>分組設定 <small>${esc(courseLabel(c))}</small></h2>
+    <div class="btn-row" style="margin:.5rem 0 1rem;padding:.6rem .8rem;background:#fefce8;border:1px solid #fde68a;border-radius:8px;align-items:center;">
+      <b>前台預設課程：</b>
+      ${state.defaultCourseId === c.id
+        ? '<span class="badge" style="align-self:center;color:#15803d;font-weight:700;">⭐ 本課程目前為前台預設</span><button class="btn btn-secondary btn-sm" data-act="set-default-course" data-id="">取消預設</button>'
+        : `<button class="btn btn-primary btn-sm" data-act="set-default-course" data-id="${c.id}" title="學生進入前台時自動選取本課程，不必先選課程">⭐ 設為前台預設課程</button>`}
+    </div>
     ${courseForm(c)}
     <div class="btn-row" style="margin-top:1rem;justify-content:flex-end;">
-      ${state.defaultCourseId === c.id
-        ? '<span class="badge" style="align-self:center;color:#15803d;font-weight:700;">⭐ 目前為前台預設課程</span><button class="btn btn-secondary btn-sm" data-act="set-default-course" data-id="">取消預設</button>'
-        : `<button class="btn btn-secondary btn-sm" data-act="set-default-course" data-id="${c.id}" title="學生進入前台時自動選取本課程，不必先選課程">⭐ 設為前台預設課程</button>`}
       <button class="btn btn-danger btn-sm" data-act="del-course" data-id="${c.id}" title="完全刪除本科目所有資料">🗑️ 刪除整個科目（含名單與分組）</button>
     </div>
   </div>
