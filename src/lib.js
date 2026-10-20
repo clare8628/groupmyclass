@@ -1567,12 +1567,16 @@ export async function replyLineMessage(env, replyToken, text) {
   if (!res.ok) console.error('LINE reply failed', res.status, await res.text());
 }
 
-/* 依 (course_id) 取出所有組長／副組長，並依 group_id 分組，各自帶出是否已綁定 LINE */
+/* 依 (course_id) 取出所有組長／副組長，並依 group_id 分組，各自帶出是否已綁定 LINE（全域綁定檢查） */
 async function groupLeadersByGroup(db, courseId) {
   const rows = (await db.prepare(`
-    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice, b.line_user_id AS line_user_id
+    SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice, lb.line_user_id AS line_user_id
     FROM students s
-    LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+    LEFT JOIN (
+      SELECT student_id, line_user_id, MAX(created_at) AS bound_at
+      FROM line_bindings
+      GROUP BY student_id
+    ) lb ON lb.student_id = s.id
     WHERE s.course_id = ? AND (s.is_leader = 1 OR s.is_vice = 1) AND s.group_id != ''
   `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
   const byGroup = new Map();
@@ -1674,32 +1678,32 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   return `${studentName}（${canonicalId}）已成功綁定 LINE！`;
 }
 
-/* 老師後台：列出本課程 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計，全班（含組長／副組長）皆列出。
-   已於「華語B1輔導課修課點名」（SELF_CHECKIN_COURSE_ID）綁定之學生，視為已滿足本課程之綁定需求，免重複綁定
-   （標記 exemptViaB1）；查詢對象本身即為該輔導課時不適用此豁免。 */
+/* 老師後台：列出本課程 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計。
+   目前已升級為所有學生成員皆需綁定：只要該學生在系統內任一處綁定過 LINE，即算已綁定，不只限於輔導班或特定課程。 */
 export async function listAttendanceBindings(db, courseId) {
   await ensureSchema(db);
   const rows = (await db.prepare(`
       SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice,
-             b.line_user_id AS line_user_id, b.created_at AS bound_at,
-             ob.line_user_id AS other_line_user_id, ob.created_at AS other_bound_at
+             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at
       FROM students s
-      LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
-      LEFT JOIN line_bindings ob ON ob.course_id = ? AND ob.student_id = s.id
+      LEFT JOIN (
+        SELECT student_id, line_user_id, MAX(created_at) AS bound_at
+        FROM line_bindings
+        GROUP BY student_id
+      ) lb ON lb.student_id = s.id
       WHERE s.course_id = ?
       ORDER BY s.group_id, s.is_leader DESC, s.seq, s.id
-    `).bind(SELF_CHECKIN_COURSE_ID, courseId).all().catch(() => ({ results: [] }))).results || [];
+    `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
   const toItem = r => {
-    const ownBound = !!r.line_user_id;
-    const exemptViaB1 = !ownBound && courseId !== SELF_CHECKIN_COURSE_ID && !!r.other_line_user_id;
+    const isBound = !!r.line_user_id;
     return {
       id: r.id,
       name: r.name,
       groupName: r.group_id ? String(r.group_id).replace(/^g_/, '') : '',
       role: r.is_leader ? '組長' : r.is_vice ? '副組長' : '',
-      boundAt: ownBound ? r.bound_at : (exemptViaB1 ? r.other_bound_at : 0),
-      exemptViaB1,
-      isBound: ownBound || exemptViaB1,
+      boundAt: isBound ? (r.bound_at || 0) : 0,
+      exemptViaB1: false,
+      isBound,
     };
   };
   const items = rows.map(toItem);
@@ -1740,7 +1744,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
   const pending = allStudents.filter(s => !submittedIds.has(s.id));
   if (!pending.length) return { sent: false, detail: '全班同學皆已完成生活關懷問卷，不需發送' };
 
-  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings WHERE course_id = ?').bind(courseId).all()).results || [];
+  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings GROUP BY student_id').all()).results || [];
   const bindings = new Map(boundRows.map(r => [r.student_id, r.line_user_id]));
 
   const bound = [];
@@ -1783,7 +1787,7 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
 
   const students = (await db.prepare('SELECT id, name FROM students WHERE course_id = ?').bind(courseId).all()).results || [];
   const studentMap = new Map(students.map(s => [s.id, s.name]));
-  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings WHERE course_id = ?').bind(courseId).all()).results || [];
+  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings GROUP BY student_id').all()).results || [];
   const bindings = new Map(boundRows.map(r => [r.student_id, r.line_user_id]));
 
   const bound = [];

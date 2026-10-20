@@ -157,7 +157,7 @@ export async function listSelfCheckin(db, courseId, date) {
   const recs = (await db.prepare('SELECT student_id, status, code, lat, lng, accuracy, distance, flags, device_id, created_at FROM selfcheckin_records WHERE course_id = ? AND date = ?')
     .bind(courseId, day).all()).results || [];
   const byId = new Map(recs.map(r => [r.student_id, r]));
-  const bound = new Set(((await db.prepare('SELECT student_id FROM line_bindings WHERE course_id = ?').bind(courseId).all()).results || []).map(r => r.student_id));
+  const bound = new Set(((await db.prepare('SELECT student_id FROM line_bindings').all()).results || []).map(r => r.student_id));
   const deviceCount = new Map();
   recs.forEach(r => r.device_id && deviceCount.set(r.device_id, (deviceCount.get(r.device_id) || 0) + 1));
   return {
@@ -229,9 +229,13 @@ export async function sendSelfCheckinInstructions(db, env, courseId) {
    第一次提醒（上課後 offset 分鐘）→ +10 分鐘第二次提醒 → +10 分鐘列出仍未完成者；每階段每天每課程只發一次 */
 async function pendingStudents(db, courseId, date) {
   const rows = (await db.prepare(`
-    SELECT s.id AS id, s.name AS name, b.line_user_id AS line_user_id
+    SELECT s.id AS id, s.name AS name, lb.line_user_id AS line_user_id
     FROM students s
-    LEFT JOIN line_bindings b ON b.course_id = s.course_id AND b.student_id = s.id
+    LEFT JOIN (
+      SELECT student_id, line_user_id, MAX(created_at) AS bound_at
+      FROM line_bindings
+      GROUP BY student_id
+    ) lb ON lb.student_id = s.id
     WHERE s.course_id = ? AND s.id NOT IN (SELECT student_id FROM selfcheckin_records WHERE course_id = ? AND date = ? AND status = 'ok')
     ORDER BY s.seq, s.id
   `).bind(courseId, courseId, date).all()).results || [];

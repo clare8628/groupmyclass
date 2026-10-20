@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.155.20261020.112440';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.156.20261020.114704';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -289,17 +289,35 @@ function selfCheckinBlock(c) {
 
 /* 點名提醒：LINE 綁定名單（逐課程暫存於前端，供重繪使用） */
 const bindingLists = {};
-function bindingListHtml(l) {
-  if (!l) return '';
-  const label = x => x.groupName ? `第${esc(x.groupName)}組 ${esc(x.role)} ${esc(x.name)}（${esc(x.id)}）` : `${esc(x.name)}（${esc(x.id)}）`;
+const loadingBindings = {};
+function ensureBindingsLoaded(courseId) {
+  if (!courseId || bindingLists[courseId] || loadingBindings[courseId]) return;
+  loadingBindings[courseId] = true;
+  apiPost('teacher:list-attendance-bindings', { courseId }).then(data => {
+    bindingLists[courseId] = data;
+    render();
+  }).catch(err => {
+    console.error('Failed to load bindings:', err);
+  }).finally(() => {
+    delete loadingBindings[courseId];
+  });
+}
+
+function bindingListHtml(l, courseId) {
+  if (courseId && !l) ensureBindingsLoaded(courseId);
+  if (!l) return '<div class="form-group full" style="margin-top:0.6rem;color:#64748b;font-weight:500;">⏳ 正在自動載入全班學生綁定名單...</div>';
+  const label = x => x.groupName ? `第${esc(x.groupName)}組 ${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）` : `${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）`;
   const rowsOf = (items, withTime) => items.length
-    ? items.map(x => `<li>${label(x)}${x.exemptViaB1 ? ' <small style="color:#0369a1;">（已於輔導班綁定，免重複）</small>' : (withTime && x.boundAt ? ` <small>綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</small>` : '')}</li>`).join('')
+    ? items.map(x => `<li>${label(x)}${withTime && x.boundAt ? ` <small style="color:#059669;">（綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}）</small>` : ''}</li>`).join('')
     : '<li>（無）</li>';
   const total = l.total !== undefined ? l.total : (l.bound.length + l.unbound.length);
+  const rate = total ? Math.round(l.bound.length / total * 100) : 0;
   return `<div class="form-group full" style="margin-top:0.6rem;">
-    <div style="font-weight:600;color:#1e293b;margin-bottom:0.3rem;">📊 統計：共 ${total} 人，已綁定 ${l.bound.length} 人，未綁定 ${l.unbound.length} 人</div>
-    <div style="font-weight:600;color:#15803d;">✅ 已綁定（${l.bound.length}）</div><ul style="margin:0.2rem 0 0.6rem 1.2rem;">${rowsOf(l.bound, true)}</ul>
-    <div style="font-weight:600;color:#b91c1c;">⚠️ 未綁定（${l.unbound.length}）</div><ul style="margin:0.2rem 0 0 1.2rem;">${rowsOf(l.unbound, false)}</ul>
+    <div style="font-weight:600;color:#1e293b;margin-bottom:0.5rem;font-size:1.02rem;">📊 全體學生綁定統計：共 ${total} 人，已綁定 ${l.bound.length} 人，未綁定 ${l.unbound.length} 人（綁定率 ${rate}%）</div>
+    <div style="font-weight:600;color:#15803d;margin-top:0.5rem;">✅ 已綁定學生（${l.bound.length} 人）</div>
+    <ul style="margin:0.25rem 0 0.75rem 1.25rem;line-height:1.7;">${rowsOf(l.bound, true)}</ul>
+    <div style="font-weight:600;color:#b91c1c;margin-top:0.5rem;">⚠️ 未綁定學生（${l.unbound.length} 人）</div>
+    <ul style="margin:0.25rem 0 0 1.25rem;line-height:1.7;">${rowsOf(l.unbound, false)}</ul>
   </div>`;
 }
 
@@ -3687,10 +3705,10 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
         ${b1 ? `
         <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
         <button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看全班綁定名單</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">🔄 重新整理綁定名單</button>
         ` : '<p class="file-path" style="margin:0.5rem 0 0;width:100%;">💡 綁定名單與統計已移至「點名管理 → 綁定查詢與統計」。</p>'}
       </div>
-      ${b1 ? bindingListHtml(bindingLists[c.id]) : ''}
+      ${b1 ? bindingListHtml(bindingLists[c.id], c.id) : ''}
     </form>`;
 
   return `
@@ -4212,9 +4230,9 @@ function teacherAttendanceBlock(c) {
   return sessionsBlock;
 }
 
-/* ---- 點名管理專項：綁定查詢與統計（全班綁定；供未來問卷提醒等功能使用）----
-   原班級 LINE 群組已開放全班綁定（非僅組長／副組長）；已於本群組（幹部群組）綁定之組長／副組長，
-   或已於「華語B1輔導課修課點名」綁定之同學，視為已滿足綁定，不需再重複綁定（見 listAttendanceBindings 的跨課程綁定檢查）。 */
+/* ---- 點名管理專項：綁定查詢與統計（全體學生綁定名單與統計）----
+   目前系統已升級為所有學生成員皆需綁定：只要該學生曾在系統內任一處綁定 LINE，即算已綁定，不只限於輔導班學生。
+   進入本頁面無需點擊查詢，系統直接列出全體學生綁定狀況。 */
 function teacherBindingStatsBlock(c) {
   if (!c) {
     return `
@@ -4223,19 +4241,20 @@ function teacherBindingStatsBlock(c) {
       <p class="file-path">請先從左側點選或建立課程。</p>
     </div>`;
   }
+  ensureBindingsLoaded(c.id);
   return `
   <div class="teacher-section">
     <h2>🔗 綁定查詢與統計 <small>${esc(courseLabel(c))}</small></h2>
     <p class="file-path" style="margin:0 0 0.75rem 0;">
-      原班級 LINE 群組已開放<b>全班綁定</b>（任何學生皆可在群組輸入「綁定 學號」完成綁定，供日後問卷提醒等功能使用，不限組長／副組長）。<br>
-      💡 已於本群組（幹部群組）綁定之組長／副組長，或已於「華語B1輔導課修課點名」綁定之同學，視為已滿足綁定，<b>不需再重複綁定</b>。
+      系統已升級為<b>全體學生成員皆需綁定 LINE</b>（學生於群組或私訊中輸入「綁定 學號」即可完成綁定，供點名提醒、問卷推播與缺曠通知使用）。<br>
+      💡 系統自動整合全體學生綁定狀況：只要學生曾在任一課程、幹部群組、全體群組或私訊中綁定過 LINE，即算已綁定，<b>不需重複綁定</b>。以下已自動列出全體學生綁定名單。
     </p>
     <div class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
-      <div class="form-group full">
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>
+      <div class="form-group full" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">🔄 重新整理綁定名單</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
       </div>
-      ${bindingListHtml(bindingLists[c.id])}
+      ${bindingListHtml(bindingLists[c.id], c.id)}
     </div>
   </div>`;
 }
