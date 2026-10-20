@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.154.20261020.105623';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.155.20261020.112440';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -2649,7 +2649,7 @@ function attendanceSubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}">${label}</button></li>`;
   return `<ul class="tree-sub">
     ${node('sessions', '點名時段設定')}
-    ${node('reminder', '點名自動提醒（LINE）')}
+    ${node('reminder', '點名自動提醒（LINE 群組 ID(幹部)）')}
     ${node('bindings', '綁定查詢與統計')}
     <li class="${sec === 'b1' ? 'active' : ''}">
       <div class="tree-node-row">
@@ -2670,7 +2670,7 @@ function b1SubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}">${label}</button></li>`;
   return `<ul class="tree-sub">
     ${node('roster', '修課名單（勾選／匯入）')}
-    ${node('reminder', '點名自動提醒（LINE 群組 ID）')}
+    ${node('reminder', '點名自動提醒（LINE 群組 ID(全體)）')}
     ${node('selfcheck', '自主點名審核（照片）')}
   </ul>`;
 }
@@ -3578,8 +3578,9 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
     <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1rem;font-size:0.85rem;color:#78350f;line-height:1.6;">
       ⚠️ <b>尚未設定 LINE 官方帳號密鑰</b>：請先建立 LINE Messaging API 官方帳號，並以
       <code>npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN</code> 與
-      <code>npx wrangler secret put LINE_CHANNEL_SECRET</code> 設定密鑰後重新部署，否則訊息無法送出。<br>
-      設定完成後，將官方帳號加入班級 LINE 群組，Bot 會在群組內自動回覆「群組 ID」，複製貼到下方「LINE 群組 ID」欄位即可。
+      設定完成後，將官方帳號加入 LINE 群組，Bot 會在群組內自動回覆「群組 ID」，複製貼到下方對應欄位即可：<br>
+      • <b>LINE 群組 ID(幹部)</b>：<code>C9525fed4991dc073e4d01be5ec874510</code>（僅發送幹部點名提醒）<br>
+      • <b>LINE 群組 ID(全體)</b>：<code>Cd8481a3f8963504dc26a723af6020068</code>（發送輔導班、問卷、缺曠提醒及全班綁定教學訊息）
     </div>`;
 
   const scheduleRows = schedule.map(d => `
@@ -3629,7 +3630,27 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group"><label>學期開學日（此日起才發送，空白＝不限）</label><input type="date" name="startDate" value="${esc(r.startDate || '')}"></div>
       <div class="form-group"><label>課程結束日（此日後停止發送，空白＝不限）</label><input type="date" name="endDate" value="${esc(r.endDate || '')}"></div>
       <div class="form-group full"><label>排除日期（國定假日等不發送的日子，每行或以逗號分隔一個，格式 YYYY-MM-DD）</label><textarea name="excludedDates" rows="3" style="width:100%;" placeholder="2026-10-26\n2026-12-25">${esc((r.excludedDates || []).join('\n'))}</textarea></div>
-      <div class="form-group"><label>LINE 群組 ID</label><input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C1234567890abcdef..."></div>
+      ${b1 ? `
+      <div class="form-group full" style="background:#f0fdf4;border:1.5px solid #10b981;border-radius:8px;padding:0.75rem 1rem;">
+        <label style="font-weight:700;color:#065f46;display:flex;align-items:center;gap:0.4rem;font-size:0.95rem;">
+          <span>📢 LINE 群組 ID(全體)</span>
+          <span class="badge" style="background:#10b981;color:#fff;font-size:0.75rem;padding:0.15rem 0.45rem;border-radius:4px;">全體學生群組</span>
+        </label>
+        <input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：Cd8481a3f8963504dc26a723af6020068" style="margin-top:0.3rem;">
+        <p class="file-path" style="margin:0.35rem 0 0;font-size:0.83rem;color:#047857;">
+          💡 此為<b>全體學生群組</b>（<code>Cd8481a3f8963504dc26a723af6020068</code>）。輔導班自主點名、問卷填寫、缺曠提醒及全班綁定教學訊息皆發送至此群組。
+        </p>
+      </div>` : `
+      <div class="form-group full" style="background:#eff6ff;border:1.5px solid #3b82f6;border-radius:8px;padding:0.75rem 1rem;">
+        <label style="font-weight:700;color:#1e40af;display:flex;align-items:center;gap:0.4rem;font-size:0.95rem;">
+          <span>👥 LINE 群組 ID(幹部)</span>
+          <span class="badge" style="background:#3b82f6;color:#fff;font-size:0.75rem;padding:0.15rem 0.45rem;border-radius:4px;">幹部專用群組</span>
+        </label>
+        <input name="lineGroupId" value="${esc(r.lineGroupId || '')}" placeholder="例如：C9525fed4991dc073e4d01be5ec874510" style="margin-top:0.3rem;">
+        <p class="file-path" style="margin:0.35rem 0 0;font-size:0.83rem;color:#1d4ed8;">
+          💡 此為<b>組長／副組長等幹部群組</b>（<code>C9525fed4991dc073e4d01be5ec874510</code>）。每週課表點名僅在此群組提醒組長／副組長；其餘全體通知（輔導班、問卷、缺曠提醒等）皆發送於「LINE 群組 ID(全體)」。
+        </p>
+      </div>`}
       ${b1 ? `
       <div class="form-group full" style="border-top:1px dashed #cbd5e1;padding-top:.6rem;">
         <label><input type="checkbox" name="selfCheckin" checked disabled> 自主點名模式（輔導班固定啟用）（全班學生綁定 LINE 後，於上課後提醒其上網拍照點名；第二次提醒間隔 10 分鐘，再 10 分鐘後列出未完成者。此模式不提醒組長）</label>
@@ -3664,7 +3685,7 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
         ${b1 ? `
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的同學）</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
         <button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>
         <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看全班綁定名單</button>
         ` : '<p class="file-path" style="margin:0.5rem 0 0;width:100%;">💡 綁定名單與統計已移至「點名管理 → 綁定查詢與統計」。</p>'}
@@ -4212,7 +4233,7 @@ function teacherBindingStatsBlock(c) {
     <div class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
       <div class="form-group full">
         <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">📋 查看綁定名單</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送綁定教學訊息（通知尚未綁定的同學）</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
       </div>
       ${bindingListHtml(bindingLists[c.id])}
     </div>
@@ -4846,6 +4867,7 @@ function teacherAbsenceCard(c, sv) {
       <button class="btn btn-secondary btn-sm" type="submit" style="margin:0;">💾 儲存</button>
       <button class="btn btn-primary btn-sm" type="button" data-act="open-abs-picker" data-survey="${esc(sv.id)}" style="margin:0;">👥 選擇需填寫學生</button>
       <button class="btn btn-success btn-sm" type="button" data-act="export-absence-csv" data-survey="${esc(sv.id)}" style="margin:0;">📥 匯出填寫內容</button>
+      <button class="btn btn-secondary btn-sm" type="button" data-act="send-absence-survey-reminder" data-survey="${esc(sv.id)}" style="margin:0;">📢 發送 LINE 缺曠填寫提醒（至全體群組）</button>
     </form>
     <h4 style="margin:0.5rem 0 0.3rem;">⏳ 尚未填寫（${pending.length} 位，依所屬組長）</h4>
     ${pending.length ? Object.keys(byLeader).sort().map(l => `
@@ -4970,6 +4992,9 @@ function teacherWellbeingBlock(c) {
         <p class="file-path" style="margin:0;">查閱全班生活關懷問卷回覆、追蹤尚未填寫名單、管理問卷開放時限與匯出完整紀錄。</p>
       </div>
       <div style="display:flex;gap:0.5rem;align-items:center;">
+        <button class="btn btn-secondary btn-sm" type="button" data-act="send-care-survey-reminder" data-id="${esc(c0.id)}">
+          📢 發送 LINE 問卷填寫提醒（至全體群組）
+        </button>
         <button class="btn btn-success btn-sm" type="button" data-act="export-survey-csv">
           📥 匯出問卷紀錄（Excel/CSV）
         </button>
@@ -6684,6 +6709,15 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   }
   if (a === 'send-attendance-binding-instructions') {
     return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
+  }
+  if (a === 'send-care-survey-reminder') {
+    if (!confirm('確定要發送「生活關懷問卷填寫提醒」至 LINE 群組 ID(全體) 嗎？')) return;
+    return act('teacher:send-care-survey-reminder', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
+  }
+  if (a === 'send-absence-survey-reminder') {
+    const surveyId = btn.dataset.survey || '';
+    if (!confirm('確定要發送「缺曠原因調查填寫提醒」至 LINE 群組 ID(全體) 嗎？')) return;
+    return act('teacher:send-absence-survey-reminder', { courseId: (cur() && cur().id) || id, surveyId }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'attendance-unlock-all') {
     if (!c) return;

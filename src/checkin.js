@@ -7,7 +7,7 @@
    5. 僅限課表上課日、上課前後時間窗內；老師可逐筆審核退回（退回即改記缺席） */
 import {
   json, bad, readSession, secret, hmac, sha256, ensureSchema, markDataChanged, logActivity, makeLogStmt,
-  parseJsonArray, addMinutesToHm, hmToMinutes, sendLinePush,
+  parseJsonArray, addMinutesToHm, hmToMinutes, sendLinePush, pushWithMentions,
 } from './lib.js';
 
 const courseLabel = (c) => { const y = c.year || '', s = c.subject || ''; return s.startsWith(y) ? s : `${y}${s}`; };
@@ -238,17 +238,7 @@ async function pendingStudents(db, courseId, date) {
   return { total: rows.length, bound: rows.filter(r => r.line_user_id), unbound: rows.filter(r => !r.line_user_id) };
 }
 
-/* LINE textV2 單則訊息最多 20 個 mention，超過時分多則發送 */
-async function pushWithMentions(env, to, head, users, tail) {
-  const MAX = 20;
-  if (!users.length) return sendLinePush(env, to, [head, tail].filter(Boolean).join('\n'));
-  for (let i = 0; i < users.length; i += MAX) {
-    const chunk = users.slice(i, i + MAX);
-    const tags = chunk.map((_, k) => `{m${k}}`).join(' ');
-    const last = i + MAX >= users.length;
-    await sendLinePush(env, to, [i === 0 ? head : '', tags, last ? tail : ''].filter(Boolean).join('\n'), chunk.map(u => u.line_user_id));
-  }
-}
+
 
 export async function runSelfCheckinReminders(db, env, now = Date.now()) {
   await ensureSchema(db);

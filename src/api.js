@@ -7,6 +7,7 @@ import {
   getBulletinPageSize, setBulletinPageSize, getDefaultCourseId, setDefaultCourseId, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
+  sendCareSurveyReminder, sendAbsenceSurveyReminder,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin, sendSelfCheckinInstructions } from './checkin.js';
@@ -886,6 +887,43 @@ export async function handleAction(request, env, db, body) {
           operatorName: '老師',
           actionType: 'attendance-reminder-binding-notice',
           detail: `老師發送 LINE 綁定教學訊息：${result.detail}`,
+        });
+        return ok(result);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 502);
+      }
+    }
+    if (op === 'send-care-survey-reminder') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      try {
+        const result = await sendCareSurveyReminder(db, env, c.id);
+        await logActivity(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'survey-care-reminder',
+          detail: `老師發送生活關懷問卷填寫提醒至 LINE 群組 ID(全體)：${result.detail}`,
+        });
+        return ok(result);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 502);
+      }
+    }
+    if (op === 'send-absence-survey-reminder') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const surveyId = String(body.surveyId || '');
+      try {
+        const result = await sendAbsenceSurveyReminder(db, env, c.id, surveyId);
+        await logActivity(db, {
+          courseId: c.id,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'survey-absence-reminder',
+          detail: `老師發送缺曠原因調查提醒至 LINE 群組 ID(全體)：${result.detail}`,
         });
         return ok(result);
       } catch (err) {

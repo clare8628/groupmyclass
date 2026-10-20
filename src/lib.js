@@ -1443,6 +1443,36 @@ export async function sendLinePush(env, to, text, mentionUserIds = []) {
   }
 }
 
+/* LINE textV2 單則訊息最多 20 個 mention，超過時分批多則發送 */
+export async function pushWithMentions(env, to, head, users, tail = '') {
+  const MAX = 20;
+  if (!users.length) return sendLinePush(env, to, [head, tail].filter(Boolean).join('\n'));
+  for (let i = 0; i < users.length; i += MAX) {
+    const chunk = users.slice(i, i + MAX);
+    const tags = chunk.map((_, k) => `{m${k}}`).join(' ');
+    const last = i + MAX >= users.length;
+    await sendLinePush(env, to, [i === 0 ? head : '', tags, last ? tail : ''].filter(Boolean).join('\n'), chunk.map(u => u.line_user_id));
+  }
+}
+
+/* 解析全體群組 ID（預設 Cd8481a3f8963504dc26a723af6020068，或由輔導班／後台設定取得）
+   規定：除了幹部點名外，輔導班、問卷、缺曠提醒、全班綁定教學等全體通知一律發送於全體群組 */
+export async function getAllStudentsLineGroupId(db) {
+  const b1Row = await db.prepare('SELECT line_group_id FROM attendance_reminder_settings WHERE course_id = ?').bind(SELF_CHECKIN_COURSE_ID).first().catch(() => null);
+  if (b1Row && b1Row.line_group_id) return b1Row.line_group_id;
+  const directRow = await db.prepare('SELECT line_group_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind('Cd8481a3f8963504dc26a723af6020068').first().catch(() => null);
+  if (directRow && directRow.line_group_id) return directRow.line_group_id;
+  return 'Cd8481a3f8963504dc26a723af6020068';
+}
+
+/* 解析幹部群組 ID（預設 C9525fed4991dc073e4d01be5ec874510，或由一般班級點名提醒設定取得）
+   規定：幹部點名（組長／副組長點名提醒）專用 */
+export async function getCadreLineGroupId(db, courseId) {
+  const row = await db.prepare('SELECT line_group_id FROM attendance_reminder_settings WHERE course_id = ?').bind(courseId).first().catch(() => null);
+  if (row && row.line_group_id) return row.line_group_id;
+  return 'C9525fed4991dc073e4d01be5ec874510';
+}
+
 /* 老師後台「輸入地址→帶入座標」：呼叫 OpenStreetMap Nominatim 免金鑰地理編碼服務。
    台灣門牌（如「…路2號」）常查無完整結果，此時退回路名層級座標（較不精確但仍可供半徑比對使用，並以 approx 標示）。 */
 async function nominatimSearch(query) {
@@ -1678,20 +1708,101 @@ export async function listAttendanceBindings(db, courseId) {
   return { bound, unbound, total: items.length, boundCount: bound.length, unboundCount: unbound.length };
 }
 
-/* 老師後台按鈕「發送綁定教學訊息」：取代老師自己逐一告知，改由系統一次推播尚未綁定名單與指令範例。
-   全班（含組長／副組長）皆可能出現於未綁定名單中；已於輔導班綁定之學生已於 listAttendanceBindings 排除。 */
+/* 老師後台按鈕「發送全班綁定教學訊息」：
+   依規定，全班綁定教學訊息發送至 LINE 群組 ID(全體)（Cd8481a3f8963504dc26a723af6020068），通知尚未綁定的全班同學。 */
 export async function sendLineBindingInstructions(db, env, courseId) {
   await ensureSchema(db);
-  const row = await getReminderSettingsRow(db, courseId);
-  if (!row || !row.line_group_id) throw new Error('請先設定 LINE 群組 ID');
+  const targetGroupId = await getAllStudentsLineGroupId(db);
+  if (!targetGroupId) throw new Error('請先設定 LINE 群組 ID(全體)');
   const { unbound } = await listAttendanceBindings(db, courseId);
   if (!unbound.length) return { sent: false, detail: '全班皆已綁定，不需發送' };
   const text = [
-    '請尚未綁定 LINE 的同學，在本群組輸入「綁定 學號」完成綁定（例如：綁定 B10912345），之後點名提醒與未完成名單才能標記到您：',
+    '【LINE 綁定提醒】請尚未綁定 LINE 的同學，在本群組輸入「綁定 學號」完成綁定（例如：綁定 41461D01），之後點名提醒、問卷與缺曠通知才能標記到您：',
     unbound.map(x => `${x.name}（${x.id}）`).join('、'),
   ].join('\n');
-  await sendLinePush(env, row.line_group_id, text);
-  return { sent: true, detail: `已通知 ${unbound.length} 人尚未綁定` };
+  await sendLinePush(env, targetGroupId, text);
+  return { sent: true, detail: `已推播至全體群組，通知 ${unbound.length} 人尚未綁定` };
+}
+
+/* 老師後台：推播「生活關懷問卷填寫提醒」至 LINE 群組 ID(全體) */
+export async function sendCareSurveyReminder(db, env, courseId) {
+  await ensureSchema(db);
+  const targetGroupId = await getAllStudentsLineGroupId(db);
+  if (!targetGroupId) throw new Error('尚未設定 LINE 群組 ID(全體)');
+
+  const c = await db.prepare('SELECT id, year, subject, care_subtitle FROM courses WHERE id = ?').bind(courseId).first();
+  if (!c) throw new Error('課程不存在');
+
+  const allStudents = (await db.prepare('SELECT id, name FROM students WHERE course_id = ? ORDER BY seq, id').bind(courseId).all()).results || [];
+  const submittedRows = (await db.prepare('SELECT student_id FROM survey_submissions WHERE course_id = ?').bind(courseId).all()).results || [];
+  const submittedIds = new Set(submittedRows.map(r => r.student_id));
+
+  const pending = allStudents.filter(s => !submittedIds.has(s.id));
+  if (!pending.length) return { sent: false, detail: '全班同學皆已完成生活關懷問卷，不需發送' };
+
+  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings WHERE course_id = ?').bind(courseId).all()).results || [];
+  const bindings = new Map(boundRows.map(r => [r.student_id, r.line_user_id]));
+
+  const bound = [];
+  const unbound = [];
+  for (const s of pending) {
+    const lineUserId = bindings.get(s.id);
+    if (lineUserId) bound.push({ id: s.id, name: s.name, line_user_id: lineUserId });
+    else unbound.push(s);
+  }
+
+  const courseTitle = [c.year, c.subject].filter(Boolean).join(' ') || c.id;
+  const head = `【${courseTitle}】生活關懷問卷填寫提醒：\n請以下尚未填寫生活關懷問卷的同學，儘速登入系統完成填寫：`;
+  const tail = [
+    `問卷填寫網址：https://groupmyclass.clare8628.workers.dev/`,
+    unbound.length ? `尚未綁定 LINE（請於本群組輸入「綁定 學號」）：${unbound.map(s => `${s.name}（${s.id}）`).join('、')}` : '',
+  ].filter(Boolean).join('\n');
+
+  await pushWithMentions(env, targetGroupId, head, bound, tail);
+  return { sent: true, detail: `已推播至全體群組，提醒 ${pending.length} 位同學填寫生活關懷問卷（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+}
+
+/* 老師後台：推播「缺曠原因調查填寫提醒」至 LINE 群組 ID(全體) */
+export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
+  await ensureSchema(db);
+  const targetGroupId = await getAllStudentsLineGroupId(db);
+  if (!targetGroupId) throw new Error('尚未設定 LINE 群組 ID(全體)');
+
+  const sv = await db.prepare('SELECT id, subtitle, student_ids, threshold FROM absence_surveys WHERE course_id = ? AND id = ?').bind(courseId, surveyId).first();
+  if (!sv) throw new Error('缺曠調查問卷不存在');
+
+  let targetStudentIds = [];
+  try { targetStudentIds = JSON.parse(sv.student_ids || '[]'); } catch (_) {}
+  if (!targetStudentIds.length) return { sent: false, detail: '此缺曠調查問卷尚未選擇需填寫的學生名單' };
+
+  const answeredRows = (await db.prepare('SELECT student_id FROM absence_responses WHERE course_id = ? AND survey_id = ?').bind(courseId, surveyId).all()).results || [];
+  const answeredIds = new Set(answeredRows.map(r => r.student_id));
+
+  const pendingIds = targetStudentIds.filter(id => !answeredIds.has(id));
+  if (!pendingIds.length) return { sent: false, detail: '所有需填寫的同學皆已完成缺曠原因說明' };
+
+  const students = (await db.prepare('SELECT id, name FROM students WHERE course_id = ?').bind(courseId).all()).results || [];
+  const studentMap = new Map(students.map(s => [s.id, s.name]));
+  const boundRows = (await db.prepare('SELECT student_id, line_user_id FROM line_bindings WHERE course_id = ?').bind(courseId).all()).results || [];
+  const bindings = new Map(boundRows.map(r => [r.student_id, r.line_user_id]));
+
+  const bound = [];
+  const unbound = [];
+  for (const id of pendingIds) {
+    const name = studentMap.get(id) || id;
+    const lineUserId = bindings.get(id);
+    if (lineUserId) bound.push({ id, name, line_user_id: lineUserId });
+    else unbound.push({ id, name });
+  }
+
+  const head = `【缺曠原因調查－${sv.subtitle}】填寫提醒：\n請以下同學儘速登入系統說明缺曠原因：`;
+  const tail = [
+    `填寫網址：https://groupmyclass.clare8628.workers.dev/`,
+    unbound.length ? `尚未綁定 LINE（請於本群組輸入「綁定 學號」）：${unbound.map(s => `${s.name}（${s.id}）`).join('、')}` : '',
+  ].filter(Boolean).join('\n');
+
+  await pushWithMentions(env, targetGroupId, head, bound, tail);
+  return { sent: true, detail: `已推播至全體群組，提醒 ${pendingIds.length} 位同學填寫缺曠原因（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
 }
 
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
