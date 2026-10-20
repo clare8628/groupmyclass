@@ -1,6 +1,6 @@
 /* 學生分組系統 — Worker 進入點
    /api/state、/api/action、/api/bulletin；其餘交給靜態資源（public/）。 */
-import { json, bad, runScheduledCleanup, runAttendanceReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader } from './lib.js';
+import { json, bad, runScheduledCleanup, runAttendanceReminders, runSurveyReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader } from './lib.js';
 import { handleState, handleAction } from './api.js';
 import { fetchNotionBulletin } from './bulletin.js';
 import { handleCheckin, runSelfCheckinReminders, getSelfCheckinPhoto } from './checkin.js';
@@ -83,12 +83,14 @@ export default {
 
   // Cron Trigger：
   // - "0 19 * * *"（台北 03:00）：每日清除超過六個月的點名／問卷異動紀錄
-  // - 每 5 分鐘一次：比對每門課的每週課表，命中「第一節上課時間＋提醒延遲」即發送點名提醒 LINE 訊息
+  // - 每 5 分鐘一次：比對每門課的每週課表，命中「第一節上課時間＋提醒延遲」即發送幹部點名／輔導班自主點名提醒；
+  //   另依「提醒管理」排程設定，命中指定時間即發送問卷（生活關懷）／缺曠提醒 LINE 訊息
   async scheduled(event, env, ctx) {
     if (!env.DB) return;
     if (event.cron === '*/5 * * * *') {
       ctx.waitUntil(runAttendanceReminders(env.DB, env).then(r => { if (r.length) console.log('attendance-reminder', JSON.stringify(r)); }));
       ctx.waitUntil(runSelfCheckinReminders(env.DB, env).then(r => { if (r.length) console.log('selfcheckin-reminder', JSON.stringify(r)); }));
+      ctx.waitUntil(runSurveyReminders(env.DB, env).then(r => { if (r.length) console.log('survey-reminder', JSON.stringify(r)); }));
       return;
     }
     ctx.waitUntil(runScheduledCleanup(env.DB).then(r => console.log('log-cleanup', JSON.stringify(r))));

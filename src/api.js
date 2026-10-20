@@ -7,7 +7,8 @@ import {
   getBulletinPageSize, setBulletinPageSize, getDefaultCourseId, setDefaultCourseId, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
-  sendCareSurveyReminder, sendAbsenceSurveyReminder,
+  sendCareSurveyReminder, sendAbsenceSurveyReminder, logLinePush, listLinePushLogs, deleteLinePushLog, clearLinePushLogs,
+  getAllStudentsLineGroupId, setAllStudentsLineGroupId, upsertSurveyReminderSettings,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin, sendSelfCheckinInstructions } from './checkin.js';
@@ -55,7 +56,7 @@ export async function handleState(request, env, db) {
     getBulletinPageSize(db),
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db) },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), allGroupId: session && session.role === 'teacher' ? await getAllStudentsLineGroupId(db) : undefined },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -72,7 +73,7 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), ...extra }, 200, headers);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), allGroupId: session && session.role === 'teacher' ? await getAllStudentsLineGroupId(db) : undefined, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
@@ -868,6 +869,7 @@ export async function handleAction(request, env, db, body) {
       } catch (err) {
         return bad(String((err && err.message) || err), 502);
       }
+      await logLinePush(db, { courseId: c.id, kind: 'attendance-cadre-test', channel: row && row.self_checkin ? 'all' : 'cadre', groupId: lineGroupId, summary: '老師手動發送測試訊息' });
       return ok();
     }
     if (op === 'list-attendance-bindings') {
@@ -950,6 +952,54 @@ export async function handleAction(request, env, db, body) {
       } catch (err) {
         return bad(String((err && err.message) || err), 502);
       }
+    }
+    if (op === 'save-cadre-group-id') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const lineGroupId = String(body.lineGroupId || '').trim();
+      await upsertReminderSettings(db, c.id, { line_group_id: lineGroupId });
+      await logActivity(db, {
+        courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+        actionType: 'reminder-group-id', detail: `老師於提醒管理設定 LINE 群組 ID(幹部)：${lineGroupId || '（清空）'}`,
+      });
+      return ok();
+    }
+    if (op === 'save-all-group-id') {
+      const groupId = await setAllStudentsLineGroupId(db, body.groupId);
+      await logActivity(db, {
+        courseId: 'all', operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+        actionType: 'reminder-group-id', detail: `老師設定 LINE 群組 ID(全體)：${groupId || '（清空）'}`,
+      });
+      return ok({ allGroupId: groupId });
+    }
+    if (op === 'list-push-log') {
+      return ok({ logs: await listLinePushLogs(db, 200) });
+    }
+    if (op === 'delete-push-log') {
+      const logId = parseInt(body.id, 10);
+      if (!logId) return bad('缺少紀錄 id', 400);
+      await deleteLinePushLog(db, logId);
+      return ok({ logs: await listLinePushLogs(db, 200) });
+    }
+    if (op === 'clear-push-log') {
+      await clearLinePushLogs(db);
+      return ok({ logs: [] });
+    }
+    if (op === 'save-survey-reminder-settings') {
+      const c = course(body.courseId);
+      if (!c) return bad('課程不存在', 404);
+      const kind = body.kind === 'absence' ? 'absence' : 'care';
+      const surveyId = kind === 'absence' ? String(body.surveyId || '') : '';
+      if (kind === 'absence' && !surveyId) return bad('缺少缺曠調查問卷 id', 400);
+      const sendTime = String(body.sendTime || '09:00').trim();
+      if (!isValidHm(sendTime)) return bad('發送時間格式錯誤，請用 HH:MM', 400);
+      await upsertSurveyReminderSettings(db, c.id, kind, surveyId, { enabled: body.enabled ? 1 : 0, send_time: sendTime });
+      await logActivity(db, {
+        courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+        actionType: kind === 'care' ? 'survey-care-reminder-config' : 'survey-absence-reminder-config',
+        detail: `老師設定${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}自動提醒：${body.enabled ? '啟用' : '停用'}，每日 ${sendTime}`,
+      });
+      return ok();
     }
     if (op === 'set-attendance-unlock') {
       const c = course(body.courseId);

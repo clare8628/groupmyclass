@@ -275,3 +275,38 @@ CREATE TABLE IF NOT EXISTS selfcheckin_records (
   PRIMARY KEY (course_id, date, student_id)
 );
 CREATE INDEX IF NOT EXISTS idx_selfcheckin_hash ON selfcheckin_records(course_id, photo_hash);
+
+-- 提醒管理：問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）自動排程設定
+-- kind='care' 時 survey_id 固定為空字串（每課程僅一份生效中的生活關懷問卷）；kind='absence' 時 survey_id 對應 absence_surveys.id
+CREATE TABLE IF NOT EXISTS survey_reminder_settings (
+  course_id   TEXT NOT NULL,
+  kind        TEXT NOT NULL,                -- 'care' | 'absence'
+  survey_id   TEXT NOT NULL DEFAULT '',
+  enabled     INTEGER NOT NULL DEFAULT 0,
+  send_time   TEXT NOT NULL DEFAULT '09:00', -- 每日發送時間 HH:MM（台北時間）
+  updated_at  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (course_id, kind, survey_id)
+);
+
+-- 提醒管理：問卷／缺曠自動提醒每日發送紀錄（避免同一天重複發送），比照 attendance_reminder_runs 的用法
+CREATE TABLE IF NOT EXISTS reminder_dedup_runs (
+  scope       TEXT NOT NULL,
+  send_key    TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'ok',
+  detail      TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (scope, send_key)
+);
+
+-- 提醒管理：Bot 發送紀錄（所有 LINE 推播的集中記錄，供老師查詢與刪除）
+CREATE TABLE IF NOT EXISTS line_push_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  course_id       TEXT NOT NULL DEFAULT '',
+  kind            TEXT NOT NULL DEFAULT '',   -- 'attendance-cadre' | 'selfcheckin' | 'survey-care' | 'survey-absence' | 'binding-instructions' | ...
+  channel         TEXT NOT NULL DEFAULT '',   -- 'cadre' | 'all'
+  target_group_id TEXT NOT NULL DEFAULT '',
+  summary         TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'ok', -- 'ok' | 'error'
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_line_push_log_created ON line_push_log(created_at DESC);

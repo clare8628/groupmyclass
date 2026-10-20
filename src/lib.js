@@ -73,7 +73,7 @@ export const clearCookie = 'gs_session=; Path=/; HttpOnly; SameSite=Lax; Secure;
 
 /* ===== 狀態讀取 ===== */
 /* 結構遷移與一次性資料修正只在 schema_rev 變動時執行；平時冷啟動僅需 1 次查詢，避免每個 isolate 重跑數十條 ALTER */
-const SCHEMA_REV = '2026-10-16b';
+const SCHEMA_REV = '2026-10-20a';
 let _schemaReady = false;
 export async function ensureSchema(db) {
   if (_schemaReady) return;
@@ -85,6 +85,7 @@ export async function ensureSchema(db) {
     await ensureAbsenceSurveySchema(db);
     await ensureCareSurveySchema(db);
     await ensureAttendanceReminderSchema(db);
+    await ensureReminderCenterSchema(db);
     await ensureSelfCheckinRoster(db);
     await ensureGroup3Restored(db);
     await ensurePanReleased(db);
@@ -332,6 +333,53 @@ async function ensureAttendanceReminderSchema(db) {
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_selfcheckin_hash ON selfcheckin_records(course_id, photo_hash)').run();
   } catch (_) {}
   _ensuredAttendanceReminderSchema = true;
+}
+
+/* 提醒管理：問卷／缺曠自動提醒排程設定、每日發送紀錄（dedupe）、Bot 發送紀錄（集中查詢與刪除） */
+let _ensuredReminderCenterSchema = false;
+async function ensureReminderCenterSchema(db) {
+  if (_ensuredReminderCenterSchema) return;
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS survey_reminder_settings (
+        course_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        survey_id   TEXT NOT NULL DEFAULT '',
+        enabled     INTEGER NOT NULL DEFAULT 0,
+        send_time   TEXT NOT NULL DEFAULT '09:00',
+        updated_at  INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (course_id, kind, survey_id)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS reminder_dedup_runs (
+        scope       TEXT NOT NULL,
+        send_key    TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'ok',
+        detail      TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        PRIMARY KEY (scope, send_key)
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
+      CREATE TABLE IF NOT EXISTS line_push_log (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        course_id       TEXT NOT NULL DEFAULT '',
+        kind            TEXT NOT NULL DEFAULT '',
+        channel         TEXT NOT NULL DEFAULT '',
+        target_group_id TEXT NOT NULL DEFAULT '',
+        summary         TEXT NOT NULL DEFAULT '',
+        status          TEXT NOT NULL DEFAULT 'ok',
+        created_at      INTEGER NOT NULL
+      )
+    `).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_line_push_log_created ON line_push_log(created_at DESC)').run();
+  } catch (_) {}
+  _ensuredReminderCenterSchema = true;
 }
 
 /* 115-1華語B1輔導班：無分組、修課名單由老師後台「點名管理 → 華語B1輔導課修課點名」勾選或匯入決定（非全體學生），全員自主點名（上傳現場照片）。以固定 id 冪等建立，名單可再由老師後台補登 */
@@ -924,6 +972,7 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
     // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
     db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, self_checkin, geo_lat, geo_lng, geo_radius, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM survey_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
   return rows;
@@ -952,7 +1001,7 @@ function buildAbsenceTargets(c, survey, idOf) {
 export async function loadState(db, rev = null) {
   await ensureSchema(db);
   if (rev === null) rev = await getDataRev(db);
-  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses, careSurveyRows, courseScheduleRows, reminderSettingsRows] = await loadRows(db, rev);
+  const [courses, groups, students, snapshots, attSessions, attRecords, attUnlocks, attDelegates, surveySubs, surveyLogs, absSurveys, absResponses, careSurveyRows, courseScheduleRows, reminderSettingsRows, surveyReminderRows] = await loadRows(db, rev);
   const snapshotSet = new Set((snapshots.results || []).map(r => r.course_id));
   const processedCourses = courses.results.map(c => {
     const courseGroups = groups.results.filter(g => g.course_id === c.id).map(g => ({
@@ -1106,6 +1155,16 @@ export async function loadState(db, rev = null) {
       hasScreenshot: !!(reminderRow && Number(reminderRow.screenshot_len) > 0),
       screenshotName: (reminderRow && reminderRow.screenshot_name) || '',
       updatedAt: (reminderRow && reminderRow.updated_at) || 0,
+    };
+
+    /* 提醒管理：問卷提醒（care，每課程一份）／缺曠提醒（absence，每批次一份）自動排程設定 */
+    const srsRows = (surveyReminderRows.results || []).filter(x => x.course_id === c.id);
+    const careSrs = srsRows.find(x => x.kind === 'care');
+    courseObj.surveyReminderSettings = {
+      care: { enabled: !!(careSrs && careSrs.enabled), sendTime: (careSrs && careSrs.send_time) || '09:00' },
+      absence: Object.fromEntries(
+        srsRows.filter(x => x.kind === 'absence').map(x => [x.survey_id, { enabled: !!x.enabled, sendTime: x.send_time || '09:00' }])
+      ),
     };
 
     return courseObj;
@@ -1344,7 +1403,7 @@ export async function publicize(db, env, courses, session) {
         myResponse: mineResp ? { reason: mineResp.reason, createdAt: mineResp.createdAt, updatedAt: mineResp.updatedAt } : null,
       };
     });
-    const { careSurveys: _care, absenceSurveys: _abs, absenceResponses: _absResp, attendanceReminder: _rem, courseSchedule: _sched, ...safeCourse } = c;
+    const { careSurveys: _care, absenceSurveys: _abs, absenceResponses: _absResp, attendanceReminder: _rem, courseSchedule: _sched, surveyReminderSettings: _srs, ...safeCourse } = c;
     out.push({
       ...safeCourse,
       students,
@@ -1455,14 +1514,73 @@ export async function pushWithMentions(env, to, head, users, tail = '') {
   }
 }
 
-/* 解析全體群組 ID（預設 Cd8481a3f8963504dc26a723af6020068，或由輔導班／後台設定取得）
+/* 解析全體群組 ID（優先讀取老師後台「提醒管理 → LINE 群組 ID 設定」之集中設定，
+   否則退回輔導班設定，最後退回預設值 Cd8481a3f8963504dc26a723af6020068）
    規定：除了幹部點名外，輔導班、問卷、缺曠提醒、全班綁定教學等全體通知一律發送於全體群組 */
 export async function getAllStudentsLineGroupId(db) {
+  const settingRow = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('all_students_line_group_id').first().catch(() => null);
+  if (settingRow && settingRow.value) return settingRow.value;
   const b1Row = await db.prepare('SELECT line_group_id FROM attendance_reminder_settings WHERE course_id = ?').bind(SELF_CHECKIN_COURSE_ID).first().catch(() => null);
   if (b1Row && b1Row.line_group_id) return b1Row.line_group_id;
   const directRow = await db.prepare('SELECT line_group_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind('Cd8481a3f8963504dc26a723af6020068').first().catch(() => null);
   if (directRow && directRow.line_group_id) return directRow.line_group_id;
   return 'Cd8481a3f8963504dc26a723af6020068';
+}
+
+/* 老師後台「提醒管理 → LINE 群組 ID 設定」儲存全體群組 ID；同步寫入輔導班設定以維持舊表單一致顯示 */
+export async function setAllStudentsLineGroupId(db, groupId) {
+  const clean = String(groupId || '').trim();
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('all_students_line_group_id', clean).run();
+  await upsertReminderSettings(db, SELF_CHECKIN_COURSE_ID, { line_group_id: clean });
+  return clean;
+}
+
+/* 提醒管理：集中記錄每一次 LINE 推播（供老師查詢與刪除），記錄失敗不影響原推播流程 */
+export async function logLinePush(db, { courseId = '', kind = '', channel = '', groupId = '', summary = '', status = 'ok' } = {}) {
+  try {
+    await db.prepare(`
+      INSERT INTO line_push_log (course_id, kind, channel, target_group_id, summary, status, created_at)
+      VALUES (?,?,?,?,?,?,?)
+    `).bind(String(courseId || ''), String(kind || ''), String(channel || ''), String(groupId || ''), String(summary || '').slice(0, 500), status, Date.now()).run();
+  } catch (_) {}
+}
+
+export async function listLinePushLogs(db, limit = 200) {
+  const rows = (await db.prepare('SELECT * FROM line_push_log ORDER BY created_at DESC LIMIT ?').bind(limit).all().catch(() => ({ results: [] }))).results || [];
+  return rows.map(r => ({
+    id: r.id, courseId: r.course_id, kind: r.kind, channel: r.channel,
+    targetGroupId: r.target_group_id, summary: r.summary, status: r.status, createdAt: r.created_at,
+  }));
+}
+
+export async function deleteLinePushLog(db, id) {
+  await db.prepare('DELETE FROM line_push_log WHERE id = ?').bind(id).run();
+}
+
+export async function clearLinePushLogs(db) {
+  await db.prepare('DELETE FROM line_push_log').run();
+}
+
+/* 提醒管理：問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）自動排程設定 */
+export async function getSurveyReminderSettings(db, courseId, kind, surveyId = '') {
+  return db.prepare('SELECT * FROM survey_reminder_settings WHERE course_id = ? AND kind = ? AND survey_id = ?').bind(courseId, kind, surveyId).first();
+}
+
+export async function upsertSurveyReminderSettings(db, courseId, kind, surveyId, patch) {
+  const existing = await getSurveyReminderSettings(db, courseId, kind, surveyId);
+  const next = {
+    enabled: existing ? existing.enabled : 0,
+    send_time: existing ? existing.send_time : '09:00',
+    ...patch,
+    updated_at: Date.now(),
+  };
+  await db.prepare(`
+    INSERT INTO survey_reminder_settings (course_id, kind, survey_id, enabled, send_time, updated_at)
+    VALUES (?,?,?,?,?,?)
+    ON CONFLICT(course_id, kind, survey_id) DO UPDATE SET
+      enabled = excluded.enabled, send_time = excluded.send_time, updated_at = excluded.updated_at
+  `).bind(courseId, kind, surveyId, next.enabled, next.send_time, next.updated_at).run();
+  return next;
 }
 
 /* 解析幹部群組 ID（預設 C9525fed4991dc073e4d01be5ec874510，或由一般班級點名提醒設定取得）
@@ -1747,6 +1865,7 @@ export async function sendLineBindingInstructions(db, env, courseId) {
     unbound.map(x => `${x.name}（${x.id}）`).join('、'),
   ].join('\n');
   await sendLinePush(env, targetGroupId, text);
+  await logLinePush(db, { courseId: courseId || 'all', kind: 'binding-instructions', channel: 'all', groupId: targetGroupId, summary: `發送 LINE 綁定教學訊息，通知 ${unbound.length} 人尚未綁定` });
   return { sent: true, detail: `已推播至全體群組，通知 ${unbound.length} 人尚未綁定` };
 }
 
@@ -1785,6 +1904,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
   ].filter(Boolean).join('\n');
 
   await pushWithMentions(env, targetGroupId, head, bound, tail);
+  await logLinePush(db, { courseId, kind: 'survey-care', channel: 'all', groupId: targetGroupId, summary: `生活關懷問卷填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
   return { sent: true, detail: `已推播至全體群組，提醒 ${pending.length} 位同學填寫生活關懷問卷（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
 }
 
@@ -1828,7 +1948,69 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
   ].filter(Boolean).join('\n');
 
   await pushWithMentions(env, targetGroupId, head, bound, tail);
+  await logLinePush(db, { courseId, kind: 'survey-absence', channel: 'all', groupId: targetGroupId, summary: `缺曠原因調查（${sv.subtitle}）填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
   return { sent: true, detail: `已推播至全體群組，提醒 ${pendingIds.length} 位同學填寫缺曠原因（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+}
+
+/* Cron（每 5 分鐘）：問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）自動排程。
+   規則簡單許多：每天固定時間檢查一次，若尚有未填寫者才發送，已全數完成則略過；以 reminder_dedup_runs 保證當天每份問卷只發送一次。 */
+export async function runSurveyReminders(db, env, now = Date.now()) {
+  const tw = new Date(now + 8 * 3600 * 1000);
+  const nowMinutes = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+  const dateStr = tw.toISOString().slice(0, 10);
+  const results = [];
+
+  const careRows = (await db.prepare(`
+    SELECT cs.course_id AS course_id, srs.send_time AS send_time
+    FROM care_surveys cs
+    JOIN survey_reminder_settings srs ON srs.course_id = cs.course_id AND srs.kind = 'care' AND srs.survey_id = ''
+    WHERE cs.visible = 1 AND srs.enabled = 1
+  `).all().catch(() => ({ results: [] }))).results || [];
+  for (const row of careRows) {
+    const elapsed = ((nowMinutes - hmToMinutes(row.send_time)) % 1440 + 1440) % 1440;
+    if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue;
+    const sendKey = `${row.course_id}:${dateStr}`;
+    if (await db.prepare('SELECT 1 FROM reminder_dedup_runs WHERE scope = ? AND send_key = ?').bind('survey-care', sendKey).first()) continue;
+    let status = 'ok', detail = '';
+    try {
+      const r = await sendCareSurveyReminder(db, env, row.course_id);
+      detail = r.detail;
+      if (!r.sent) status = 'skipped';
+    } catch (err) {
+      status = 'error';
+      detail = String((err && err.message) || err);
+    }
+    await db.prepare('INSERT OR REPLACE INTO reminder_dedup_runs (scope, send_key, status, detail, created_at) VALUES (?,?,?,?,?)')
+      .bind('survey-care', sendKey, status, detail, Date.now()).run();
+    results.push({ courseId: row.course_id, kind: 'survey-care', status, detail });
+  }
+
+  const absRows = (await db.prepare(`
+    SELECT a.course_id AS course_id, a.id AS survey_id, srs.send_time AS send_time
+    FROM absence_surveys a
+    JOIN survey_reminder_settings srs ON srs.course_id = a.course_id AND srs.kind = 'absence' AND srs.survey_id = a.id
+    WHERE a.visible = 1 AND srs.enabled = 1
+  `).all().catch(() => ({ results: [] }))).results || [];
+  for (const row of absRows) {
+    const elapsed = ((nowMinutes - hmToMinutes(row.send_time)) % 1440 + 1440) % 1440;
+    if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue;
+    const sendKey = `${row.course_id}:${row.survey_id}:${dateStr}`;
+    if (await db.prepare('SELECT 1 FROM reminder_dedup_runs WHERE scope = ? AND send_key = ?').bind('survey-absence', sendKey).first()) continue;
+    let status = 'ok', detail = '';
+    try {
+      const r = await sendAbsenceSurveyReminder(db, env, row.course_id, row.survey_id);
+      detail = r.detail;
+      if (!r.sent) status = 'skipped';
+    } catch (err) {
+      status = 'error';
+      detail = String((err && err.message) || err);
+    }
+    await db.prepare('INSERT OR REPLACE INTO reminder_dedup_runs (scope, send_key, status, detail, created_at) VALUES (?,?,?,?,?)')
+      .bind('survey-absence', sendKey, status, detail, Date.now()).run();
+    results.push({ courseId: row.course_id, surveyId: row.survey_id, kind: 'survey-absence', status, detail });
+  }
+
+  return results;
 }
 
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
@@ -1871,7 +2053,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
         .bind(row.course_id, st.key).first();
       if (already) continue;
 
-      let status = 'ok', detail = '';
+      let status = 'ok', detail = '', pushed = false;
       try {
         const pending = await findPendingLeaders(db, row.course_id, dateStr, st.stage);
         if (st.stage === 'vice') {
@@ -1881,6 +2063,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
           } else {
             const tags = pending.leaders.map((_, i) => `{m${i}}`).join(' ');
             await sendLinePush(env, row.line_group_id, `組長尚未完成點名，請副組長協助：\n${tags}`, pending.leaders.map(l => l.lineUserId));
+            pushed = true;
             detail = `副組長 tag ${pending.leaders.length} 人`;
           }
         } else if (pending.hasLeaders && !pending.leaders.length) {
@@ -1888,6 +2071,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
           detail = '所有組長皆已完成點名';
         } else if (!pending.leaders.length) {
           await sendLinePush(env, row.line_group_id, row.message || DEFAULT_REMINDER_MESSAGE);
+          pushed = true;
         } else {
           const bound = pending.leaders.filter(l => l.lineUserId);
           const unbound = pending.leaders.filter(l => !l.lineUserId);
@@ -1895,12 +2079,14 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
           const names = unbound.map(l => `${l.name}（第${l.groupName}組）`).join('、');
           const body = [row.message || DEFAULT_REMINDER_MESSAGE, '尚未完成點名：', tags, names && `${names}（尚未綁定 LINE，請於群組輸入「綁定 學號」）`].filter(Boolean).join('\n');
           await sendLinePush(env, row.line_group_id, body, bound.map(l => l.lineUserId));
+          pushed = true;
           detail = `tag ${bound.length} 人、未綁定 ${unbound.length} 人`;
         }
       } catch (err) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: st.stage === 'vice' ? 'attendance-cadre-vice' : 'attendance-cadre', channel: 'cadre', groupId: row.line_group_id, summary: detail, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, st.key, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, status, detail });

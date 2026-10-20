@@ -7,7 +7,7 @@
    5. 僅限課表上課日、上課前後時間窗內；老師可逐筆審核退回（退回即改記缺席） */
 import {
   json, bad, readSession, secret, hmac, sha256, ensureSchema, markDataChanged, logActivity, makeLogStmt,
-  parseJsonArray, addMinutesToHm, hmToMinutes, sendLinePush, pushWithMentions,
+  parseJsonArray, addMinutesToHm, hmToMinutes, sendLinePush, pushWithMentions, logLinePush,
 } from './lib.js';
 
 const courseLabel = (c) => { const y = c.year || '', s = c.subject || ''; return s.startsWith(y) ? s : `${y}${s}`; };
@@ -218,6 +218,7 @@ export async function sendSelfCheckinInstructions(db, env, courseId) {
     '若逾時未點名，系統會於群組自動提醒；如有疑問請洽老師。',
   ].join('\n');
   await sendLinePush(env, set.line_group_id, text);
+  await logLinePush(db, { courseId, kind: 'selfcheckin-instructions', channel: 'all', groupId: set.line_group_id, summary: '發送自主點名流程說明給全班' });
   await logActivity(db, {
     courseId, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
     actionType: 'attendance-selfcheckin-instructions', detail: '老師發送自主點名流程說明給全班',
@@ -277,27 +278,33 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
       const runKey = `${date}:${st.key}`;
       if (await db.prepare('SELECT 1 FROM attendance_reminder_runs WHERE course_id = ? AND send_date = ?').bind(row.course_id, runKey).first()) continue;
 
-      let status = 'ok', detail = '';
+      let status = 'ok', detail = '', pushed = false;
       try {
         const p = await pendingStudents(db, row.course_id, date);
         if (!p.total) {
           status = 'skipped';
           detail = '全員已完成自主點名';
-          if (st.key === 'selffinal') await sendLinePush(env, row.line_group_id, `【${label}】今日全員已完成自主點名 ✅`);
+          if (st.key === 'selffinal') {
+            await sendLinePush(env, row.line_group_id, `【${label}】今日全員已完成自主點名 ✅`);
+            pushed = true;
+          }
         } else if (st.key === 'selffinal') {
           const names = [...p.bound, ...p.unbound].map(x => x.name).join('、');
           await sendLinePush(env, row.line_group_id, `【${label}】自主點名時間已過，以下 ${p.total} 位同學尚未完成：\n${names}`);
+          pushed = true;
           detail = `列出未完成 ${p.total} 人`;
         } else {
           const head = `${st.key === 'self2' ? '【第二次提醒】' : ''}【${label}】上課了，請以手機拍攝教室畫面完成自主點名\n尚未完成：`;
           const tail = [`點名連結（需登入）：${link}`, p.unbound.length ? `${p.unbound.map(x => x.name).join('、')}（尚未綁定 LINE，請於群組輸入「綁定 學號」）` : ''].filter(Boolean).join('\n');
           await pushWithMentions(env, row.line_group_id, head, p.bound, tail);
+          pushed = true;
           detail = `tag ${p.bound.length} 人、未綁定 ${p.unbound.length} 人`;
         }
       } catch (err) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: `selfcheckin-${st.key}`, channel: 'all', groupId: row.line_group_id, summary: detail, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, runKey, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, stage: st.key, status, detail });
