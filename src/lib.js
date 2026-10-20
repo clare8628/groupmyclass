@@ -1678,11 +1678,29 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   return `${studentName}（${canonicalId}）已成功綁定 LINE！`;
 }
 
-/* 老師後台：列出本課程 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計。
-   目前已升級為所有學生成員皆需綁定：只要該學生在系統內任一處綁定過 LINE，即算已綁定，不只限於輔導班或特定課程。 */
+/* 老師後台：列出 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計。
+   目前已升級為所有學生成員皆需綁定：
+   - 當 courseId 為 'all' 或未指定時，直接列出全校／全體學生名單（共 64 位）；
+   - 當指定特定課程時，列出該課程學生名單。
+   只要該學生在系統內任一處綁定過 LINE，即算已綁定。 */
 export async function listAttendanceBindings(db, courseId) {
   await ensureSchema(db);
-  const rows = (await db.prepare(`
+  const isAll = !courseId || courseId === 'all';
+  const query = isAll ? `
+      SELECT s.id AS id, s.name AS name,
+             MAX(CASE WHEN s.course_id != ? THEN s.group_id ELSE '' END) AS group_id,
+             MAX(CASE WHEN s.course_id != ? THEN s.is_leader ELSE 0 END) AS is_leader,
+             MAX(CASE WHEN s.course_id != ? THEN s.is_vice ELSE 0 END) AS is_vice,
+             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at
+      FROM students s
+      LEFT JOIN (
+        SELECT student_id, line_user_id, MAX(created_at) AS bound_at
+        FROM line_bindings
+        GROUP BY student_id
+      ) lb ON lb.student_id = s.id
+      GROUP BY s.id
+      ORDER BY s.id
+    ` : `
       SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice,
              lb.line_user_id AS line_user_id, lb.bound_at AS bound_at
       FROM students s
@@ -1693,7 +1711,11 @@ export async function listAttendanceBindings(db, courseId) {
       ) lb ON lb.student_id = s.id
       WHERE s.course_id = ?
       ORDER BY s.group_id, s.is_leader DESC, s.seq, s.id
-    `).bind(courseId).all().catch(() => ({ results: [] }))).results || [];
+    `;
+  const stmt = isAll
+    ? db.prepare(query).bind(SELF_CHECKIN_COURSE_ID, SELF_CHECKIN_COURSE_ID, SELF_CHECKIN_COURSE_ID)
+    : db.prepare(query).bind(courseId);
+  const rows = (await stmt.all().catch(() => ({ results: [] }))).results || [];
   const toItem = r => {
     const isBound = !!r.line_user_id;
     return {
@@ -1718,8 +1740,8 @@ export async function sendLineBindingInstructions(db, env, courseId) {
   await ensureSchema(db);
   const targetGroupId = await getAllStudentsLineGroupId(db);
   if (!targetGroupId) throw new Error('請先設定 LINE 群組 ID(全體)');
-  const { unbound } = await listAttendanceBindings(db, courseId);
-  if (!unbound.length) return { sent: false, detail: '全班皆已綁定，不需發送' };
+  const { unbound } = await listAttendanceBindings(db, courseId || 'all');
+  if (!unbound.length) return { sent: false, detail: '全體學生皆已綁定，不需發送' };
   const text = [
     '【LINE 綁定提醒】請尚未綁定 LINE 的同學，在本群組輸入「綁定 學號」完成綁定（例如：綁定 41461D01），之後點名提醒、問卷與缺曠通知才能標記到您：',
     unbound.map(x => `${x.name}（${x.id}）`).join('、'),

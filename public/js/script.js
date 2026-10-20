@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.156.20261020.114704';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.157.20261020.120529';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4232,29 +4232,44 @@ function teacherAttendanceBlock(c) {
 
 /* ---- 點名管理專項：綁定查詢與統計（全體學生綁定名單與統計）----
    目前系統已升級為所有學生成員皆需綁定：只要該學生曾在系統內任一處綁定 LINE，即算已綁定，不只限於輔導班學生。
-   進入本頁面無需點擊查詢，系統直接列出全體學生綁定狀況。 */
+   預設直接展示全體學生（所有成員）的綁定狀況名單，不用查詢直接列出。 */
+let bindingCourseFilter = 'all';
+
 function teacherBindingStatsBlock(c) {
-  if (!c) {
-    return `
-    <div class="teacher-section">
-      <h2>🔗 綁定查詢與統計</h2>
-      <p class="file-path">請先從左側點選或建立課程。</p>
-    </div>`;
-  }
-  ensureBindingsLoaded(c.id);
+  const currentScope = bindingCourseFilter || 'all';
+  ensureBindingsLoaded(currentScope);
+
+  const scopeOptions = [
+    { id: 'all', label: '🌟 全體學生名單（所有成員）' },
+    ...state.courses.map(item => ({
+      id: item.id,
+      label: `${courseLabel(item)}（${item.students.length}人）`
+    }))
+  ];
+
+  const scopeSelectHtml = `
+    <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem;">
+      <label style="font-weight:600;color:#334155;">名單顯示範圍：</label>
+      <select class="input-select" style="max-width:320px;padding:0.4rem 0.6rem;font-size:0.95rem;font-weight:500;" data-act="change-binding-filter">
+        ${scopeOptions.map(opt => `<option value="${esc(opt.id)}" ${opt.id === currentScope ? 'selected' : ''}>${esc(opt.label)}</option>`).join('')}
+      </select>
+    </div>
+  `;
+
   return `
   <div class="teacher-section">
-    <h2>🔗 綁定查詢與統計 <small>${esc(courseLabel(c))}</small></h2>
+    <h2>🔗 綁定查詢與統計 <small>${currentScope === 'all' ? '全體學生名單' : (courseById(currentScope) ? esc(courseLabel(courseById(currentScope))) : '')}</small></h2>
     <p class="file-path" style="margin:0 0 0.75rem 0;">
       系統已升級為<b>全體學生成員皆需綁定 LINE</b>（學生於群組或私訊中輸入「綁定 學號」即可完成綁定，供點名提醒、問卷推播與缺曠通知使用）。<br>
       💡 系統自動整合全體學生綁定狀況：只要學生曾在任一課程、幹部群組、全體群組或私訊中綁定過 LINE，即算已綁定，<b>不需重複綁定</b>。以下已自動列出全體學生綁定名單。
     </p>
     <div class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
+      ${scopeSelectHtml}
       <div class="form-group full" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
-        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">🔄 重新整理綁定名單</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
+        <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(currentScope)}">🔄 重新整理名單</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(currentScope)}">📣 發送綁定教學訊息（至全體群組）</button>
       </div>
-      ${bindingListHtml(bindingLists[c.id], c.id)}
+      ${bindingListHtml(bindingLists[currentScope], currentScope)}
     </div>
   </div>`;
 }
@@ -6646,7 +6661,6 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'atd-section') {
     const nextSec = btn.dataset.sec;
     const enteringB1 = nextSec === 'b1';
-    const leavingB1 = atdSection === 'b1' && !enteringB1;
     atdSection = nextSec;
     if (enteringB1) {
       // 「華語B1輔導課修課點名」是獨立課程紀錄，進入子項目時暫時切換目前課程為該輔導課
@@ -6655,10 +6669,13 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
         state.currentId = state.selfCheckinCourseId;
         localStorage.setItem(CURRENT_KEY, state.currentId);
       }
-    } else if (leavingB1 && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+    } else if (state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
       const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
       state.currentId = other ? other.id : null;
       if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
+    }
+    if (nextSec === 'bindings') {
+      bindingCourseFilter = 'all';
     }
     if (teacherView !== 'attendance') return setTeacherView('attendance');
     return render();
@@ -7326,6 +7343,11 @@ app.addEventListener('change', e => {
   const id = t.dataset.id;
   const c = cur();
 
+  if (a === 'change-binding-filter') {
+    bindingCourseFilter = t.value;
+    ensureBindingsLoaded(bindingCourseFilter);
+    return render();
+  }
   if (a === 'simulate-survey-change') {
     simulateSurveyKey = t.value;
     const stu = document.getElementById('simulate-student-select');

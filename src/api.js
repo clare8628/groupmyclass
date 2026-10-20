@@ -871,12 +871,33 @@ export async function handleAction(request, env, db, body) {
       return ok();
     }
     if (op === 'list-attendance-bindings') {
-      const c = course(body.courseId);
+      const cid = body.courseId;
+      if (!cid || cid === 'all') {
+        return ok(await listAttendanceBindings(db, 'all'));
+      }
+      const c = course(cid);
       if (!c) return bad('課程不存在', 404);
       return ok(await listAttendanceBindings(db, c.id));
     }
     if (op === 'send-attendance-binding-instructions') {
-      const c = course(body.courseId);
+      const cid = body.courseId;
+      if (!cid || cid === 'all') {
+        try {
+          const result = await sendLineBindingInstructions(db, env, 'all');
+          await logActivity(db, {
+            courseId: 'all',
+            operatorRole: 'teacher',
+            operatorId: 'teacher',
+            operatorName: '老師',
+            actionType: 'attendance-reminder-binding-notice',
+            detail: `老師發送全體學生 LINE 綁定教學訊息：${result.detail}`,
+          });
+          return ok(result);
+        } catch (err) {
+          return bad(String((err && err.message) || err), 502);
+        }
+      }
+      const c = course(cid);
       if (!c) return bad('課程不存在', 404);
       try {
         const result = await sendLineBindingInstructions(db, env, c.id);
