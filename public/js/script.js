@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.165.20261020.161932';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.166.20261020.165847';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -6297,8 +6297,13 @@ function render() {
     body = studentScreen();
   }
 
+  // 重繪會重建 DOM，左側清單捲動位置會歸零；先記錄、重繪後還原
+  const treeEl = document.querySelector('.tree');
+  const treeScroll = treeEl ? treeEl.scrollTop : 0;
   document.getElementById('app').innerHTML =
     nav() + teacherPreviewBanner() + '<div class="container">' + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml();
+  const newTree = document.querySelector('.tree');
+  if (newTree && treeScroll) newTree.scrollTop = treeScroll;
   if (!state.session && loginMode) {
     const first = document.querySelector('#login input');
     if (first) first.focus();
