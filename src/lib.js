@@ -816,7 +816,7 @@ export function calcAdjustment(c, g, s) {
 /* ===== D1 讀取節流：以 settings.data_rev 作為全域資料版本 =====
    每次寫入遞增 data_rev；各 isolate 只要版本未變就重用記憶體中的原始資料列，
    輪詢只需讀 1 列（data_rev），並可跨 isolate 正確回應 304。 */
-const RAW_CACHE_MAX_AGE = 10 * 60 * 1000; // 保險：即使版本未變，10 分鐘後仍重讀（例如有人直接以 wrangler 改資料庫）
+const RAW_CACHE_MAX_AGE = 15 * 60 * 1000; // 保險：即使版本未變，15 分鐘後仍重讀（例如有人直接以 wrangler 改資料庫）
 let _raw = null;          // { rev, time, rows }
 let _recentLogs = null;   // { rev, logs }
 
@@ -963,11 +963,11 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM students ORDER BY seq ASC').all(),
     db.prepare('SELECT course_id FROM group_snapshots').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_sessions ORDER BY date DESC, created_at DESC').all().catch(() => ({ results: [] })),
-    db.prepare('SELECT * FROM attendance_records').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM attendance_records WHERE created_at >= ? OR updated_at >= ? OR created_at = 0').bind(Date.now() - 90 * 24 * 3600 * 1000, Date.now() - 90 * 24 * 3600 * 1000).all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_unlocks').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM attendance_delegates').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM survey_submissions').all().catch(() => ({ results: [] })),
-    db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT * FROM survey_logs ORDER BY created_at DESC LIMIT 500').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM absence_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM absence_responses').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),

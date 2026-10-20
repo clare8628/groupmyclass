@@ -90,12 +90,12 @@ function getInitialPublicSubView() {
   return 'dashboard';
 }
 
-const POLL_MS = 15000; // 延長輪詢至 15 秒（操作者自身操作即時響應，15 秒足以同步他人異動）
+const POLL_MS = 25000; // 延長輪詢至 25 秒，大幅降低 D1 資料庫讀取量
 let lastEtag = '';
 let lastUserActivity = Date.now();
 let lastPollTime = 0;
 const IDLE_TIMEOUT_MS = 60000; // 1 分鐘未有使用者動作視為閒置
-const IDLE_POLL_MS = 35000;    // 閒置時降低輪詢頻率至 35 秒，節省 D1 消耗
+const IDLE_POLL_MS = 90000;    // 閒置時降低輪詢頻率至 90 秒，節省 D1 消耗
 
 let state = {
   courses: [],
@@ -271,7 +271,20 @@ async function apiGet() {
   if (lastEtag) headers['if-none-match'] = lastEtag;
   const r = await fetch('/api/state', { credentials: 'same-origin', headers });
   if (r.status === 304) return { notModified: true };
-  if (!r.ok) throw new Error('讀取資料失敗 (' + r.status + ')');
+  if (!r.ok) {
+    let errMsg = '讀取資料失敗 (' + r.status + ')';
+    try {
+      const errData = await r.json();
+      if (errData && errData.error) {
+        if (errData.error.includes('free tier daily row read limit') || errData.error.includes('exceeded D1')) {
+          errMsg = '資料庫今日讀取量已達 Cloudflare 免費額度上限（將於每日 08:00 自動重新計算），請稍後再試。';
+        } else {
+          errMsg = errData.error;
+        }
+      }
+    } catch (_) {}
+    throw new Error(errMsg);
+  }
   const etag = r.headers.get('etag');
   if (etag) lastEtag = etag;
   return r.json();
