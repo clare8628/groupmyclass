@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS survey_reminder_settings (
   enabled     INTEGER NOT NULL DEFAULT 0,
   send_time   TEXT NOT NULL DEFAULT '09:00', -- 每日發送時間 HH:MM（台北時間）
   updated_at  INTEGER NOT NULL DEFAULT 0,
+  channel     TEXT NOT NULL DEFAULT 'all',  -- 發送管道：'all' 全體群組 | 'cadre' 幹部群組
   PRIMARY KEY (course_id, kind, survey_id)
 );
 

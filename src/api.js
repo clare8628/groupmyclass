@@ -993,11 +993,13 @@ export async function handleAction(request, env, db, body) {
       if (kind === 'absence' && !surveyId) return bad('缺少缺曠調查問卷 id', 400);
       const sendTime = String(body.sendTime || '09:00').trim();
       if (!isValidHm(sendTime)) return bad('發送時間格式錯誤，請用 HH:MM', 400);
-      await upsertSurveyReminderSettings(db, c.id, kind, surveyId, { enabled: body.enabled ? 1 : 0, send_time: sendTime });
+      const patch = { enabled: body.enabled ? 1 : 0, send_time: sendTime };
+      if (body.channel !== undefined) patch.channel = body.channel === 'cadre' ? 'cadre' : 'all';
+      await upsertSurveyReminderSettings(db, c.id, kind, surveyId, patch);
       await logActivity(db, {
         courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
         actionType: kind === 'care' ? 'survey-care-reminder-config' : 'survey-absence-reminder-config',
-        detail: `老師設定${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}自動提醒：${body.enabled ? '啟用' : '停用'}，每日 ${sendTime}`,
+        detail: `老師設定${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}自動提醒：${body.enabled ? '啟用' : '停用'}，每日 ${sendTime}，發送至${body.channel === 'cadre' ? '幹部' : '全體'}群組`,
       });
       return ok();
     }

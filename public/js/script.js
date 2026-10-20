@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.157.20261020.120529';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.159.20261020.144129';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4350,30 +4350,46 @@ function teacherChannelBlock() {
   const selfcheckEnabled = !!(b1 && b1.attendanceReminder && b1.attendanceReminder.enabled);
   const careEnabledCount = state.courses.filter(x => x.surveyReminderSettings && x.surveyReminderSettings.care && x.surveyReminderSettings.care.enabled).length;
   const absEnabledCount = state.courses.reduce((n, x) => n + Object.values((x.surveyReminderSettings && x.surveyReminderSettings.absence) || {}).filter(s => s.enabled).length, 0);
+  const chanCount = (list, ch) => list.filter(s => s.enabled && (s.channel === 'cadre' ? 'cadre' : 'all') === ch).length;
+  const careList = state.courses.map(x => x.surveyReminderSettings && x.surveyReminderSettings.care).filter(Boolean);
+  const absList = state.courses.flatMap(x => Object.values((x.surveyReminderSettings && x.surveyReminderSettings.absence) || {}));
+  const chanSummary = (list) => {
+    const cadre = chanCount(list, 'cadre'), all = chanCount(list, 'all');
+    if (cadre && all) return '混合';
+    return cadre ? '幹部' : '全體';
+  };
   const row = (type, channel, desc, status) => `
     <tr>
       <td><b>${esc(type)}</b></td>
-      <td><span class="status-badge" style="background:${channel === '幹部' ? '#eff6ff' : '#f0fdf4'};color:${channel === '幹部' ? '#1d4ed8' : '#047857'};border:1px solid ${channel === '幹部' ? '#3b82f6' : '#10b981'};">${esc(channel)}群組</span></td>
+      <td><span class="status-badge" style="background:${channel === '幹部' ? '#eff6ff' : '#f0fdf4'};color:${channel === '幹部' ? '#1d4ed8' : '#047857'};border:1px solid ${channel === '幹部' ? '#3b82f6' : '#10b981'};">${esc(channel)}${channel === '混合' ? '' : '群組'}</span></td>
       <td style="font-size:0.85rem;color:#64748b;">${esc(desc)}</td>
       <td>${status}</td>
     </tr>`;
   return `
   <div class="teacher-section">
     <h2>📡 訊息發送管道設定與呈現</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">依規定，幹部點名提醒僅發送至「LINE 群組 ID(幹部)」；其餘全體性質的通知一律發送至「LINE 群組 ID(全體)」。各類提醒之啟用狀態如下，點選「提醒管理」左側子項目可逐一調整。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">幹部點名提醒固定發送至「LINE 群組 ID(幹部)」；問卷提醒與缺曠提醒可逐課程／逐批次選擇發送至「幹部群組」或「全體群組」（預設全體），請至左側「問卷提醒」「缺曠提醒」子項目調整。下表為目前各類提醒之發送管道與啟用狀態。</p>
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
         <thead><tr><th>提醒類型</th><th>發送管道</th><th>說明</th><th>目前狀態</th></tr></thead>
         <tbody>
           ${row('幹部點名提醒', '幹部', '每週課表命中第一節上課時間＋延遲分鐘，提醒組長／副組長點名', `${cadreEnabled} / ${generalCourses.length} 門課程已啟用`)}
           ${row('輔導班自主點名提醒', '全體', '提醒華語B1輔導班學生上網拍照自主點名（二次提醒＋未完成名單）', selfcheckEnabled ? '✅ 已啟用' : '⏸️ 未啟用')}
-          ${row('問卷提醒（生活關懷問卷）', '全體', '依設定時間提醒尚未填寫生活關懷問卷的同學', `${careEnabledCount} 門課程已啟用`)}
-          ${row('缺曠提醒（缺曠原因調查）', '全體', '依設定時間提醒尚未填寫缺曠原因說明的同學', `${absEnabledCount} 份問卷已啟用`)}
+          ${row('問卷提醒（生活關懷問卷）', chanSummary(careList), '依設定時間提醒尚未填寫生活關懷問卷的同學；管道可於「問卷提醒」逐課程調整', `${careEnabledCount} 門課程已啟用（幹部 ${chanCount(careList, 'cadre')}／全體 ${chanCount(careList, 'all')}）`)}
+          ${row('缺曠提醒（缺曠原因調查）', chanSummary(absList), '依設定時間提醒尚未填寫缺曠原因說明的同學；管道可於「缺曠提醒」逐批次調整', `${absEnabledCount} 份問卷已啟用（幹部 ${chanCount(absList, 'cadre')}／全體 ${chanCount(absList, 'all')}）`)}
           ${row('全班綁定教學訊息', '全體', '手動發送，通知尚未綁定 LINE 的同學完成綁定', '手動發送')}
         </tbody>
       </table>
     </div>
   </div>`;
+}
+
+/* 問卷／缺曠提醒的發送管道下拉選單（幹部群組／全體群組） */
+function reminderChannelSelect(actName, courseId, surveyId, channel) {
+  return `<select class="input-select" data-act="${actName}" data-id="${esc(courseId)}"${surveyId ? ` data-survey="${esc(surveyId)}"` : ''} style="padding:0.25rem 0.4rem;">
+    <option value="all" ${channel !== 'cadre' ? 'selected' : ''}>全體群組</option>
+    <option value="cadre" ${channel === 'cadre' ? 'selected' : ''}>幹部群組</option>
+  </select>`;
 }
 
 /* ---- 提醒管理專項：問卷提醒（生活關懷問卷）自動排程設定 ---- */
@@ -4387,16 +4403,17 @@ function teacherCareReminderBlock() {
       <td>${esc(careTitle({ careSubtitle: activeBatch.subtitle }))}</td>
       <td style="text-align:center;"><input type="checkbox" data-act="care-reminder-toggle" data-id="${esc(x.id)}" ${s.enabled ? 'checked' : ''}></td>
       <td><input type="time" data-act="care-reminder-time" data-id="${esc(x.id)}" value="${esc(s.sendTime)}" style="padding:0.25rem 0.4rem;"></td>
+      <td>${reminderChannelSelect('care-reminder-channel', x.id, '', s.channel)}</td>
     </tr>`;
   }).join('');
   return `
   <div class="teacher-section">
     <h2>📋 問卷提醒（生活關懷問卷）</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該課程是否仍有學生未填寫生活關懷問卷，若有則自動推播提醒至 LINE 群組 ID(全體)；全數完成則不發送。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該課程是否仍有學生未填寫生活關懷問卷，若有則自動推播提醒至所選發送管道（全體群組＝LINE 群組 ID(全體)、幹部群組＝該課程 LINE 群組 ID(幹部)）；全數完成則不發送。</p>
     ${rows ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>課程</th><th>問卷</th><th>啟用自動提醒</th><th>每日發送時間</th></tr></thead>
+        <thead><tr><th>課程</th><th>問卷</th><th>啟用自動提醒</th><th>每日發送時間</th><th>發送管道</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>` : '<p class="file-path">尚無課程設有生活關懷問卷。</p>'}
@@ -4415,17 +4432,18 @@ function teacherAbsenceReminderBlock() {
         <td>${esc(absenceTitle(sv))}</td>
         <td style="text-align:center;"><input type="checkbox" data-act="abs-reminder-toggle" data-id="${esc(x.id)}" data-survey="${esc(sv.id)}" ${s.enabled ? 'checked' : ''}></td>
         <td><input type="time" data-act="abs-reminder-time" data-id="${esc(x.id)}" data-survey="${esc(sv.id)}" value="${esc(s.sendTime)}" style="padding:0.25rem 0.4rem;"></td>
+        <td>${reminderChannelSelect('abs-reminder-channel', x.id, sv.id, s.channel)}</td>
       </tr>`);
     });
   });
   return `
   <div class="teacher-section">
     <h2>📋 缺曠提醒（缺曠原因調查）</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該批次缺曠原因調查是否仍有學生未填寫，若有則自動推播提醒至 LINE 群組 ID(全體)；全數完成則不發送。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該批次缺曠原因調查是否仍有學生未填寫，若有則自動推播提醒至所選發送管道（全體群組＝LINE 群組 ID(全體)、幹部群組＝該課程 LINE 群組 ID(幹部)）；全數完成則不發送。</p>
     ${rows.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>課程</th><th>缺曠調查批次</th><th>啟用自動提醒</th><th>每日發送時間</th></tr></thead>
+        <thead><tr><th>課程</th><th>缺曠調查批次</th><th>啟用自動提醒</th><th>每日發送時間</th><th>發送管道</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
     </div>` : '<p class="file-path">尚無課程設有缺曠原因調查批次。</p>'}
@@ -7023,12 +7041,15 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'send-care-survey-reminder') {
-    if (!confirm('確定要發送「生活關懷問卷填寫提醒」至 LINE 群組 ID(全體) 嗎？')) return;
+    const careCh = courseById(id) && courseById(id).surveyReminderSettings && courseById(id).surveyReminderSettings.care.channel;
+    if (!confirm(`確定要發送「生活關懷問卷填寫提醒」至 LINE 群組 ID(${careCh === 'cadre' ? '幹部' : '全體'}) 嗎？`)) return;
     return act('teacher:send-care-survey-reminder', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'send-absence-survey-reminder') {
     const surveyId = btn.dataset.survey || '';
-    if (!confirm('確定要發送「缺曠原因調查填寫提醒」至 LINE 群組 ID(全體) 嗎？')) return;
+    const absC = cur() || courseById(id);
+    const absCh = absC && absC.surveyReminderSettings && (absC.surveyReminderSettings.absence[surveyId] || {}).channel;
+    if (!confirm(`確定要發送「缺曠原因調查填寫提醒」至 LINE 群組 ID(${absCh === 'cadre' ? '幹部' : '全體'}) 嗎？`)) return;
     return act('teacher:send-absence-survey-reminder', { courseId: (cur() && cur().id) || id, surveyId }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'attendance-unlock-all') {
@@ -7689,18 +7710,20 @@ app.addEventListener('change', e => {
     r.onload = ev => importText(cur(), ev.target.result);
     return r.readAsText(file);
   }
-  if (a === 'care-reminder-toggle' || a === 'care-reminder-time') {
+  if (a === 'care-reminder-toggle' || a === 'care-reminder-time' || a === 'care-reminder-channel') {
     const row = t.closest('tr');
     const enabled = row.querySelector('[data-act="care-reminder-toggle"]').checked;
     const sendTime = row.querySelector('[data-act="care-reminder-time"]').value || '09:00';
-    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'care', enabled, sendTime });
+    const channel = row.querySelector('[data-act="care-reminder-channel"]').value;
+    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'care', enabled, sendTime, channel });
   }
-  if (a === 'abs-reminder-toggle' || a === 'abs-reminder-time') {
+  if (a === 'abs-reminder-toggle' || a === 'abs-reminder-time' || a === 'abs-reminder-channel') {
     const row = t.closest('tr');
     const enabled = row.querySelector('[data-act="abs-reminder-toggle"]').checked;
     const sendTime = row.querySelector('[data-act="abs-reminder-time"]').value || '09:00';
+    const channel = row.querySelector('[data-act="abs-reminder-channel"]').value;
     const surveyId = t.dataset.survey;
-    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'absence', surveyId, enabled, sendTime });
+    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'absence', surveyId, enabled, sendTime, channel });
   }
   if (!c) return;
   if (a === 'filter-log-action') {

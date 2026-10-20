@@ -348,10 +348,12 @@ async function ensureReminderCenterSchema(db) {
         enabled     INTEGER NOT NULL DEFAULT 0,
         send_time   TEXT NOT NULL DEFAULT '09:00',
         updated_at  INTEGER NOT NULL DEFAULT 0,
+        channel     TEXT NOT NULL DEFAULT 'all',
         PRIMARY KEY (course_id, kind, survey_id)
       )
     `).run();
   } catch (_) {}
+  try { await db.prepare("ALTER TABLE survey_reminder_settings ADD COLUMN channel TEXT NOT NULL DEFAULT 'all'").run(); } catch (_) {}
   try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS reminder_dedup_runs (
@@ -1161,9 +1163,9 @@ export async function loadState(db, rev = null) {
     const srsRows = (surveyReminderRows.results || []).filter(x => x.course_id === c.id);
     const careSrs = srsRows.find(x => x.kind === 'care');
     courseObj.surveyReminderSettings = {
-      care: { enabled: !!(careSrs && careSrs.enabled), sendTime: (careSrs && careSrs.send_time) || '09:00' },
+      care: { enabled: !!(careSrs && careSrs.enabled), sendTime: (careSrs && careSrs.send_time) || '09:00', channel: (careSrs && careSrs.channel) === 'cadre' ? 'cadre' : 'all' },
       absence: Object.fromEntries(
-        srsRows.filter(x => x.kind === 'absence').map(x => [x.survey_id, { enabled: !!x.enabled, sendTime: x.send_time || '09:00' }])
+        srsRows.filter(x => x.kind === 'absence').map(x => [x.survey_id, { enabled: !!x.enabled, sendTime: x.send_time || '09:00', channel: x.channel === 'cadre' ? 'cadre' : 'all' }])
       ),
     };
 
@@ -1571,16 +1573,24 @@ export async function upsertSurveyReminderSettings(db, courseId, kind, surveyId,
   const next = {
     enabled: existing ? existing.enabled : 0,
     send_time: existing ? existing.send_time : '09:00',
+    channel: existing && existing.channel === 'cadre' ? 'cadre' : 'all',
     ...patch,
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO survey_reminder_settings (course_id, kind, survey_id, enabled, send_time, updated_at)
-    VALUES (?,?,?,?,?,?)
+    INSERT INTO survey_reminder_settings (course_id, kind, survey_id, enabled, send_time, updated_at, channel)
+    VALUES (?,?,?,?,?,?,?)
     ON CONFLICT(course_id, kind, survey_id) DO UPDATE SET
-      enabled = excluded.enabled, send_time = excluded.send_time, updated_at = excluded.updated_at
-  `).bind(courseId, kind, surveyId, next.enabled, next.send_time, next.updated_at).run();
+      enabled = excluded.enabled, send_time = excluded.send_time, updated_at = excluded.updated_at, channel = excluded.channel
+  `).bind(courseId, kind, surveyId, next.enabled, next.send_time, next.updated_at, next.channel).run();
   return next;
+}
+
+/* 解析問卷／缺曠提醒的發送管道：'cadre' → 該課程幹部群組 ID；其餘（預設）→ 全體群組 ID */
+async function resolveSurveyReminderTarget(db, courseId, kind, surveyId) {
+  const st = await getSurveyReminderSettings(db, courseId, kind, surveyId).catch(() => null);
+  if (st && st.channel === 'cadre') return { channel: 'cadre', groupId: await getCadreLineGroupId(db, courseId), label: '幹部群組', field: 'LINE 群組 ID(幹部)' };
+  return { channel: 'all', groupId: await getAllStudentsLineGroupId(db), label: '全體群組', field: 'LINE 群組 ID(全體)' };
 }
 
 /* 解析幹部群組 ID（預設 C9525fed4991dc073e4d01be5ec874510，或由一般班級點名提醒設定取得）
@@ -1872,8 +1882,9 @@ export async function sendLineBindingInstructions(db, env, courseId) {
 /* 老師後台：推播「生活關懷問卷填寫提醒」至 LINE 群組 ID(全體) */
 export async function sendCareSurveyReminder(db, env, courseId) {
   await ensureSchema(db);
-  const targetGroupId = await getAllStudentsLineGroupId(db);
-  if (!targetGroupId) throw new Error('尚未設定 LINE 群組 ID(全體)');
+  const target = await resolveSurveyReminderTarget(db, courseId, 'care', '');
+  const targetGroupId = target.groupId;
+  if (!targetGroupId) throw new Error(`尚未設定 ${target.field}`);
 
   const c = await db.prepare('SELECT id, year, subject, care_subtitle FROM courses WHERE id = ?').bind(courseId).first();
   if (!c) throw new Error('課程不存在');
@@ -1904,15 +1915,16 @@ export async function sendCareSurveyReminder(db, env, courseId) {
   ].filter(Boolean).join('\n');
 
   await pushWithMentions(env, targetGroupId, head, bound, tail);
-  await logLinePush(db, { courseId, kind: 'survey-care', channel: 'all', groupId: targetGroupId, summary: `生活關懷問卷填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
-  return { sent: true, detail: `已推播至全體群組，提醒 ${pending.length} 位同學填寫生活關懷問卷（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+  await logLinePush(db, { courseId, kind: 'survey-care', channel: target.channel, groupId: targetGroupId, summary: `生活關懷問卷填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
+  return { sent: true, detail: `已推播至${target.label}，提醒 ${pending.length} 位同學填寫生活關懷問卷（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
 }
 
 /* 老師後台：推播「缺曠原因調查填寫提醒」至 LINE 群組 ID(全體) */
 export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
   await ensureSchema(db);
-  const targetGroupId = await getAllStudentsLineGroupId(db);
-  if (!targetGroupId) throw new Error('尚未設定 LINE 群組 ID(全體)');
+  const target = await resolveSurveyReminderTarget(db, courseId, 'absence', surveyId);
+  const targetGroupId = target.groupId;
+  if (!targetGroupId) throw new Error(`尚未設定 ${target.field}`);
 
   const sv = await db.prepare('SELECT id, subtitle, student_ids, threshold FROM absence_surveys WHERE course_id = ? AND id = ?').bind(courseId, surveyId).first();
   if (!sv) throw new Error('缺曠調查問卷不存在');
@@ -1948,8 +1960,8 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
   ].filter(Boolean).join('\n');
 
   await pushWithMentions(env, targetGroupId, head, bound, tail);
-  await logLinePush(db, { courseId, kind: 'survey-absence', channel: 'all', groupId: targetGroupId, summary: `缺曠原因調查（${sv.subtitle}）填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
-  return { sent: true, detail: `已推播至全體群組，提醒 ${pendingIds.length} 位同學填寫缺曠原因（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+  await logLinePush(db, { courseId, kind: 'survey-absence', channel: target.channel, groupId: targetGroupId, summary: `缺曠原因調查（${sv.subtitle}）填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
+  return { sent: true, detail: `已推播至${target.label}，提醒 ${pendingIds.length} 位同學填寫缺曠原因（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
 }
 
 /* Cron（每 5 分鐘）：問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）自動排程。
