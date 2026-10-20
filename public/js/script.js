@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.164.20261020.161305';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.165.20261020.161932';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -32,14 +32,17 @@ function parseSubViewFromHash() {
 function applySectionsFromHash(parsed) {
   if (!parsed || parsed.type !== 'teacher' || !parsed.sub || !parsed.sub.length) return;
   const [s1, s2] = parsed.sub;
-  if (parsed.view === 'attendance') {
+  if (parsed.view === 'attendance' && (s1 === 'reminder' || (s1 === 'b1' && s2 === 'reminder'))) {
+    // 舊網址相容：點名自動提醒已移至「提醒管理」
+    reminderSection = s1 === 'reminder' ? 'atd' : 'b1'; remTreeOpen = true; teacherView = 'reminders';
+  } else if (parsed.view === 'attendance') {
     atdSection = s1; atdTreeOpen = true;
     if (s1 === 'b1') { b1TreeOpen = true; if (s2) b1Section = s2; }
   } else if (parsed.view === 'wellbeing') {
     wbSection = s1; wbTreeOpen = true;
     if (s1.startsWith('care:')) careAdminId = s1.slice(5);
   } else if (parsed.view === 'reminders') {
-    reminderSection = ['channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
+    reminderSection = ['atd', 'b1', 'channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
     if (s1 === 'log') loadPushLogs();
   }
 }
@@ -55,8 +58,11 @@ function teacherHash() {
 }
 
 /* 「華語B1輔導課修課點名」是獨立課程紀錄；以網址直接進入時需切換目前課程 */
+function isB1View() {
+  return (teacherView === 'attendance' && atdSection === 'b1') || (teacherView === 'reminders' && reminderSection === 'b1');
+}
 function fixB1Course() {
-  if (teacherView === 'attendance' && atdSection === 'b1' && state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
+  if (isB1View() && state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
     lastGeneralCourseId = state.currentId;
     state.currentId = state.selfCheckinCourseId;
   }
@@ -122,11 +128,11 @@ let publicAttendanceLeaderboardPage = 1; // 前台/組內缺席排行榜目前�
 let publicSurveyUncompletedPages = {};  // 前台總覽各份生活關懷問卷未完成名單頁碼（每頁 15 筆），key：批次 id
 let wbSection = 'cards';                // 老師後台「問卷管理」目前顯示的樹狀子節點：cards | care-config | care:<id> | abs-config | abs:<id> | log
 let wbTreeOpen = false;                 // 左側樹狀選單「問卷管理」子項目是否展開（預設收折以節省版面）
-let b1Section = 'roster';               // 老師後台「華語B1輔導課修課點名」目前子節點：roster | reminder | selfcheck
+let b1Section = 'roster';               // 老師後台「華語B1輔導課修課點名」目前子節點：roster | selfcheck
 let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
-let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | bindings | b1 | records | progress | leaderboard | log
+let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | bindings | b1 | records | progress | leaderboard | log
 let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
-let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | channels | bindings | care | absence | log
+let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | atd | b1 | channels | bindings | care | absence | log
 let remTreeOpen = false;                // 左側樹狀選單「提醒管理」子項目是否展開
 let pushLogs = null;                    // Bot 發送紀錄（逐次自後端載入）
 let pushLogsLoading = false;
@@ -2725,7 +2731,6 @@ function attendanceSubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}" ${mAttr('a:' + key, label)}>${mt('a:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('sessions', '點名時段設定')}
-    ${node('reminder', '點名自動提醒（LINE 群組 ID(幹部)）')}
     <li class="${sec === 'b1' ? 'active' : ''}">
       <div class="tree-node-row">
         <button class="wb-tree-toggle" type="button" data-act="atd-section" data-sec="b1" title="${b1TreeOpen ? '收折子清單' : '展開子清單'}">${b1TreeOpen ? '▼' : '▶'}</button>
@@ -2745,7 +2750,6 @@ function b1SubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}" ${mAttr('b:' + key, label)}>${mt('b:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('roster', '修課名單（勾選／匯入）')}
-    ${node('reminder', '點名自動提醒（LINE 群組 ID(全體)）')}
     ${node('selfcheck', '自主點名審核（照片）')}
   </ul>`;
 }
@@ -2755,6 +2759,8 @@ function reminderSubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}" ${mAttr('r:' + key, label)}>${mt('r:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('groupids', 'LINE 群組 ID 設定')}
+    ${node('atd', '點名自動提醒（LINE 群組 ID(幹部)）')}
+    ${node('b1', '🗣️ 華語B1輔導課自主點名提醒（LINE 群組 ID(全體)）')}
     ${node('channels', '訊息發送管道設定與呈現')}
     ${node('bindings', '綁定查詢與統計')}
     ${node('care', '問卷提醒（生活關懷問卷）')}
@@ -4292,7 +4298,6 @@ function teacherAttendanceBlock(c) {
     ` : '<p class="file-path">目前無缺席紀錄。</p>'}
   </div>`;
 
-  if (atdSection === 'reminder') return teacherAttendanceReminderBlock(c);
   if (atdSection === 'bindings') return teacherBindingStatsBlock(c);
   if (atdSection === 'b1') return teacherB1Block(c);
   if (atdSection === 'records') return recordsBlock;
@@ -4305,8 +4310,10 @@ function teacherAttendanceBlock(c) {
 /* ===== 老師後台：提醒管理 =====
    集中管理所有提醒相關的共用設定：LINE 群組 ID、訊息發送管道、綁定查詢與統計、Bot 發送紀錄，
    以及問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）的自動排程。
-   幹部點名提醒、輔導班自主點名提醒之排程細節仍在「點名管理」設定（與該課程之每週課表緊密相關）。 */
+   另含幹部點名提醒（atd）與華語B1輔導課自主點名提醒（b1）之排程設定；點名本身（時段、紀錄、審核）仍在「點名管理」。 */
 function teacherReminderBlock(c) {
+  if (reminderSection === 'atd') return teacherAttendanceReminderBlock(c);
+  if (reminderSection === 'b1') return teacherAttendanceReminderBlock(c, true);
   if (reminderSection === 'channels') return teacherChannelBlock();
   if (reminderSection === 'bindings') return teacherBindingStatsBlock(c);
   if (reminderSection === 'care') return teacherCareReminderBlock();
@@ -4567,7 +4574,6 @@ function teacherBindingStatsBlock(c) {
    輔導班無組長／副組長可協助點名，修課學生一律自主點名（拍照＋驗證碼＋定位，見「自主點名審核（照片）」子項目）。 */
 function teacherB1Block(c) {
   if (!c) return teacherB1RosterBlock(c);
-  if (b1Section === 'reminder') return teacherAttendanceReminderBlock(c, true);
   if (b1Section === 'selfcheck') return selfCheckinBlock(c);
   return teacherB1RosterBlock(c);
 }
@@ -4607,7 +4613,7 @@ function teacherB1RosterBlock(c) {
     <h2>🗣️ 華語B1輔導課修課點名 <small>${esc(courseLabel(c))}</small></h2>
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:0.85rem 1rem;font-size:0.88rem;color:#1e3a8a;line-height:1.5;">
       💡 本項為「華語B1輔導課」修課點名專項，<b>並非全體學生都需修課</b>：各組組長／副組長通常自律性較高、已通過B1，無需再修此輔導課，因此修課名單由老師於下方<b>勾選</b>或<b>匯入</b>決定，而非沿用班級全體名單。<br>
-      📸 本輔導班沒有組長／副組長可協助點名，修課學生一律採<b>自主點名（拍照＋驗證碼＋定位防弊）</b>，本專區之「點名自動提醒」「LINE 群組 ID」「自主點名審核」皆為輔導班專屬設定，與一般「點名管理」完全獨立。
+      📸 本輔導班沒有組長／副組長可協助點名，修課學生一律採<b>自主點名（拍照＋驗證碼＋定位防弊）</b>，本專區之「自主點名審核」及「提醒管理」中的輔導班自主點名提醒皆為輔導班專屬設定，與一般「點名管理」完全獨立。
     </div>
   </div>
 
@@ -6853,7 +6859,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     state.currentId = courseId;
     localStorage.setItem(CURRENT_KEY, state.currentId);
   }
-  if (!(newView === 'attendance' && atdSection === 'b1') && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+  if (!((newView === 'attendance' && atdSection === 'b1') || (newView === 'reminders' && reminderSection === 'b1')) && state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
     const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
     state.currentId = other ? other.id : null;
     if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
@@ -7014,6 +7020,18 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'toggle-rem-tree') { remTreeOpen = !remTreeOpen; return render(); }
   if (a === 'rem-section') {
     reminderSection = btn.dataset.sec;
+    // 「華語B1輔導課」是獨立課程紀錄：進入 b1 提醒時暫切目前課程，離開時還原
+    if (reminderSection === 'b1') {
+      if (state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
+        lastGeneralCourseId = state.currentId;
+        state.currentId = state.selfCheckinCourseId;
+        localStorage.setItem(CURRENT_KEY, state.currentId);
+      }
+    } else if (state.selfCheckinCourseId && state.currentId === state.selfCheckinCourseId) {
+      const other = state.courses.find(x => x.id === lastGeneralCourseId) || state.courses.find(x => x.id !== state.selfCheckinCourseId);
+      state.currentId = other ? other.id : null;
+      if (other) localStorage.setItem(CURRENT_KEY, state.currentId);
+    }
     if (reminderSection === 'bindings') bindingCourseFilter = 'all';
     if (reminderSection === 'log') loadPushLogs();
     remTreeOpen = true;
