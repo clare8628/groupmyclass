@@ -4353,31 +4353,38 @@ function teacherChannelBlock() {
   const chanCount = (list, ch) => list.filter(s => s.enabled && (s.channel === 'cadre' ? 'cadre' : 'all') === ch).length;
   const careList = state.courses.map(x => x.surveyReminderSettings && x.surveyReminderSettings.care).filter(Boolean);
   const absList = state.courses.flatMap(x => Object.values((x.surveyReminderSettings && x.surveyReminderSettings.absence) || {}));
-  const chanSummary = (list) => {
+  const fixedBadge = channel => `<span class="status-badge" style="background:${channel === '幹部' ? '#eff6ff' : '#f0fdf4'};color:${channel === '幹部' ? '#1d4ed8' : '#047857'};border:1px solid ${channel === '幹部' ? '#3b82f6' : '#10b981'};">${esc(channel)}群組（固定）</span>`;
+  /* 問卷／缺曠提醒：總覽頁直接提供切換管道的下拉選單，變更會一次套用到全部課程／批次 */
+  const channelSwitch = (bulkKind, list) => {
     const cadre = chanCount(list, 'cadre'), all = chanCount(list, 'all');
-    if (cadre && all) return '混合';
-    return cadre ? '幹部' : '全體';
+    const mixed = !!(cadre && all);
+    return `<select class="input-select" data-act="bulk-reminder-channel" data-kind="${bulkKind}" style="padding:0.25rem 0.4rem;width:100%;min-width:110px;">
+      ${mixed ? '<option value="" disabled selected>混合，請選擇</option>' : ''}
+      <option value="all" ${!mixed && !cadre ? 'selected' : ''}>全體群組</option>
+      <option value="cadre" ${!mixed && cadre ? 'selected' : ''}>幹部群組</option>
+    </select>`;
   };
-  const row = (type, channel, desc, status) => `
+  const row = (type, channelCell, desc, status) => `
     <tr>
       <td><b>${esc(type)}</b></td>
-      <td><span class="status-badge" style="background:${channel === '幹部' ? '#eff6ff' : '#f0fdf4'};color:${channel === '幹部' ? '#1d4ed8' : '#047857'};border:1px solid ${channel === '幹部' ? '#3b82f6' : '#10b981'};">${esc(channel)}${channel === '混合' ? '' : '群組'}</span></td>
+      <td>${channelCell}</td>
       <td style="font-size:0.85rem;color:#64748b;">${esc(desc)}</td>
       <td>${status}</td>
     </tr>`;
   return `
   <div class="teacher-section">
     <h2>📡 訊息發送管道設定與呈現</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">幹部點名提醒固定發送至「LINE 群組 ID(幹部)」；問卷提醒與缺曠提醒可逐課程／逐批次選擇發送至「幹部群組」或「全體群組」（預設全體），請至左側「問卷提醒」「缺曠提醒」子項目調整。下表為目前各類提醒之發送管道與啟用狀態。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">幹部點名提醒固定發送至「LINE 群組 ID(幹部)」；問卷提醒與缺曠提醒可逐課程／逐批次選擇發送至「幹部群組」或「全體群組」（預設全體），下表可直接切換（將套用至全部課程／批次），或至左側「問卷提醒」「缺曠提醒」子項目逐項調整。</p>
     <div class="table-wrap">
-      <table class="roster" style="background:#fff;">
+      <table class="roster" style="background:#fff;table-layout:fixed;">
+        <colgroup><col style="width:18%;"><col style="width:14%;"><col><col style="width:22%;"></colgroup>
         <thead><tr><th>提醒類型</th><th>發送管道</th><th>說明</th><th>目前狀態</th></tr></thead>
         <tbody>
-          ${row('幹部點名提醒', '幹部', '每週課表命中第一節上課時間＋延遲分鐘，提醒組長／副組長點名', `${cadreEnabled} / ${generalCourses.length} 門課程已啟用`)}
-          ${row('輔導班自主點名提醒', '全體', '提醒華語B1輔導班學生上網拍照自主點名（二次提醒＋未完成名單）', selfcheckEnabled ? '✅ 已啟用' : '⏸️ 未啟用')}
-          ${row('問卷提醒（生活關懷問卷）', chanSummary(careList), '依設定時間提醒尚未填寫生活關懷問卷的同學；管道可於「問卷提醒」逐課程調整', `${careEnabledCount} 門課程已啟用（幹部 ${chanCount(careList, 'cadre')}／全體 ${chanCount(careList, 'all')}）`)}
-          ${row('缺曠提醒（缺曠原因調查）', chanSummary(absList), '依設定時間提醒尚未填寫缺曠原因說明的同學；管道可於「缺曠提醒」逐批次調整', `${absEnabledCount} 份問卷已啟用（幹部 ${chanCount(absList, 'cadre')}／全體 ${chanCount(absList, 'all')}）`)}
-          ${row('全班綁定教學訊息', '全體', '手動發送，通知尚未綁定 LINE 的同學完成綁定', '手動發送')}
+          ${row('幹部點名提醒', fixedBadge('幹部'), '每週課表命中第一節上課時間＋延遲分鐘，提醒組長／副組長點名', `${cadreEnabled} / ${generalCourses.length} 門課程已啟用`)}
+          ${row('輔導班自主點名提醒', fixedBadge('全體'), '提醒華語B1輔導班學生上網拍照自主點名（二次提醒＋未完成名單）', selfcheckEnabled ? '✅ 已啟用' : '⏸️ 未啟用')}
+          ${row('問卷提醒（生活關懷問卷）', channelSwitch('care', careList), '依設定時間提醒尚未填寫生活關懷問卷的同學；此處切換將套用至全部課程，亦可於「問卷提醒」逐課程調整', `${careEnabledCount} 門課程已啟用（幹部 ${chanCount(careList, 'cadre')}／全體 ${chanCount(careList, 'all')}）`)}
+          ${row('缺曠提醒（缺曠原因調查）', channelSwitch('absence', absList), '依設定時間提醒尚未填寫缺曠原因說明的同學；此處切換將套用至全部批次，亦可於「缺曠提醒」逐批次調整', `${absEnabledCount} 份問卷已啟用（幹部 ${chanCount(absList, 'cadre')}／全體 ${chanCount(absList, 'all')}）`)}
+          ${row('全班綁定教學訊息', fixedBadge('全體'), '手動發送，通知尚未綁定 LINE 的同學完成綁定', '手動發送')}
         </tbody>
       </table>
     </div>
@@ -7709,6 +7716,14 @@ app.addEventListener('change', e => {
     const r = new FileReader();
     r.onload = ev => importText(cur(), ev.target.result);
     return r.readAsText(file);
+  }
+  if (a === 'bulk-reminder-channel') {
+    const kind = t.dataset.kind;
+    const channel = t.value;
+    if (!channel) return;
+    const label = kind === 'absence' ? '缺曠提醒（缺曠原因調查）' : '問卷提醒（生活關懷問卷）';
+    if (!confirm(`將「${label}」的發送管道全部切換為「${channel === 'cadre' ? '幹部群組' : '全體群組'}」？\n此操作會套用到全部${kind === 'absence' ? '批次' : '課程'}。`)) { return render(); }
+    return act('teacher:bulk-set-survey-reminder-channel', { kind, channel });
   }
   if (a === 'care-reminder-toggle' || a === 'care-reminder-time' || a === 'care-reminder-channel') {
     const row = t.closest('tr');

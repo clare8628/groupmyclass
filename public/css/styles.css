@@ -875,10 +875,12 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 }
 
 .status-badge {
+  display: inline-block;
   font-size: 0.75rem;
   font-weight: 700;
   padding: 0.2rem 0.6rem;
   border-radius: 12px;
+  white-space: nowrap;
 }
 
 .status-badge.can-edit {

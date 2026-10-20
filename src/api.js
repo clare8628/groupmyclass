@@ -1003,6 +1003,31 @@ export async function handleAction(request, env, db, body) {
       });
       return ok();
     }
+    if (op === 'bulk-set-survey-reminder-channel') {
+      const kind = body.kind === 'absence' ? 'absence' : 'care';
+      const channel = body.channel === 'cadre' ? 'cadre' : 'all';
+      let n = 0;
+      if (kind === 'care') {
+        for (const c of courses) {
+          if (!(c.careSurveys || []).length) continue;
+          await upsertSurveyReminderSettings(db, c.id, 'care', '', { channel });
+          n++;
+        }
+      } else {
+        for (const c of courses) {
+          for (const sv of (c.absenceSurveys || [])) {
+            await upsertSurveyReminderSettings(db, c.id, 'absence', sv.id, { channel });
+            n++;
+          }
+        }
+      }
+      await logActivity(db, {
+        courseId: 'all', operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
+        actionType: kind === 'care' ? 'survey-care-reminder-config' : 'survey-absence-reminder-config',
+        detail: `老師於發送管道總覽一鍵將${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}提醒管道全部切換為${channel === 'cadre' ? '幹部' : '全體'}群組（共 ${n} 項）`,
+      });
+      return ok();
+    }
     if (op === 'set-attendance-unlock') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
