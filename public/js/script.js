@@ -1,15 +1,19 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.159.20261020.144129';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.161.20261020.153318';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
 const TEACHER_VIEW_KEY = 'groupmyclass_teacher_view'; // 記住老師後台目前檢視功能頁面，重新整理不遺失
 
+const TEACHER_HASH_VIEWS = ['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'reminders', 'bulletin'];
 function parseViewFromHash() {
-  const h = (window.location.hash || '').replace(/^#/, '').toLowerCase().trim();
-  // 老師後台視圖
-  if (['teacher-attendance', 'logs', 'eval', 'settings', 'course', 'wellbeing', 'system', 'reminders'].includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h };
+  const raw = (window.location.hash || '').replace(/^#/, '').trim();
+  const segs = raw.split('/').map(x => { try { return decodeURIComponent(x); } catch (_) { return x; } });
+  const h = (segs[0] || '').toLowerCase();
+  // 老師後台視圖（子清單網址：#attendance/sessions、#attendance/b1/roster、#wellbeing/care:<id>、#reminders/channels）
+  if (segs.length > 1 && ['attendance', 'wellbeing', 'reminders'].includes(h)) return { type: 'teacher', view: h, sub: segs.slice(1) };
+  if (TEACHER_HASH_VIEWS.includes(h)) return { type: 'teacher', view: h === 'teacher-attendance' ? 'attendance' : h, sub: [] };
   // 前台子系統視圖
   if (['dashboard', 'groups', 'attendance', 'survey', 'password'].includes(h)) return { type: 'public', view: h };
   // 相容舊 hash
@@ -22,6 +26,40 @@ function parseViewFromHash() {
 function parseSubViewFromHash() {
   const parsed = parseViewFromHash();
   return parsed && parsed.type === 'public' ? parsed.view : null;
+}
+
+/* 依網址 hash 還原老師後台子清單（每個子清單有獨立網址，重新整理不會跳回上一層） */
+function applySectionsFromHash(parsed) {
+  if (!parsed || parsed.type !== 'teacher' || !parsed.sub || !parsed.sub.length) return;
+  const [s1, s2] = parsed.sub;
+  if (parsed.view === 'attendance') {
+    atdSection = s1; atdTreeOpen = true;
+    if (s1 === 'b1') { b1TreeOpen = true; if (s2) b1Section = s2; }
+  } else if (parsed.view === 'wellbeing') {
+    wbSection = s1; wbTreeOpen = true;
+    if (s1.startsWith('care:')) careAdminId = s1.slice(5);
+  } else if (parsed.view === 'reminders') {
+    reminderSection = s1; remTreeOpen = true;
+    if (s1 === 'log') loadPushLogs();
+  }
+}
+
+/* 目前老師後台視圖（含子清單）對應的 hash */
+function teacherHash() {
+  if (!teacherView || teacherView === 'course') return '';
+  let sub = '';
+  if (teacherView === 'attendance' && atdTreeOpen) sub = atdSection === 'b1' ? 'b1/' + b1Section : atdSection;
+  else if (teacherView === 'wellbeing' && wbTreeOpen) sub = wbSection;
+  else if (teacherView === 'reminders' && remTreeOpen) sub = reminderSection;
+  return '#' + teacherView + (sub ? '/' + sub.split('/').map(encodeURIComponent).join('/') : '');
+}
+
+/* 「華語B1輔導課修課點名」是獨立課程紀錄；以網址直接進入時需切換目前課程 */
+function fixB1Course() {
+  if (teacherView === 'attendance' && atdSection === 'b1' && state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
+    lastGeneralCourseId = state.currentId;
+    state.currentId = state.selfCheckinCourseId;
+  }
 }
 
 function getInitialTeacherView() {
@@ -58,6 +96,7 @@ let state = {
   session: null,
   currentId: localStorage.getItem(CURRENT_KEY) || null,
   bulletin: [],
+  menuTitles: {},
   bulletinPageSize: 10,
   defaultCourseId: '',
   lineConfigured: false,
@@ -91,6 +130,7 @@ let reminderSection = 'overview';       // 老師後台「提醒管理」目前�
 let remTreeOpen = false;                // 左側樹狀選單「提醒管理」子項目是否展開
 let pushLogs = null;                    // Bot 發送紀錄（逐次自後端載入）
 let pushLogsLoading = false;
+let menuEdit = false;                   // 左側選單是否處於「編輯標題」模式
 let atdTreeOpen = false;                // 左側樹狀選單「點名管理」子項目是否展開（預設收折以節省版面）
 let careAdminId = '';                   // 老師後台目前檢視的生活關懷問卷批次 id（空白＝第一份）
 let viewingAbsenceModal = null;     // 目前查看缺席明細彈窗之學生資料：{ studentKey, studentName, studentId, details: [] } | null
@@ -250,6 +290,7 @@ function apply(data) {
   if (data.session !== undefined) state.session = data.session;
   if (data.bulletin && Array.isArray(data.bulletin)) state.bulletin = data.bulletin;
   if (data.bulletinPageSize) state.bulletinPageSize = Number(data.bulletinPageSize);
+  if (data.menuTitles && typeof data.menuTitles === 'object') state.menuTitles = data.menuTitles;
   if (data.lineConfigured !== undefined) state.lineConfigured = !!data.lineConfigured;
   if (data.selfCheckinCourseId !== undefined) state.selfCheckinCourseId = data.selfCheckinCourseId;
   if (state.session && state.session.role === 'student') state.currentId = state.session.courseId;
@@ -2594,6 +2635,9 @@ function courseTreePublic() {
 
 /* ---- 後台：左側課程樹 ----
    「115-1華語B1輔導班」不列入一般學年度分組清單，改由與「點名管理」同層的「華語B1輔導課修課點名」專區管理 */
+/* 左側選單標題：老師可自訂（存於伺服器 settings），未自訂時用預設 */
+function mt(key, def) { return esc((state.menuTitles && state.menuTitles[key]) || def); }
+function mAttr(key, def) { return `data-mkey="${esc(key)}" data-mdef="${esc(def)}"`; }
 function courseTree() {
   const byYear = {};
   state.courses.forEach(c => {
@@ -2603,7 +2647,8 @@ function courseTree() {
   });
   const years = Object.keys(byYear).sort().reverse();
   return `<aside class="tree">
-    <h3>學年度分組清單</h3>
+    <h3 ${mAttr('h:courses', '學年度分組清單')}>${mt('h:courses', '學年度分組清單')}</h3>
+    <button class="btn btn-secondary btn-sm menu-edit-btn${menuEdit ? ' on' : ''}" type="button" data-act="toggle-menu-edit" title="開啟後點選任一清單標題即可修改名稱">${menuEdit ? '✅ 完成編輯標題' : '✏️ 編輯清單標題'}</button>
     ${years.length ? years.map(y => `
       <div class="tree-year">
         <div class="tree-year-label">${esc(y)}</div>
@@ -2617,43 +2662,43 @@ function courseTree() {
       </div>`).join('') : '<p class="file-path">尚無分組，請於右側「分組設定」建立。</p>'}
     <button class="btn btn-secondary" data-act="new-course">＋ 新增分組項目</button>
     <div class="tree-year tree-sys">
-      <div class="tree-year-label">系統設定</div>
+      <div class="tree-year-label" ${mAttr('h:sys', '系統設定')}>${mt('h:sys', '系統設定')}</div>
       <ul>
         <li class="${teacherView === 'settings' ? 'active' : ''}">
-          <button data-act="sys-password">🔑 密碼與安全性管理<span class="count">管理者與組長密碼</span></button>
+          <button data-act="sys-password" ${mAttr('v:settings', '🔑 密碼與安全性管理')}>${mt('v:settings', '🔑 密碼與安全性管理')}<span class="count">管理者與組長密碼</span></button>
         </li>
         <li class="${teacherView === 'eval' ? 'active' : ''}">
-          <button data-act="sys-peer-eval">⚖️ 學期成績加減分與組長評分控制<span class="count">組長評分權限與期末加減分</span></button>
+          <button data-act="sys-peer-eval" ${mAttr('v:eval', '⚖️ 學期成績加減分與組長評分控制')}>${mt('v:eval', '⚖️ 學期成績加減分與組長評分控制')}<span class="count">組長評分權限與期末加減分</span></button>
         </li>
         <li class="${teacherView === 'logs' ? 'active' : ''}">
-          <button data-act="sys-logs">👥 分組管理<span class="count">分組異動日誌</span></button>
+          <button data-act="sys-logs" ${mAttr('v:logs', '👥 分組管理')}>${mt('v:logs', '👥 分組管理')}<span class="count">分組異動日誌</span></button>
         </li>
         <li class="${teacherView === 'reminders' ? 'active' : ''}">
           <div class="tree-node-row">
-            <button data-act="sys-reminders"><span class="wb-title">🔔 提醒管理</span><span class="count">LINE 群組 ID、訊息發送管道與 Bot 推送紀錄</span></button>
-            <button class="wb-tree-toggle" type="button" data-act="toggle-rem-tree" title="${remTreeOpen ? '收折全部提醒管理子項目' : '展開全部提醒管理子項目'}">${remTreeOpen ? '▼' : '▶'}</button>
+            <button class="wb-tree-toggle" type="button" data-act="sys-reminders" title="${remTreeOpen ? '收折子清單' : '展開子清單'}">${remTreeOpen ? '▼' : '▶'}</button>
+            <button data-act="sys-reminders" ${mAttr('v:reminders', '🔔 提醒管理')}><span class="wb-title">${mt('v:reminders', '🔔 提醒管理')}</span><span class="count">LINE 群組 ID、訊息發送管道與 Bot 推送紀錄</span></button>
           </div>
           ${remTreeOpen ? reminderSubTree() : ''}
         </li>
         <li class="${teacherView === 'attendance' ? 'active' : ''}">
           <div class="tree-node-row">
-            <button data-act="sys-attendance"><span class="wb-title">📋 點名管理</span><span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
-            <button class="wb-tree-toggle" type="button" data-act="toggle-atd-tree" title="${atdTreeOpen ? '收折全部點名管理子項目' : '展開全部點名管理子項目'}">${atdTreeOpen ? '▼' : '▶'}</button>
+            <button class="wb-tree-toggle" type="button" data-act="sys-attendance" title="${atdTreeOpen ? '收折子清單' : '展開子清單'}">${atdTreeOpen ? '▼' : '▶'}</button>
+            <button data-act="sys-attendance" ${mAttr('v:attendance', '📋 點名管理')}><span class="wb-title">${mt('v:attendance', '📋 點名管理')}</span><span class="count">點名時段、缺曠撤銷與點名異動日誌</span></button>
           </div>
           ${atdTreeOpen ? attendanceSubTree() : ''}
         </li>
         <li class="${teacherView === 'wellbeing' ? 'active' : ''}">
           <div class="tree-node-row">
-            <button data-act="sys-wellbeing"><span class="wb-title">💌 問卷管理</span><span class="count">問卷回覆與問卷異動日誌</span></button>
-            <button class="wb-tree-toggle" type="button" data-act="toggle-wb-tree" title="${wbTreeOpen ? '收折全部問卷管理子項目' : '展開全部問卷管理子項目'}">${wbTreeOpen ? '▼' : '▶'}</button>
+            <button class="wb-tree-toggle" type="button" data-act="sys-wellbeing" title="${wbTreeOpen ? '收折子清單' : '展開子清單'}">${wbTreeOpen ? '▼' : '▶'}</button>
+            <button data-act="sys-wellbeing" ${mAttr('v:wellbeing', '💌 問卷管理')}><span class="wb-title">${mt('v:wellbeing', '💌 問卷管理')}</span><span class="count">問卷回覆與問卷異動日誌</span></button>
           </div>
           ${wbTreeOpen ? wellbeingSubTree() : ''}
         </li>
         <li class="${teacherView === 'bulletin' ? 'active' : ''}">
-          <button data-act="sys-bulletin">📢 公佈欄管理<span class="count">首頁 Block B 顯示筆數設定</span></button>
+          <button data-act="sys-bulletin" ${mAttr('v:bulletin', '📢 公佈欄管理')}>${mt('v:bulletin', '📢 公佈欄管理')}<span class="count">首頁 Block B 顯示筆數設定</span></button>
         </li>
         <li class="${teacherView === 'system' ? 'active' : ''}">
-          <button data-act="sys-system">🖥️ 系統運行紀錄<span class="count">排程執行紀錄與日誌自動移除提示</span></button>
+          <button data-act="sys-system" ${mAttr('v:system', '🖥️ 系統運行紀錄')}>${mt('v:system', '🖥️ 系統運行紀錄')}<span class="count">排程執行紀錄與日誌自動移除提示</span></button>
         </li>
       </ul>
     </div>
@@ -2664,7 +2709,7 @@ function wellbeingSubTree() {
   const c = cur();
   if (!c) return '';
   const sec = teacherView === 'wellbeing' ? wbSec(c) : '';
-  const node = (key, label, extra = '') => `<li class="${sec === key ? 'active' : ''}"><button data-act="wb-section" data-sec="${esc(key)}">${label}</button>${extra}</li>`;
+  const node = (key, label, extra = '') => `<li class="${sec === key ? 'active' : ''}"><button data-act="wb-section" data-sec="${esc(key)}"${/^(care|abs):/.test(key) ? '' : ' ' + mAttr('w:' + key, label)}>${/^(care|abs):/.test(key) ? label : mt('w:' + key, label)}</button>${extra}</li>`;
   const careNodes = (c.careSurveys || []).map(b => node('care:' + b.id, esc(careTitle({ careSubtitle: b.subtitle })))).join('');
   const absNodes = (c.absenceSurveys || []).map(sv => node('abs:' + sv.id, esc(absenceTitle(sv)))).join('');
   return `<ul class="tree-sub">
@@ -2677,14 +2722,14 @@ function wellbeingSubTree() {
 
 function attendanceSubTree() {
   const sec = teacherView === 'attendance' ? atdSection : '';
-  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}">${label}</button></li>`;
+  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="atd-section" data-sec="${esc(key)}" ${mAttr('a:' + key, label)}>${mt('a:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('sessions', '點名時段設定')}
     ${node('reminder', '點名自動提醒（LINE 群組 ID(幹部)）')}
     <li class="${sec === 'b1' ? 'active' : ''}">
       <div class="tree-node-row">
-        <button data-act="atd-section" data-sec="b1"><span class="wb-title">🗣️ 華語B1輔導課修課點名</span></button>
-        <button class="wb-tree-toggle" type="button" data-act="toggle-b1-tree" title="${b1TreeOpen ? '收折子項目' : '展開子項目'}">${b1TreeOpen ? '▼' : '▶'}</button>
+        <button class="wb-tree-toggle" type="button" data-act="atd-section" data-sec="b1" title="${b1TreeOpen ? '收折子清單' : '展開子清單'}">${b1TreeOpen ? '▼' : '▶'}</button>
+        <button data-act="atd-section" data-sec="b1" ${mAttr('a:b1', '🗣️ 華語B1輔導課修課點名')}><span class="wb-title">${mt('a:b1', '🗣️ 華語B1輔導課修課點名')}</span></button>
       </div>
       ${b1TreeOpen ? b1SubTree() : ''}
     </li>
@@ -2697,7 +2742,7 @@ function attendanceSubTree() {
 
 function b1SubTree() {
   const sec = (teacherView === 'attendance' && atdSection === 'b1') ? b1Section : '';
-  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}">${label}</button></li>`;
+  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="b1-section" data-sec="${key}" ${mAttr('b:' + key, label)}>${mt('b:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('roster', '修課名單（勾選／匯入）')}
     ${node('reminder', '點名自動提醒（LINE 群組 ID(全體)）')}
@@ -2707,7 +2752,7 @@ function b1SubTree() {
 
 function reminderSubTree() {
   const sec = teacherView === 'reminders' ? reminderSection : '';
-  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}">${label}</button></li>`;
+  const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}" ${mAttr('r:' + key, label)}>${mt('r:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('overview', '總覽')}
     ${node('groupids', 'LINE 群組 ID 設定')}
@@ -6690,6 +6735,18 @@ app.addEventListener('click', e => {
   const a = btn.dataset.act, id = btn.dataset.id;
   const c = cur();
 
+  if (a === 'toggle-menu-edit') { menuEdit = !menuEdit; return render(); }
+  /* 編輯標題模式：點選任一清單標題即改名（留空＝還原預設） */
+  if (menuEdit && state.session && state.session.role === 'teacher' && btn.dataset.mkey) {
+    const key = btn.dataset.mkey, def = btn.dataset.mdef || '';
+    const cur0 = (state.menuTitles && state.menuTitles[key]) || def;
+    const next = prompt('修改清單標題（留空＝還原預設）：', cur0);
+    if (next === null) return;
+    const titles = { ...(state.menuTitles || {}) };
+    if (next.trim() && next.trim() !== def) titles[key] = next.trim(); else delete titles[key];
+    return act('teacher:set-menu-titles', { titles });
+  }
+
   if (a === 'close-absence-modal') {
     viewingAbsenceModal = null;
     return render();
@@ -6818,6 +6875,12 @@ app.addEventListener('click', e => {
     document.getElementById('login')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
+/* 同一視圖內切換子清單：寫入獨立網址並重繪 */
+function goSection(view) {
+  if (teacherView !== view) return setTeacherView(view);
+  try { window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.pathname + window.location.search + teacherHash()); } catch (_) {}
+  return render();
+}
 function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (courseId !== null && courseId !== undefined) {
     state.currentId = courseId;
@@ -6832,8 +6895,7 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   teacherView = newView;
   localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
 
-  const targetHash = (teacherView && teacherView !== 'course') ? `#${teacherView}` : '';
-  const targetUrl = window.location.pathname + window.location.search + targetHash;
+  const targetUrl = window.location.pathname + window.location.search + teacherHash();
 
   if (pushHistory) {
     try {
@@ -6926,8 +6988,16 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'sys-password') { return setTeacherView('settings'); }
   if (a === 'sys-peer-eval') { return setTeacherView('eval'); }
   if (a === 'sys-logs') { return setTeacherView('logs'); }
-  if (a === 'sys-attendance') { attendanceEditingId = null; return setTeacherView('attendance'); }
-  if (a === 'sys-wellbeing') { return setTeacherView('wellbeing'); }
+  /* 標題與左側箭頭連動：點任一處展開，再點一次收回（已在該頁時僅切換收折；從別頁進入時一併展開） */
+  if (a === 'sys-attendance') {
+    attendanceEditingId = null;
+    if (teacherView === 'attendance') { atdTreeOpen = !atdTreeOpen; return goSection('attendance'); }
+    atdTreeOpen = true; return setTeacherView('attendance');
+  }
+  if (a === 'sys-wellbeing') {
+    if (teacherView === 'wellbeing') { wbTreeOpen = !wbTreeOpen; return goSection('wellbeing'); }
+    wbTreeOpen = true; return setTeacherView('wellbeing');
+  }
   if (a === 'toggle-wb-tree') { wbTreeOpen = !wbTreeOpen; return render(); }
   if (a === 'wb-section') {
     wbSection = btn.dataset.sec;
@@ -6937,14 +7007,17 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       surveyCategoryFilter = 'all';
       surveySearchText = '';
     }
-    if (teacherView !== 'wellbeing') return setTeacherView('wellbeing');
-    return render();
+    wbTreeOpen = true;
+    return goSection('wellbeing');
   }
   if (a === 'toggle-atd-tree') { atdTreeOpen = !atdTreeOpen; return render(); }
   if (a === 'atd-section') {
     const nextSec = btn.dataset.sec;
     const enteringB1 = nextSec === 'b1';
+    if (enteringB1 && teacherView === 'attendance' && atdSection === 'b1') { b1TreeOpen = !b1TreeOpen; return goSection('attendance'); }
+    if (enteringB1) b1TreeOpen = true;
     atdSection = nextSec;
+    atdTreeOpen = true;
     if (enteringB1) {
       // 「華語B1輔導課修課點名」是獨立課程紀錄，進入子項目時暫時切換目前課程為該輔導課
       if (state.selfCheckinCourseId && state.currentId !== state.selfCheckinCourseId) {
@@ -6960,22 +7033,24 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (nextSec === 'bindings') {
       bindingCourseFilter = 'all';
     }
-    if (teacherView !== 'attendance') return setTeacherView('attendance');
-    return render();
+    return goSection('attendance');
   }
   if (a === 'toggle-b1-tree') { b1TreeOpen = !b1TreeOpen; return render(); }
   if (a === 'b1-section') {
     b1Section = btn.dataset.sec;
-    return render();
+    return goSection('attendance');
   }
-  if (a === 'sys-reminders') { return setTeacherView('reminders'); }
+  if (a === 'sys-reminders') {
+    if (teacherView === 'reminders') { remTreeOpen = !remTreeOpen; return goSection('reminders'); }
+    remTreeOpen = true; return setTeacherView('reminders');
+  }
   if (a === 'toggle-rem-tree') { remTreeOpen = !remTreeOpen; return render(); }
   if (a === 'rem-section') {
     reminderSection = btn.dataset.sec;
     if (reminderSection === 'bindings') bindingCourseFilter = 'all';
     if (reminderSection === 'log') loadPushLogs();
-    if (teacherView !== 'reminders') return setTeacherView('reminders');
-    return render();
+    remTreeOpen = true;
+    return goSection('reminders');
   }
   if (a === 'load-push-log') { return loadPushLogs(); }
   if (a === 'delete-push-log') {
@@ -7860,6 +7935,8 @@ window.addEventListener('popstate', e => {
     teacherView = newView;
     localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
   }
+  applySectionsFromHash(parseViewFromHash());
+  fixB1Course();
 
   // 同步公開頁面與學生端的子系統 (publicSubView)
   const hashSub = parseSubViewFromHash();
@@ -7882,9 +7959,13 @@ window.addEventListener('popstate', e => {
 
 window.addEventListener('hashchange', () => {
   const fromHash = parseViewFromHash();
-  if (fromHash && fromHash !== teacherView) {
-    teacherView = fromHash;
-    localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
+  if (fromHash && fromHash.type === 'teacher') {
+    if (fromHash.view !== teacherView) {
+      teacherView = fromHash.view;
+      localStorage.setItem(TEACHER_VIEW_KEY, teacherView);
+    }
+    applySectionsFromHash(fromHash);
+    fixB1Course();
   }
   const hashSub = parseSubViewFromHash();
   if (hashSub && hashSub !== publicSubView) {
@@ -7905,7 +7986,8 @@ window.addEventListener('hashchange', () => {
     const isTeacher = state.session && state.session.role === 'teacher';
     let targetHash = '';
     if (isTeacher) {
-      targetHash = (teacherView && teacherView !== 'course') ? `#${teacherView}` : '';
+      applySectionsFromHash(parseViewFromHash());
+      targetHash = teacherHash();
     } else {
       targetHash = (publicSubView && publicSubView !== 'dashboard') ? `#${publicSubView}` : '';
     }
@@ -7915,6 +7997,7 @@ window.addEventListener('hashchange', () => {
 
   try {
     apply(await apiGet());
+    fixB1Course();
   } catch (err) {
     document.getElementById('app').innerHTML =
       `<div class="container"><div class="teacher-section"><h2>連線失敗<br><small class="vn-sub">Lỗi kết nối</small></h2>

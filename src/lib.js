@@ -1445,6 +1445,21 @@ export async function setDefaultCourseId(db, id) {
   await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('default_course_id', String(id || '')).run();
 }
 
+export async function getMenuTitles(db) {
+  const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('menu_titles').first().catch(() => null);
+  try { const o = row ? JSON.parse(row.value) : {}; return (o && typeof o === 'object') ? o : {}; } catch (_) { return {}; }
+}
+
+export async function setMenuTitles(db, titles) {
+  const clean = {};
+  for (const [k, v] of Object.entries(titles || {})) {
+    const key = String(k).slice(0, 40), val = String(v || '').trim().slice(0, 60);
+    if (key && val) clean[key] = val;
+  }
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('menu_titles', JSON.stringify(clean)).run();
+  return clean;
+}
+
 export async function setBulletinPageSize(db, size) {
   const n = parseInt(size, 10);
   const val = (n > 0 && n <= 100) ? n : 10;

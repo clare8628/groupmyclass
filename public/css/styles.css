@@ -165,9 +165,9 @@ table.roster tr:hover td { background: #fcfcfc; }
 .tree li .tree-sub, .tree li .tree-sub ul { margin: 0 0 .25rem; padding-left: .6rem; }
 .tree li .tree-sub button { font-size: .82rem; padding: .35rem .5rem; }
 .tree-node-row { display: flex; align-items: center; gap: .15rem; }
-.tree-node-row button[data-act="sys-wellbeing"], .tree-node-row button[data-act="sys-attendance"] { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
-.tree-node-row button[data-act="sys-wellbeing"] .count, .tree-node-row button[data-act="sys-attendance"] .count { display: block; flex: 1 1 auto; min-width: 0; margin-left: .4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tree-node-row button[data-act="sys-wellbeing"] .wb-title, .tree-node-row button[data-act="sys-attendance"] .wb-title { flex: 0 0 auto; white-space: nowrap; }
+.tree-node-row button:not(.wb-tree-toggle) { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; }
+.tree-node-row button:not(.wb-tree-toggle) .count { display: block; flex: 1 1 auto; min-width: 0; margin-left: .4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-node-row button:not(.wb-tree-toggle) .wb-title { flex: 0 0 auto; white-space: nowrap; }
 .tree-node-row .wb-tree-toggle { flex: 0 0 auto; width: auto; background: none; border: none; cursor: pointer; color: #999; font-size: .75rem; padding: .2rem .4rem; border-radius: 4px; }
 .wb-tree-toggle:hover { color: #e67e22; background: #f4f8fb; }
 .course-picker { margin-bottom: 1.25rem; }
@@ -3223,3 +3223,6 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
 details[open] > .adm-sum::before { content: '▼'; }
 .adm-sum h3 { display: inline; margin: 0; }
 details[open] > .adm-sum { margin-bottom: 0.7rem; }
+
+.tree .menu-edit-btn { margin: 0 0 .5rem; }
+.tree .menu-edit-btn.on { background: #fdf1e6; border-color: #e67e22; color: #d35400; }
