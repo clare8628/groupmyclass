@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.163.20261020.160500';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.164.20261020.161305';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -39,7 +39,7 @@ function applySectionsFromHash(parsed) {
     wbSection = s1; wbTreeOpen = true;
     if (s1.startsWith('care:')) careAdminId = s1.slice(5);
   } else if (parsed.view === 'reminders') {
-    reminderSection = s1; remTreeOpen = true;
+    reminderSection = ['channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
     if (s1 === 'log') loadPushLogs();
   }
 }
@@ -126,7 +126,7 @@ let b1Section = 'roster';               // 老師後台「華語B1輔導課修�
 let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
 let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | reminder | bindings | b1 | records | progress | leaderboard | log
 let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
-let reminderSection = 'overview';       // 老師後台「提醒管理」目前顯示的樹狀子節點：overview | groupids | channels | bindings | care | absence | log
+let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | channels | bindings | care | absence | log
 let remTreeOpen = false;                // 左側樹狀選單「提醒管理」子項目是否展開
 let pushLogs = null;                    // Bot 發送紀錄（逐次自後端載入）
 let pushLogsLoading = false;
@@ -2754,7 +2754,6 @@ function reminderSubTree() {
   const sec = teacherView === 'reminders' ? reminderSection : '';
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}" ${mAttr('r:' + key, label)}>${mt('r:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
-    ${node('overview', '總覽')}
     ${node('groupids', 'LINE 群組 ID 設定')}
     ${node('channels', '訊息發送管道設定與呈現')}
     ${node('bindings', '綁定查詢與統計')}
@@ -4306,46 +4305,14 @@ function teacherAttendanceBlock(c) {
 /* ===== 老師後台：提醒管理 =====
    集中管理所有提醒相關的共用設定：LINE 群組 ID、訊息發送管道、綁定查詢與統計、Bot 發送紀錄，
    以及問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）的自動排程。
-   幹部點名提醒、輔導班自主點名提醒之排程細節仍在「點名管理」設定（與該課程之每週課表緊密相關），本頁僅彙總呈現與提供捷徑。 */
+   幹部點名提醒、輔導班自主點名提醒之排程細節仍在「點名管理」設定（與該課程之每週課表緊密相關）。 */
 function teacherReminderBlock(c) {
-  if (reminderSection === 'groupids') return teacherGroupIdBlock();
   if (reminderSection === 'channels') return teacherChannelBlock();
   if (reminderSection === 'bindings') return teacherBindingStatsBlock(c);
   if (reminderSection === 'care') return teacherCareReminderBlock();
   if (reminderSection === 'absence') return teacherAbsenceReminderBlock();
   if (reminderSection === 'log') return teacherPushLogBlock();
-  return teacherReminderOverviewBlock(c);
-}
-
-function teacherReminderOverviewBlock(c) {
-  const generalCourses = state.courses.filter(x => x.id !== state.selfCheckinCourseId);
-  const cadreConfigured = generalCourses.filter(x => x.attendanceReminder && x.attendanceReminder.lineGroupId).length;
-  const careEnabledCount = state.courses.filter(x => x.surveyReminderSettings && x.surveyReminderSettings.care && x.surveyReminderSettings.care.enabled).length;
-  const absEnabledCount = state.courses.reduce((n, x) => n + Object.values((x.surveyReminderSettings && x.surveyReminderSettings.absence) || {}).filter(s => s.enabled).length, 0);
-  const card = (title, desc, status, sec) => `
-    <div class="teacher-section" style="margin-bottom:0.85rem;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
-        <h3 style="margin:0;">${title}</h3>
-        <button class="btn btn-secondary btn-sm" type="button" data-act="rem-section" data-sec="${esc(sec)}">前往設定 →</button>
-      </div>
-      <p class="file-path" style="margin:0.35rem 0 0;">${desc}</p>
-      <p style="margin:0.35rem 0 0;font-weight:600;color:#0f766e;">${status}</p>
-    </div>`;
-  return `
-  <div class="teacher-section">
-    <h2>🔔 提醒管理</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">
-      所有與 LINE 推播提醒相關的共用設定集中於此：群組 ID、發送管道對應、綁定統計、Bot 推送紀錄，以及問卷／缺曠提醒的自動排程。<br>
-      💡 幹部點名提醒與輔導班自主點名提醒的詳細排程（第一節上課時間、每週課表）仍在「點名管理」設定，此處僅提供狀態總覽與捷徑。
-    </p>
-  </div>
-  ${card('👥 LINE 群組 ID 設定', `共 ${generalCourses.length} 門課程，已設定幹部群組 ID：${cadreConfigured} 門；全體群組 ID：${esc(state.allGroupId || '（尚未設定）')}`, '', 'groupids')}
-  ${card('📡 訊息發送管道設定與呈現', '檢視各類提醒訊息分別發送至「幹部」或「全體」群組的對應關係與目前啟用狀態。', '', 'channels')}
-  ${card('🔗 綁定查詢與統計', '全體學生 LINE 綁定狀況名單與統計（供點名提醒、問卷與缺曠通知使用）。', '', 'bindings')}
-  ${card('📋 問卷提醒（生活關懷問卷）', '依設定時間自動提醒尚未填寫生活關懷問卷的同學。', `目前 ${careEnabledCount} 門課程已啟用自動提醒`, 'care')}
-  ${card('📋 缺曠提醒（缺曠原因調查）', '依設定時間自動提醒尚未填寫缺曠原因說明的同學。', `目前 ${absEnabledCount} 份缺曠調查已啟用自動提醒`, 'absence')}
-  ${card('🤖 Bot 發送紀錄', '查看所有 LINE 推播的發送紀錄，可逐筆或整批刪除。', '', 'log')}
-  `;
+  return teacherGroupIdBlock();
 }
 
 /* ---- 提醒管理專項：LINE 群組 ID 設定（集中管理所有課程之幹部群組 ID 與全體群組 ID）---- */
