@@ -55,9 +55,11 @@ export default {
           for (const evt of (payload.events || [])) {
             const src = evt.source || {};
             const inGroup = src.type === 'group' || src.type === 'room';
-            const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(evt.message.text || '');
+            const rawText = (evt.message && evt.message.text) || '';
+            const normalizedText = typeof rawText.normalize === 'function' ? rawText.normalize('NFKC') : rawText;
+            const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(normalizedText);
             /* 容忍「綁定:學號」「綁定－學號」等標點變體，降低組長打錯格式的機率 */
-            const bindM = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*綁定\s*[:：\-－]?\s*([A-Za-z0-9]+)\s*$/.exec(evt.message.text || '');
+            const bindM = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*綁定\s*[:：\-－]?\s*([A-Za-z0-9]+)\s*$/.exec(normalizedText);
             if (inGroup && bindM && src.userId) {
               await replyLineMessage(env, evt.replyToken, await bindLineLeader(env.DB, src.groupId || src.roomId, src.userId, bindM[1]));
               continue;

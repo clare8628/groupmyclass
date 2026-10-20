@@ -1589,11 +1589,51 @@ async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
    原僅限組長／副組長，現已開放全班綁定（供未來問卷提醒等功能使用），一般課程與自主點名課程皆同。 */
 export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   await ensureSchema(db);
-  const setting = await db.prepare('SELECT course_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind(groupId).first();
+  const setting = await db.prepare(`
+    SELECT s.course_id, c.year, c.subject
+    FROM attendance_reminder_settings s
+    LEFT JOIN courses c ON c.id = s.course_id
+    WHERE s.line_group_id = ?
+  `).bind(groupId).first();
   if (!setting) return '此群組尚未在老師後台設定為點名提醒群組';
-  const st = await db.prepare('SELECT id, name FROM students WHERE course_id = ? AND UPPER(id) = UPPER(?)')
-    .bind(setting.course_id, studentId).first();
-  if (!st) return '找不到該學號';
+
+  const courseLabel = [setting.year, setting.subject].filter(Boolean).join(' ') || setting.course_id;
+  const cleanId = (studentId || '').trim();
+
+  // 1. 先以精確學號比對（不分大小寫）
+  let st = await db.prepare('SELECT id, name FROM students WHERE course_id = ? AND UPPER(id) = UPPER(?)')
+    .bind(setting.course_id, cleanId).first();
+
+  // 2. 容錯：數字 0 與英文字母 O 常見混淆比對（例如輸入 41461DO1 自動比對 41461D01）
+  if (!st && /[O0]/i.test(cleanId)) {
+    const candidate = await db.prepare(`
+      SELECT id, name FROM students
+      WHERE course_id = ? AND REPLACE(UPPER(id), 'O', '0') = REPLACE(UPPER(?), 'O', '0')
+    `).bind(setting.course_id, cleanId).all().catch(() => ({ results: [] }));
+    if (candidate.results && candidate.results.length === 1) {
+      st = candidate.results[0];
+    }
+  }
+
+  // 3. 若仍找不到，檢查該學號是否存在於其他課程，以提供精確指引（常見：在錯誤群組輸入）
+  if (!st) {
+    let otherHint = '';
+    const other = await db.prepare(`
+      SELECT s.id, s.name, c.year, c.subject
+      FROM students s
+      JOIN courses c ON c.id = s.course_id
+      WHERE s.course_id != ? AND (UPPER(s.id) = UPPER(?) OR REPLACE(UPPER(s.id), 'O', '0') = REPLACE(UPPER(?), 'O', '0'))
+      LIMIT 1
+    `).bind(setting.course_id, cleanId, cleanId).first().catch(() => null);
+
+    if (other) {
+      const otherLabel = [other.year, other.subject].filter(Boolean).join(' ');
+      otherHint = `\n💡 系統查到此學號為「${other.name}」，登記於課程「${otherLabel}」名單中。請確認您是否在正確的 LINE 群組中輸入。`;
+    }
+
+    return `找不到學號「${cleanId}」（本群組對應課程：${courseLabel}）。\n請確認學號是否正確（數字「0」請勿輸入為英文字母「O」）${otherHint}`;
+  }
+
   await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
     .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
   return `${st.name} 已綁定`;
