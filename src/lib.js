@@ -1585,58 +1585,63 @@ async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
   return { hasLeaders: true, leaders: pending };
 }
 
-/* LINE 群組內輸入「綁定 學號」：將發言者 LINE userId 對應到該課程學生。
-   原僅限組長／副組長，現已開放全班綁定（供未來問卷提醒等功能使用），一般課程與自主點名課程皆同。 */
+/* LINE 內輸入「綁定 學號」：將發言者 LINE userId 對應到學生。
+   開放全體學生綁定（不論學生在何課程、或在哪個已加入群組／私訊中輸入），
+   系統會將該學號在所有修課課程（以及當前群組對應課程）皆完成綁定。 */
 export async function bindLineLeader(db, groupId, lineUserId, studentId) {
   await ensureSchema(db);
-  const setting = await db.prepare(`
-    SELECT s.course_id, c.year, c.subject
-    FROM attendance_reminder_settings s
-    LEFT JOIN courses c ON c.id = s.course_id
-    WHERE s.line_group_id = ?
-  `).bind(groupId).first();
-  if (!setting) return '此群組尚未在老師後台設定為點名提醒群組';
-
-  const courseLabel = [setting.year, setting.subject].filter(Boolean).join(' ') || setting.course_id;
   const cleanId = (studentId || '').trim();
+  if (!cleanId) return '請輸入學號，例如：綁定 41461D01';
 
-  // 1. 先以精確學號比對（不分大小寫）
-  let st = await db.prepare('SELECT id, name FROM students WHERE course_id = ? AND UPPER(id) = UPPER(?)')
-    .bind(setting.course_id, cleanId).first();
+  // 1. 在全系統學生名單中查詢該學生（支援大小寫不分）
+  let studentRows = (await db.prepare(`
+    SELECT s.course_id, s.id, s.name, c.year, c.subject
+    FROM students s
+    LEFT JOIN courses c ON c.id = s.course_id
+    WHERE UPPER(s.id) = UPPER(?)
+  `).bind(cleanId).all().catch(() => ({ results: [] }))).results || [];
 
-  // 2. 容錯：數字 0 與英文字母 O 常見混淆比對（例如輸入 41461DO1 自動比對 41461D01）
-  if (!st && /[O0]/i.test(cleanId)) {
-    const candidate = await db.prepare(`
-      SELECT id, name FROM students
-      WHERE course_id = ? AND REPLACE(UPPER(id), 'O', '0') = REPLACE(UPPER(?), 'O', '0')
-    `).bind(setting.course_id, cleanId).all().catch(() => ({ results: [] }));
-    if (candidate.results && candidate.results.length === 1) {
-      st = candidate.results[0];
-    }
-  }
-
-  // 3. 若仍找不到，檢查該學號是否存在於其他課程，以提供精確指引（常見：在錯誤群組輸入）
-  if (!st) {
-    let otherHint = '';
-    const other = await db.prepare(`
-      SELECT s.id, s.name, c.year, c.subject
+  // 若精確比對無結果，嘗試 0 與 O 混淆容錯（例如 41461DO1 自動比對 41461D01）
+  if (!studentRows.length && /[O0]/i.test(cleanId)) {
+    studentRows = (await db.prepare(`
+      SELECT s.course_id, s.id, s.name, c.year, c.subject
       FROM students s
-      JOIN courses c ON c.id = s.course_id
-      WHERE s.course_id != ? AND (UPPER(s.id) = UPPER(?) OR REPLACE(UPPER(s.id), 'O', '0') = REPLACE(UPPER(?), 'O', '0'))
-      LIMIT 1
-    `).bind(setting.course_id, cleanId, cleanId).first().catch(() => null);
-
-    if (other) {
-      const otherLabel = [other.year, other.subject].filter(Boolean).join(' ');
-      otherHint = `\n💡 系統查到此學號為「${other.name}」，登記於課程「${otherLabel}」名單中。請確認您是否在正確的 LINE 群組中輸入。`;
-    }
-
-    return `找不到學號「${cleanId}」（本群組對應課程：${courseLabel}）。\n請確認學號是否正確（數字「0」請勿輸入為英文字母「O」）${otherHint}`;
+      LEFT JOIN courses c ON c.id = s.course_id
+      WHERE REPLACE(UPPER(s.id), 'O', '0') = REPLACE(UPPER(?), 'O', '0')
+    `).bind(cleanId).all().catch(() => ({ results: [] }))).results || [];
   }
 
-  await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
-    .bind(setting.course_id, st.id, lineUserId, Date.now()).run();
-  return `${st.name} 已綁定`;
+  if (!studentRows.length) {
+    return `找不到學號「${cleanId}」。\n請確認學號是否正確（數字「0」請勿輸入為英文字母「O」）。若仍找不到，請洽老師確認是否已加入學生名單。`;
+  }
+
+  // 取得正確的學生學號與姓名
+  const canonicalId = studentRows[0].id;
+  const studentName = studentRows[0].name;
+
+  // 取得當前群組設定（若有）
+  let currentCourseId = null;
+  if (groupId) {
+    const setting = await db.prepare('SELECT course_id FROM attendance_reminder_settings WHERE line_group_id = ?').bind(groupId).first().catch(() => null);
+    if (setting && setting.course_id) {
+      currentCourseId = setting.course_id;
+    }
+  }
+
+  // 收集所有需要綁定的 course_id：
+  // 包含學生修讀的所有課程，以及當前群組所對應的課程
+  const targetCourseIds = new Set(studentRows.map(r => r.course_id));
+  if (currentCourseId) {
+    targetCourseIds.add(currentCourseId);
+  }
+
+  const now = Date.now();
+  for (const cid of targetCourseIds) {
+    await db.prepare('INSERT OR REPLACE INTO line_bindings (course_id, student_id, line_user_id, created_at) VALUES (?, ?, ?, ?)')
+      .bind(cid, canonicalId, lineUserId, now).run().catch(e => console.error('bind error', cid, canonicalId, e));
+  }
+
+  return `${studentName}（${canonicalId}）已成功綁定 LINE！`;
 }
 
 /* 老師後台：列出本課程 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計，全班（含組長／副組長）皆列出。

@@ -58,10 +58,10 @@ export default {
             const rawText = (evt.message && evt.message.text) || '';
             const normalizedText = typeof rawText.normalize === 'function' ? rawText.normalize('NFKC') : rawText;
             const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(normalizedText);
-            /* 容忍「綁定:學號」「綁定－學號」等標點變體，降低組長打錯格式的機率 */
+            /* 容忍「綁定:學號」「綁定－學號」等標點變體，降低打錯格式的機率；允許群組或私訊皆可綁定 */
             const bindM = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*綁定\s*[:：\-－]?\s*([A-Za-z0-9]+)\s*$/.exec(normalizedText);
-            if (inGroup && bindM && src.userId) {
-              await replyLineMessage(env, evt.replyToken, await bindLineLeader(env.DB, src.groupId || src.roomId, src.userId, bindM[1]));
+            if (bindM && src.userId) {
+              await replyLineMessage(env, evt.replyToken, await bindLineLeader(env.DB, src.groupId || src.roomId || '', src.userId, bindM[1]));
               continue;
             }
             if (inGroup && (evt.type === 'join' || askId)) {
