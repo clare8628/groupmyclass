@@ -9,6 +9,7 @@ import {
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
   sendCareSurveyReminder, sendAbsenceSurveyReminder, logLinePush, listLinePushLogs, deleteLinePushLog, clearLinePushLogs,
   getAllStudentsLineGroupId, setAllStudentsLineGroupId, upsertSurveyReminderSettings,
+  getLineBotInfo, verifyLineFriends,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin, sendSelfCheckinInstructions } from './checkin.js';
@@ -879,12 +880,31 @@ export async function handleAction(request, env, db, body) {
     }
     if (op === 'list-attendance-bindings') {
       const cid = body.courseId;
+      const botInfo = await getLineBotInfo(env).catch(() => null);
       if (!cid || cid === 'all') {
-        return ok(await listAttendanceBindings(db, 'all'));
+        return ok(await listAttendanceBindings(db, 'all', botInfo));
       }
       const c = course(cid);
       if (!c) return bad('課程不存在', 404);
-      return ok(await listAttendanceBindings(db, c.id));
+      return ok(await listAttendanceBindings(db, c.id, botInfo));
+    }
+    if (op === 'verify-line-friends') {
+      const cid = body.courseId || 'all';
+      if (cid !== 'all' && !course(cid)) return bad('課程不存在', 404);
+      try {
+        const result = await verifyLineFriends(db, env, cid);
+        await logActivity(db, {
+          courseId: cid,
+          operatorRole: 'teacher',
+          operatorId: 'teacher',
+          operatorName: '老師',
+          actionType: 'verify-line-friends',
+          detail: `老師檢測 LINE 好友狀態：檢測 ${result.verifiedCount} 人，正常好友 ${result.friendCount} 人，封鎖/未加 ${result.blockedCount} 人`,
+        });
+        return ok(result);
+      } catch (err) {
+        return bad(String((err && err.message) || err), 502);
+      }
     }
     if (op === 'send-attendance-binding-instructions') {
       const cid = body.courseId;

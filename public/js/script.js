@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.169.20261022.120154';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.170.20261022.124646';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -369,21 +369,161 @@ function ensureBindingsLoaded(courseId) {
   });
 }
 
+function generateBindingInstructionsText(l) {
+  const unbound = (l && l.unbound) || [];
+  const bound = (l && l.bound) || [];
+  const blocked = bound.filter(x => x.friendStatus === 'blocked');
+  const botInfo = (l && l.botInfo) || {};
+  const addUrl = botInfo.addFriendUrl || '';
+  const botId = botInfo.basicId || '';
+
+  const lines = [
+    '【課堂小幫手 — LINE 綁定與加好友通知】',
+    '同學您好！為能即時收到課堂點名、缺曠通知與生活關懷問卷提醒，請尚未完成的同學依下列步驟設定：',
+    '',
+    '📱 步驟一：加課堂小幫手為好友',
+  ];
+  if (addUrl) {
+    lines.push(`👉 點此連結直接加好友：${addUrl}`);
+  }
+  if (botId) {
+    lines.push(`👉 或於 LINE 搜尋好友 ID：${botId}`);
+  }
+  lines.push('（也可在班級 LINE 群組內直接點擊小幫手頭像加入好友）');
+  lines.push('');
+  lines.push('💬 步驟二：發送學號綁定');
+  lines.push('加為好友後，請在與小幫手的 1 對 1 私訊中輸入：');
+  lines.push('「綁定 您的學號」（例如：綁定 41461D01）');
+  lines.push('收到小幫手回覆「已成功綁定」即大功告成！');
+  lines.push('');
+
+  if (unbound.length) {
+    lines.push(`⚠️ 尚未綁定學號名單（共 ${unbound.length} 位）：`);
+    lines.push(unbound.map(s => `${s.name}（${s.id}）`).join('、'));
+    lines.push('');
+  }
+  if (blocked.length) {
+    lines.push(`🔴 已綁定但「尚未加好友或已封鎖」名單（共 ${blocked.length} 位，無法收到私訊提醒）：`);
+    lines.push(blocked.map(s => `${s.name}（${s.id}）`).join('、'));
+    lines.push('👉 請上述同學開啟與小幫手的對話框解除封鎖或加入好友！');
+    lines.push('');
+  }
+  if (!unbound.length && !blocked.length) {
+    lines.push('🎉 太棒了！全體同學皆已完成綁定且好友狀態正常！');
+  } else {
+    lines.push('請上述同學儘速撥空完成，謝謝大家的配合！');
+  }
+
+  return lines.join('\n');
+}
+
 function bindingListHtml(l, courseId) {
   if (courseId && !l) ensureBindingsLoaded(courseId);
   if (!l) return '<div class="form-group full" style="margin-top:0.6rem;color:#64748b;font-weight:500;">⏳ 正在自動載入全班學生綁定名單...</div>';
+  
+  const total = l.total !== undefined ? l.total : ((l.bound || []).length + (l.unbound || []).length);
+  const bound = l.bound || [];
+  const unbound = l.unbound || [];
+  const rate = total ? Math.round(bound.length / total * 100) : 0;
+  
+  const friends = bound.filter(x => x.friendStatus === 'friend');
+  const blocked = bound.filter(x => x.friendStatus === 'blocked');
+  const unknown = bound.filter(x => x.friendStatus === 'unknown' || !x.friendStatus);
+
   const label = x => x.groupName ? `第${esc(x.groupName)}組 ${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）` : `${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）`;
-  const rowsOf = (items, withTime) => items.length
-    ? items.map(x => `<li>${label(x)}${withTime && x.boundAt ? ` <small style="color:#059669;">（綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}）</small>` : ''}</li>`).join('')
-    : '<li>（無）</li>';
-  const total = l.total !== undefined ? l.total : (l.bound.length + l.unbound.length);
-  const rate = total ? Math.round(l.bound.length / total * 100) : 0;
-  return `<div class="form-group full" style="margin-top:0.6rem;">
-    <div style="font-weight:600;color:#1e293b;margin-bottom:0.5rem;font-size:1.02rem;">📊 全體學生綁定統計：共 ${total} 人，已綁定 ${l.bound.length} 人，未綁定 ${l.unbound.length} 人（綁定率 ${rate}%）</div>
-    <div style="font-weight:600;color:#15803d;margin-top:0.5rem;">✅ 已綁定學生（${l.bound.length} 人）</div>
-    <ul style="margin:0.25rem 0 0.75rem 1.25rem;line-height:1.7;">${rowsOf(l.bound, true)}</ul>
-    <div style="font-weight:600;color:#b91c1c;margin-top:0.5rem;">⚠️ 未綁定學生（${l.unbound.length} 人）</div>
-    <ul style="margin:0.25rem 0 0 1.25rem;line-height:1.7;">${rowsOf(l.unbound, false)}</ul>
+
+  const renderBadge = x => {
+    if (!x.isBound) {
+      return '<span class="status-badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-weight:600;">⚪ 未綁定學號</span>';
+    }
+    if (x.friendStatus === 'friend') {
+      return '<span class="status-badge" style="background:#dcfce7;color:#15803d;border:1px solid #86efac;font-weight:600;">🟢 好友正常</span>';
+    }
+    if (x.friendStatus === 'blocked') {
+      return '<span class="status-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:600;">🔴 已封鎖／未加好友</span>';
+    }
+    return '<span class="status-badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-weight:600;">🟡 待檢測</span>';
+  };
+
+  const renderStudentRow = (x, withTime) => {
+    const lineName = x.lineDisplayName ? `<span style="display:inline-flex;align-items:center;gap:0.25rem;background:#f8fafc;padding:0.1rem 0.4rem;border-radius:4px;border:1px solid #e2e8f0;font-size:0.8rem;color:#475569;">LINE: ${esc(x.lineDisplayName)}</span>` : '';
+    const timeStr = withTime && x.boundAt ? `<small style="color:#059669;">（綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}）</small>` : '';
+    return `<li style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.35rem;">
+      <span>${label(x)}</span>
+      ${renderBadge(x)}
+      ${lineName}
+      ${timeStr}
+    </li>`;
+  };
+
+  const needAttention = [...blocked, ...unbound];
+
+  return `
+  <div class="form-group full" style="margin-top:0.6rem;">
+    <!-- 統計數據卡片 -->
+    <div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-bottom:1rem;">
+      <div style="flex:1;min-width:130px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#64748b;font-weight:600;">全班總學生數</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#1e293b;margin-top:0.15rem;">${total} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#166534;font-weight:600;">🔗 已綁定學號</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#15803d;margin-top:0.15rem;">${bound.length} <span style="font-size:0.8rem;font-weight:500;">人 (${rate}%)</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#065f46;font-weight:600;">🟢 好友正常 (私訊通)</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#047857;margin-top:0.15rem;">${friends.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#991b1b;font-weight:600;">🔴 封鎖/未加 (無法通)</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#b91c1c;margin-top:0.15rem;">${blocked.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#92400e;font-weight:600;">🟡 待檢測好友</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#b45309;margin-top:0.15rem;">${unknown.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:0.65rem 0.85rem;">
+        <div style="font-size:0.8rem;color:#475569;font-weight:600;">⚪ 尚未綁定學號</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#334155;margin-top:0.15rem;">${unbound.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+    </div>
+
+    ${needAttention.length ? `
+    <div style="background:#fff1f2;border:1px solid #fda4af;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1rem;color:#9f1239;font-size:0.88rem;line-height:1.5;">
+      ⚠️ <b>無法接收 1 對 1 私訊提醒（共 ${needAttention.length} 人）</b>：包含 ${blocked.length} 位封鎖/未加好友、${unbound.length} 位尚未綁定學號之學生。<br>
+      💡 <b>零推播額度建議</b>：請點擊上方「📋 一鍵複製加好友與綁定教學」，將說明文字直接貼至班級 LINE 群組，讓同學主動點擊加入小幫手好友並輸入綁定學號！
+    </div>` : ''}
+
+    ${blocked.length ? `
+    <div style="font-weight:600;color:#b91c1c;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+      🔴 已綁定但「封鎖／未加好友」學生（共 ${blocked.length} 人，私訊無法送達）
+    </div>
+    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
+      ${blocked.map(x => renderStudentRow(x, true)).join('')}
+    </ul>` : ''}
+
+    ${unbound.length ? `
+    <div style="font-weight:600;color:#475569;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+      ⚪ 尚未綁定學號學生（共 ${unbound.length} 人）
+    </div>
+    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
+      ${unbound.map(x => renderStudentRow(x, false)).join('')}
+    </ul>` : ''}
+
+    ${unknown.length ? `
+    <div style="font-weight:600;color:#b45309;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+      🟡 待檢測好友狀態學生（共 ${unknown.length} 人，請點擊上方「在線檢測」）
+    </div>
+    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
+      ${unknown.map(x => renderStudentRow(x, true)).join('')}
+    </ul>` : ''}
+
+    <div style="font-weight:600;color:#15803d;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
+      🟢 好友正常學生（共 ${friends.length} 人，可正常接收私訊推播）
+    </div>
+    <ul style="margin:0.35rem 0 0.5rem 1.25rem;line-height:1.8;">
+      ${friends.length ? friends.map(x => renderStudentRow(x, true)).join('') : '<li style="color:#94a3b8;">（目前尚無檢測為正常好友的學生，請點擊上方「在線檢測」同步）</li>'}
+    </ul>
   </div>`;
 }
 
@@ -3797,7 +3937,9 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
         <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
         ${b1 ? `
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}">📣 發送全班綁定教學訊息（至全體群組）</button>
+        <button class="btn btn-primary" type="button" data-act="copy-attendance-binding-instructions" data-id="${esc(c.id)}">📋 一鍵複製綁定與加好友教學（0 額度）</button>
+        <button class="btn btn-secondary" type="button" data-act="verify-line-friends" data-id="${esc(c.id)}">🔍 在線檢測好友狀態</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(c.id)}" style="color:#b91c1c;">📣 發送全班綁定教學（⚠️ 耗額度）</button>
         <button class="btn btn-secondary" type="button" data-act="send-selfcheckin-instructions" data-id="${esc(c.id)}">📘 發送自主點名流程說明（開學前先讓同學了解流程）</button>
         <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(c.id)}">🔄 重新整理綁定名單</button>
         ` : '<p class="file-path" style="margin:0.5rem 0 0;width:100%;">💡 綁定名單與統計已移至「提醒管理 → 綁定查詢與統計」。</p>'}
@@ -4577,8 +4719,10 @@ function teacherBindingStatsBlock(c) {
     <div class="form-row" style="background:#fff;padding:1rem;border:1px solid #e2e8f0;border-radius:8px;">
       ${scopeSelectHtml}
       <div class="form-group full" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary" type="button" data-act="copy-attendance-binding-instructions" data-id="${esc(currentScope)}">📋 一鍵複製加好友與綁定教學（0 額度，建議貼至群組）</button>
+        <button class="btn btn-secondary" type="button" data-act="verify-line-friends" data-id="${esc(currentScope)}">🔍 在線檢測／同步好友與封鎖狀態</button>
         <button class="btn btn-secondary" type="button" data-act="list-attendance-bindings" data-id="${esc(currentScope)}">🔄 重新整理名單</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(currentScope)}">📣 發送綁定教學訊息（至全體群組）</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-binding-instructions" data-id="${esc(currentScope)}" style="color:#b91c1c;">📣 由 Bot 推播教學（⚠️ 耗額度）</button>
       </div>
       ${bindingListHtml(bindingLists[currentScope], currentScope)}
     </div>
@@ -7126,7 +7270,25 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
   if (a === 'list-attendance-bindings') {
     return act('teacher:list-attendance-bindings', { courseId: id }, { after: data => { bindingLists[id] = data; } });
   }
+  if (a === 'verify-line-friends') {
+    return act('teacher:verify-line-friends', { courseId: id }, { after: data => {
+      if (data && data.bindings) bindingLists[id] = data.bindings;
+      alert(`🔍 好友與封鎖狀態檢測完成！\n\n共檢測：${(data && data.verifiedCount) || 0} 位學生\n🟢 好友正常：${(data && data.friendCount) || 0} 位（私訊暢通）\n🔴 已封鎖／未加好友：${(data && data.blockedCount) || 0} 位（無法接收私訊）`);
+    } });
+  }
+  if (a === 'copy-attendance-binding-instructions') {
+    const list = bindingLists[id];
+    if (!list) {
+      alert('正在載入名單，請稍候重試...');
+      ensureBindingsLoaded(id);
+      return;
+    }
+    const text = generateBindingInstructionsText(list);
+    copyTextToClipboard(text, '✅ 已複製「課堂小幫手加好友與綁定教學」至剪貼簿！\n可直接貼至 LINE 班級大群、幹部群或公告，完全不消耗推播額度！');
+    return;
+  }
   if (a === 'send-attendance-binding-instructions') {
+    if (!confirm('⚠️ 注意：由 Bot 推播至群組會消耗「群組成員人數 × 1」則推播額度（例如群組有 17 人即消耗 17 則，60 人消耗 60 則）。\n\n建議優先使用「📋 一鍵複製加好友與綁定教學」自行貼至群組，完全不耗任何額度！\n\n確定仍要由 Bot 發送推播嗎？')) return;
     return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'send-care-survey-reminder') {

@@ -312,6 +312,17 @@ async function ensureAttendanceReminderSchema(db) {
   } catch (_) {}
   try {
     await db.prepare(`
+      CREATE TABLE IF NOT EXISTS line_users (
+        line_user_id  TEXT PRIMARY KEY,
+        status        TEXT NOT NULL DEFAULT 'friend',
+        display_name  TEXT NOT NULL DEFAULT '',
+        picture_url   TEXT NOT NULL DEFAULT '',
+        updated_at    INTEGER NOT NULL
+      )
+    `).run();
+  } catch (_) {}
+  try {
+    await db.prepare(`
       CREATE TABLE IF NOT EXISTS selfcheckin_records (
         course_id  TEXT NOT NULL,
         date       TEXT NOT NULL,
@@ -1827,7 +1838,63 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
       .bind(cid, canonicalId, lineUserId, now).run().catch(e => console.error('bind error', cid, canonicalId, e));
   }
 
-  return `${studentName}（${canonicalId}）已成功綁定 LINE！`;
+  // 若在 1 對 1 私訊中綁定，直接登記為 friend
+  if (!groupId) {
+    await recordLineUserStatus(db, lineUserId, 'friend');
+    return `${studentName}（${canonicalId}）已成功綁定 LINE！\n您已設定完成，日後系統將透過此 1 對 1 私訊即時為您送達課堂點名與重要提醒。`;
+  }
+
+  return `${studentName}（${canonicalId}）已成功綁定 LINE！\n\n💡 溫馨提醒：請務必點擊課堂小幫手頭像加為好友，才能正常接收 1 對 1 個人點名與缺曠提醒喔！`;
+}
+
+/* 查詢 LINE 使用者 Profile（確認是否已加好友或已封鎖） */
+export async function getLineUserProfile(env, lineUserId) {
+  if (!env || !env.LINE_CHANNEL_ACCESS_TOKEN || !lineUserId) return null;
+  const res = await fetch(`https://api.line.me/v2/bot/profile/${encodeURIComponent(lineUserId)}`, {
+    headers: { authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+  });
+  if (res.status === 200) {
+    const data = await res.json().catch(() => null);
+    return data ? { ...data, status: 'friend' } : null;
+  }
+  if (res.status === 404) {
+    return { status: 'blocked' };
+  }
+  return null;
+}
+
+/* 查詢 LINE 官方帳號 Bot 自身資訊（取得 basicId 與加好友網址） */
+export async function getLineBotInfo(env) {
+  if (!env || !env.LINE_CHANNEL_ACCESS_TOKEN) return null;
+  const res = await fetch('https://api.line.me/v2/bot/info', {
+    headers: { authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  if (!data) return null;
+  const basicId = data.basicId || '';
+  const addFriendUrl = basicId ? `https://line.me/R/ti/p/${encodeURIComponent(basicId)}` : '';
+  return {
+    basicId,
+    displayName: data.displayName || '',
+    pictureUrl: data.pictureUrl || '',
+    addFriendUrl,
+  };
+}
+
+/* 記錄或更新 LINE 使用者好友與封鎖狀態 */
+export async function recordLineUserStatus(db, lineUserId, status, displayName = '', pictureUrl = '') {
+  if (!lineUserId) return;
+  const now = Date.now();
+  await db.prepare(`
+    INSERT INTO line_users (line_user_id, status, display_name, picture_url, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(line_user_id) DO UPDATE SET
+      status = excluded.status,
+      display_name = CASE WHEN excluded.display_name != '' THEN excluded.display_name ELSE line_users.display_name END,
+      picture_url = CASE WHEN excluded.picture_url != '' THEN excluded.picture_url ELSE line_users.picture_url END,
+      updated_at = excluded.updated_at
+  `).bind(lineUserId, status, displayName || '', pictureUrl || '', now).run().catch(e => console.error('recordLineUserStatus error', e));
 }
 
 /* 老師後台：列出 LINE 綁定狀態（逐人，已綁定／未綁定）＋統計。
@@ -1835,7 +1902,7 @@ export async function bindLineLeader(db, groupId, lineUserId, studentId) {
    - 當 courseId 為 'all' 或未指定時，直接列出全校／全體學生名單（共 64 位）；
    - 當指定特定課程時，列出該課程學生名單。
    只要該學生在系統內任一處綁定過 LINE，即算已綁定。 */
-export async function listAttendanceBindings(db, courseId) {
+export async function listAttendanceBindings(db, courseId, botInfo = null) {
   await ensureSchema(db);
   const isAll = !courseId || courseId === 'all';
   const query = isAll ? `
@@ -1843,24 +1910,28 @@ export async function listAttendanceBindings(db, courseId) {
              MAX(CASE WHEN s.course_id != ? THEN s.group_id ELSE '' END) AS group_id,
              MAX(CASE WHEN s.course_id != ? THEN s.is_leader ELSE 0 END) AS is_leader,
              MAX(CASE WHEN s.course_id != ? THEN s.is_vice ELSE 0 END) AS is_vice,
-             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at
+             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at,
+             lu.status AS friend_status, lu.display_name AS line_display_name, lu.picture_url AS line_picture_url
       FROM students s
       LEFT JOIN (
         SELECT student_id, line_user_id, MAX(created_at) AS bound_at
         FROM line_bindings
         GROUP BY student_id
       ) lb ON lb.student_id = s.id
+      LEFT JOIN line_users lu ON lu.line_user_id = lb.line_user_id
       GROUP BY s.id
       ORDER BY s.id
     ` : `
       SELECT s.id AS id, s.name AS name, s.group_id AS group_id, s.is_leader AS is_leader, s.is_vice AS is_vice,
-             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at
+             lb.line_user_id AS line_user_id, lb.bound_at AS bound_at,
+             lu.status AS friend_status, lu.display_name AS line_display_name, lu.picture_url AS line_picture_url
       FROM students s
       LEFT JOIN (
         SELECT student_id, line_user_id, MAX(created_at) AS bound_at
         FROM line_bindings
         GROUP BY student_id
       ) lb ON lb.student_id = s.id
+      LEFT JOIN line_users lu ON lu.line_user_id = lb.line_user_id
       WHERE s.course_id = ?
       ORDER BY s.group_id, s.is_leader DESC, s.seq, s.id
     `;
@@ -1878,12 +1949,88 @@ export async function listAttendanceBindings(db, courseId) {
       boundAt: isBound ? (r.bound_at || 0) : 0,
       exemptViaB1: false,
       isBound,
+      lineUserId: r.line_user_id || '',
+      friendStatus: isBound ? (r.friend_status || 'unknown') : 'unbound',
+      lineDisplayName: r.line_display_name || '',
+      linePictureUrl: r.line_picture_url || '',
     };
   };
   const items = rows.map(toItem);
   const bound = items.filter(x => x.isBound);
   const unbound = items.filter(x => !x.isBound);
-  return { bound, unbound, total: items.length, boundCount: bound.length, unboundCount: unbound.length };
+  const friendCount = bound.filter(x => x.friendStatus === 'friend').length;
+  const blockedCount = bound.filter(x => x.friendStatus === 'blocked').length;
+  const unknownCount = bound.filter(x => x.friendStatus === 'unknown').length;
+  return {
+    bound,
+    unbound,
+    total: items.length,
+    boundCount: bound.length,
+    unboundCount: unbound.length,
+    friendCount,
+    blockedCount,
+    unknownCount,
+    botInfo: botInfo || undefined,
+  };
+}
+
+/* 老師後台：在線檢測並同步所有已綁定學生的 LINE 好友／封鎖狀態 */
+export async function verifyLineFriends(db, env, courseId) {
+  await ensureSchema(db);
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) {
+    throw new Error('尚未設定 LINE_CHANNEL_ACCESS_TOKEN，無法查詢 LINE 好友狀態');
+  }
+
+  const isAll = !courseId || courseId === 'all';
+  const query = isAll ? `
+    SELECT DISTINCT lb.line_user_id
+    FROM line_bindings lb
+    WHERE lb.line_user_id != ''
+  ` : `
+    SELECT DISTINCT lb.line_user_id
+    FROM students s
+    JOIN line_bindings lb ON lb.student_id = s.id
+    WHERE s.course_id = ? AND lb.line_user_id != ''
+  `;
+
+  const rows = (await (isAll ? db.prepare(query).all() : db.prepare(query).bind(courseId).all()).catch(() => ({ results: [] }))).results || [];
+  const userIds = rows.map(r => r.line_user_id).filter(Boolean);
+
+  let verifiedCount = 0;
+  let friendCount = 0;
+  let blockedCount = 0;
+
+  // 分批併行查詢（每批 5 個），兼顧效能並避免觸發 CF Worker 子請求上限
+  const CHUNK_SIZE = 5;
+  for (let i = 0; i < userIds.length; i += CHUNK_SIZE) {
+    const chunk = userIds.slice(i, i + CHUNK_SIZE);
+    await Promise.allSettled(chunk.map(async uid => {
+      try {
+        const prof = await getLineUserProfile(env, uid);
+        if (prof && prof.status === 'friend') {
+          await recordLineUserStatus(db, uid, 'friend', prof.displayName, prof.pictureUrl);
+          friendCount++;
+        } else if (prof && prof.status === 'blocked') {
+          await recordLineUserStatus(db, uid, 'blocked');
+          blockedCount++;
+        }
+        verifiedCount++;
+      } catch (err) {
+        console.error('verify friend error for', uid, err);
+      }
+    }));
+  }
+
+  const botInfo = await getLineBotInfo(env).catch(() => null);
+  const bindings = await listAttendanceBindings(db, courseId, botInfo);
+
+  return {
+    verifiedCount,
+    friendCount,
+    blockedCount,
+    botInfo,
+    bindings,
+  };
 }
 
 /* 老師後台按鈕「發送全班綁定教學訊息」：

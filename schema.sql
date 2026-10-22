@@ -313,3 +313,22 @@ CREATE TABLE IF NOT EXISTS line_push_log (
   created_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_line_push_log_created ON line_push_log(created_at DESC);
+
+-- LINE 學生學號綁定表
+CREATE TABLE IF NOT EXISTS line_bindings (
+  course_id     TEXT NOT NULL,
+  student_id    TEXT NOT NULL,
+  line_user_id  TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  PRIMARY KEY (course_id, student_id)
+);
+
+-- LINE 官方帳號使用者好友與封鎖狀態
+CREATE TABLE IF NOT EXISTS line_users (
+  line_user_id  TEXT PRIMARY KEY,
+  status        TEXT NOT NULL DEFAULT 'friend', -- 'friend' | 'blocked'
+  display_name  TEXT NOT NULL DEFAULT '',
+  picture_url   TEXT NOT NULL DEFAULT '',
+  updated_at    INTEGER NOT NULL
+);
+

@@ -1,6 +1,6 @@
 /* 學生分組系統 — Worker 進入點
    /api/state、/api/action、/api/bulletin；其餘交給靜態資源（public/）。 */
-import { json, bad, runScheduledCleanup, runAttendanceReminders, runSurveyReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader } from './lib.js';
+import { json, bad, runScheduledCleanup, runAttendanceReminders, runSurveyReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader, getLineUserProfile, recordLineUserStatus } from './lib.js';
 import { handleState, handleAction } from './api.js';
 import { fetchNotionBulletin } from './bulletin.js';
 import { handleCheckin, runSelfCheckinReminders, getSelfCheckinPhoto } from './checkin.js';
@@ -47,7 +47,7 @@ export default {
           return res || bad('找不到照片', 404);
         }
 
-        /* LINE Webhook：老師將 Bot 加入班級群組時，於群組內回覆群組 ID 供老師複製貼上設定 */
+        /* LINE Webhook：接收群組事件、好友加入/封鎖事件與綁定指令 */
         if (url.pathname === '/api/line-webhook' && request.method === 'POST') {
           const rawBody = await request.text();
           if (!await verifyLineSignature(env, rawBody, request.headers.get('x-line-signature'))) return bad('簽章驗證失敗', 403);
@@ -55,6 +55,30 @@ export default {
           for (const evt of (payload.events || [])) {
             const src = evt.source || {};
             const inGroup = src.type === 'group' || src.type === 'room';
+
+            // 1. 學生加入好友或解除封鎖 (follow event)
+            if (evt.type === 'follow' && src.userId) {
+              const prof = await getLineUserProfile(env, src.userId).catch(() => null);
+              await recordLineUserStatus(env.DB, src.userId, 'friend', prof ? prof.displayName : '', prof ? prof.pictureUrl : '');
+              const greeting = [
+                '同學您好！歡迎加入課堂小幫手 🤖',
+                '',
+                '請直接在此輸入「綁定 你的學號」（例如：綁定 41461D01）完成個人綁定！',
+                '',
+                '完成後系統才能在缺曠通知、組長點名或生活關懷問卷時及時發送 1 對 1 私訊提醒您喔！',
+              ].join('\n');
+              if (evt.replyToken) {
+                await replyLineMessage(env, evt.replyToken, greeting).catch(e => console.error('follow reply error', e));
+              }
+              continue;
+            }
+
+            // 2. 學生封鎖機器人 (unfollow event)
+            if (evt.type === 'unfollow' && src.userId) {
+              await recordLineUserStatus(env.DB, src.userId, 'blocked');
+              continue;
+            }
+
             const rawText = (evt.message && evt.message.text) || '';
             const normalizedText = typeof rawText.normalize === 'function' ? rawText.normalize('NFKC') : rawText;
             const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(normalizedText);
