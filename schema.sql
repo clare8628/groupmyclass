@@ -220,6 +220,7 @@ CREATE TABLE IF NOT EXISTS attendance_reminder_settings (
   course_id        TEXT PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
   enabled          INTEGER NOT NULL DEFAULT 1,  -- 總開關，寒暑假可關閉
   message          TEXT NOT NULL DEFAULT '',
+  vice_message     TEXT NOT NULL DEFAULT '',
   offset_minutes   INTEGER NOT NULL DEFAULT 10,
   vice_delay_minutes INTEGER NOT NULL DEFAULT 5,  -- 組長逾此分鐘仍未點名才 tag 副組長
   start_date       TEXT NOT NULL DEFAULT '',    -- 有效期間起（開學日 YYYY-MM-DD，空白＝不限）
@@ -286,6 +287,7 @@ CREATE TABLE IF NOT EXISTS survey_reminder_settings (
   send_time   TEXT NOT NULL DEFAULT '09:00', -- 每日發送時間 HH:MM（台北時間）
   updated_at  INTEGER NOT NULL DEFAULT 0,
   channel     TEXT NOT NULL DEFAULT 'all',  -- 發送管道：'all' 全體群組 | 'cadre' 幹部群組
+  message     TEXT NOT NULL DEFAULT '',     -- 自訂私訊提醒內容（空白＝使用預設）
   PRIMARY KEY (course_id, kind, survey_id)
 );
 

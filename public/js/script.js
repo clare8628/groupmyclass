@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.168.20261022.114801';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.169.20261022.120154';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -3733,9 +3733,12 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full">
         <label><input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''}> 啟用自動提醒（遇寒暑假可取消勾選並儲存，暫停發送）</label>
       </div>
-      <div class="form-group full"><label>提醒訊息</label><textarea name="message" rows="2" style="width:100%;">${esc(r.message || DEFAULT_REMINDER_MESSAGE_FE)}</textarea></div>
+      <div class="form-group full"><label>組長提醒私訊內容（留白＝系統預設）</label><textarea name="message" rows="2" style="width:100%;" placeholder="今日尚未完成組員點名，請儘速登入系統完成點名。">${esc(r.message || '')}</textarea></div>
       <div class="form-group"><label>第一節上課後幾分鐘發送</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
-      ${b1 ? `<input type="hidden" name="viceDelayMinutes" value="5">` : `<div class="form-group"><label>組長逾幾分鐘未點名，再 tag 副組長（兩位都綁定時）</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>`}
+      ${b1 ? `<input type="hidden" name="viceDelayMinutes" value="5">` : `
+      <div class="form-group"><label>組長逾幾分鐘未點名，再私訊副組長協助</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>
+      <div class="form-group full"><label>副組長協助階段私訊內容（留白＝系統預設）</label><textarea name="viceMessage" rows="2" style="width:100%;" placeholder="今日組長尚未完成點名，請協助登入系統完成組員點名。">${esc(r.viceMessage || '')}</textarea></div>
+      `}
       <div class="form-group"><label>學期開學日（此日起才發送，空白＝不限）</label><input type="date" name="startDate" value="${esc(r.startDate || '')}"></div>
       <div class="form-group"><label>課程結束日（此日後停止發送，空白＝不限）</label><input type="date" name="endDate" value="${esc(r.endDate || '')}"></div>
       <div class="form-group full"><label>排除日期（國定假日等不發送的日子，每行或以逗號分隔一個，格式 YYYY-MM-DD）</label><textarea name="excludedDates" rows="3" style="width:100%;" placeholder="2026-10-26\n2026-12-25">${esc((r.excludedDates || []).join('\n'))}</textarea></div>
@@ -4442,7 +4445,7 @@ function teacherCareReminderBlock() {
       <td>${esc(careTitle({ careSubtitle: activeBatch.subtitle }))}</td>
       <td style="text-align:center;"><input type="checkbox" data-act="care-reminder-toggle" data-id="${esc(x.id)}" ${s.enabled ? 'checked' : ''}></td>
       <td><input type="time" data-act="care-reminder-time" data-id="${esc(x.id)}" value="${esc(s.sendTime)}" style="padding:0.25rem 0.4rem;"></td>
-      <td>${reminderChannelSelect('care-reminder-channel', x.id, '', s.channel)}</td>
+      <td><input type="text" class="input-text" data-act="care-reminder-message" data-id="${esc(x.id)}" value="${esc(s.message || '')}" placeholder="您尚未填寫生活關懷問卷，請儘速登入系統完成填寫。" style="width:100%;font-size:0.85rem;padding:0.25rem 0.4rem;"></td>
     </tr>`;
   }).join('');
   return `
@@ -4452,7 +4455,7 @@ function teacherCareReminderBlock() {
     ${rows ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>課程</th><th>問卷</th><th>啟用自動提醒</th><th>每日發送時間</th><th>發送管道</th></tr></thead>
+        <thead><tr><th>課程</th><th>問卷</th><th>啟用自動提醒</th><th>每日發送時間</th><th style="min-width:240px;">1對1私訊提醒內容（留白＝預設）</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>` : '<p class="file-path">尚無課程設有生活關懷問卷。</p>'}
@@ -4471,7 +4474,7 @@ function teacherAbsenceReminderBlock() {
         <td>${esc(absenceTitle(sv))}</td>
         <td style="text-align:center;"><input type="checkbox" data-act="abs-reminder-toggle" data-id="${esc(x.id)}" data-survey="${esc(sv.id)}" ${s.enabled ? 'checked' : ''}></td>
         <td><input type="time" data-act="abs-reminder-time" data-id="${esc(x.id)}" data-survey="${esc(sv.id)}" value="${esc(s.sendTime)}" style="padding:0.25rem 0.4rem;"></td>
-        <td>${reminderChannelSelect('abs-reminder-channel', x.id, sv.id, s.channel)}</td>
+        <td><input type="text" class="input-text" data-act="abs-reminder-message" data-id="${esc(x.id)}" data-survey="${esc(sv.id)}" value="${esc(s.message || '')}" placeholder="您在課程中的缺曠累計已達調查門檻，請儘速登入系統說明缺曠原因。" style="width:100%;font-size:0.85rem;padding:0.25rem 0.4rem;"></td>
       </tr>`);
     });
   });
@@ -4482,7 +4485,7 @@ function teacherAbsenceReminderBlock() {
     ${rows.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>課程</th><th>缺曠調查批次</th><th>啟用自動提醒</th><th>每日發送時間</th><th>發送管道</th></tr></thead>
+        <thead><tr><th>課程</th><th>缺曠調查批次</th><th>啟用自動提醒</th><th>每日發送時間</th><th style="min-width:240px;">1對1私訊提醒內容（留白＝預設）</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
     </div>` : '<p class="file-path">尚無課程設有缺曠原因調查批次。</p>'}
@@ -6585,6 +6588,7 @@ app.addEventListener('submit', e => {
       courseId: c.id,
       enabled: !!(f.enabled && f.enabled.checked),
       message: f.message.value.trim(),
+      viceMessage: f.viceMessage ? f.viceMessage.value.trim() : '',
       offsetMinutes: parseInt(f.offsetMinutes.value, 10) || 0,
       viceDelayMinutes: Number.isNaN(parseInt(f.viceDelayMinutes.value, 10)) ? 5 : parseInt(f.viceDelayMinutes.value, 10),
       startDate: f.startDate.value,
@@ -7800,20 +7804,26 @@ app.addEventListener('change', e => {
     if (!confirm(`將「${label}」的發送管道全部切換為「${channel === 'cadre' ? '幹部群組' : '全體群組'}」？\n此操作會套用到全部${kind === 'absence' ? '批次' : '課程'}。`)) { return render(); }
     return act('teacher:bulk-set-survey-reminder-channel', { kind, channel });
   }
-  if (a === 'care-reminder-toggle' || a === 'care-reminder-time' || a === 'care-reminder-channel') {
+  if (a === 'care-reminder-toggle' || a === 'care-reminder-time' || a === 'care-reminder-channel' || a === 'care-reminder-message') {
     const row = t.closest('tr');
     const enabled = row.querySelector('[data-act="care-reminder-toggle"]').checked;
     const sendTime = row.querySelector('[data-act="care-reminder-time"]').value || '09:00';
-    const channel = row.querySelector('[data-act="care-reminder-channel"]').value;
-    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'care', enabled, sendTime, channel });
+    const channelSelect = row.querySelector('[data-act="care-reminder-channel"]');
+    const channel = channelSelect ? channelSelect.value : 'all';
+    const msgInput = row.querySelector('[data-act="care-reminder-message"]');
+    const message = msgInput ? msgInput.value.trim() : '';
+    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'care', enabled, sendTime, channel, message });
   }
-  if (a === 'abs-reminder-toggle' || a === 'abs-reminder-time' || a === 'abs-reminder-channel') {
+  if (a === 'abs-reminder-toggle' || a === 'abs-reminder-time' || a === 'abs-reminder-channel' || a === 'abs-reminder-message') {
     const row = t.closest('tr');
     const enabled = row.querySelector('[data-act="abs-reminder-toggle"]').checked;
     const sendTime = row.querySelector('[data-act="abs-reminder-time"]').value || '09:00';
-    const channel = row.querySelector('[data-act="abs-reminder-channel"]').value;
-    const surveyId = t.dataset.survey;
-    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'absence', surveyId, enabled, sendTime, channel });
+    const channelSelect = row.querySelector('[data-act="abs-reminder-channel"]');
+    const channel = channelSelect ? channelSelect.value : 'all';
+    const msgInput = row.querySelector('[data-act="abs-reminder-message"]');
+    const message = msgInput ? msgInput.value.trim() : '';
+    const surveyId = t.dataset.survey || (msgInput && msgInput.dataset.survey);
+    return act('teacher:save-survey-reminder-settings', { courseId: id, kind: 'absence', surveyId, enabled, sendTime, channel, message });
   }
   if (!c) return;
   if (a === 'filter-log-action') {

@@ -764,7 +764,8 @@ export async function handleAction(request, env, db, body) {
     if (op === 'save-attendance-reminder') {
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
-      const message = String(body.message || '').trim() || DEFAULT_REMINDER_MESSAGE;
+      const message = String(body.message || '').trim();
+      const viceMessage = String(body.viceMessage || '').trim();
       const offsetMinutes = Math.max(0, Math.min(120, parseInt(body.offsetMinutes, 10) || 0));
       const viceDelayParsed = parseInt(body.viceDelayMinutes, 10);
       const viceDelayMinutes = Math.max(0, Math.min(120, Number.isNaN(viceDelayParsed) ? 5 : viceDelayParsed));
@@ -782,14 +783,14 @@ export async function handleAction(request, env, db, body) {
       const geoLat = Number(body.geoLat) || 0, geoLng = Number(body.geoLng) || 0;
       const geoRadius = Math.max(0, Math.min(5000, parseInt(body.geoRadius, 10) || 0));
       if (geoRadius > 0 && (Math.abs(geoLat) > 90 || Math.abs(geoLng) > 180 || (!geoLat && !geoLng))) return bad('教室座標無效', 400);
-      await upsertReminderSettings(db, c.id, { enabled, message, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, start_date: startDate, end_date: endDate, excluded_dates: JSON.stringify(excludedDates), line_group_id: lineGroupId, self_checkin: body.selfCheckin ? 1 : 0, geo_lat: geoLat, geo_lng: geoLng, geo_radius: geoRadius });
+      await upsertReminderSettings(db, c.id, { enabled, message, vice_message: viceMessage, offset_minutes: offsetMinutes, vice_delay_minutes: viceDelayMinutes, start_date: startDate, end_date: endDate, excluded_dates: JSON.stringify(excludedDates), line_group_id: lineGroupId, self_checkin: body.selfCheckin ? 1 : 0, geo_lat: geoLat, geo_lng: geoLng, geo_radius: geoRadius });
       await logActivity(db, {
         courseId: c.id,
         operatorRole: 'teacher',
         operatorId: 'teacher',
         operatorName: '老師',
         actionType: 'attendance-reminder-settings-save',
-        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再 tag 副組長；有效期間 ${startDate || '不限'} ~ ${endDate || '不限'}，排除 ${excludedDates.length} 天`,
+        detail: `老師更新點名自動提醒設定：${enabled ? '已開啟' : '已關閉（例如寒暑假）'}，發送時間為第一節上課後 ${offsetMinutes} 分鐘，組長逾 ${viceDelayMinutes} 分鐘未點名再私訊副組長；有效期間 ${startDate || '不限'} ~ ${endDate || '不限'}，排除 ${excludedDates.length} 天`,
       });
       return ok();
     }
@@ -999,11 +1000,12 @@ export async function handleAction(request, env, db, body) {
       if (!isValidHm(sendTime)) return bad('發送時間格式錯誤，請用 HH:MM', 400);
       const patch = { enabled: body.enabled ? 1 : 0, send_time: sendTime };
       if (body.channel !== undefined) patch.channel = body.channel === 'cadre' ? 'cadre' : 'all';
+      if (body.message !== undefined) patch.message = String(body.message || '').trim();
       await upsertSurveyReminderSettings(db, c.id, kind, surveyId, patch);
       await logActivity(db, {
         courseId: c.id, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
         actionType: kind === 'care' ? 'survey-care-reminder-config' : 'survey-absence-reminder-config',
-        detail: `老師設定${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}自動提醒：${body.enabled ? '啟用' : '停用'}，每日 ${sendTime}，發送至${body.channel === 'cadre' ? '幹部' : '全體'}群組`,
+        detail: `老師設定${kind === 'care' ? '生活關懷問卷' : '缺曠原因調查'}自動提醒：${body.enabled ? '啟用' : '停用'}，每日 ${sendTime}，1 對 1 私訊推播`,
       });
       return ok();
     }

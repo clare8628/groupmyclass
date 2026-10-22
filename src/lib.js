@@ -283,6 +283,7 @@ async function ensureAttendanceReminderSchema(db) {
     'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_lat REAL NOT NULL DEFAULT 0',
     'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_lng REAL NOT NULL DEFAULT 0',
     'ALTER TABLE attendance_reminder_settings ADD COLUMN geo_radius INTEGER NOT NULL DEFAULT 0',
+    "ALTER TABLE attendance_reminder_settings ADD COLUMN vice_message TEXT NOT NULL DEFAULT ''",
   ]) {
     try { await db.prepare(ddl).run(); } catch (_) {}
   }
@@ -354,6 +355,7 @@ async function ensureReminderCenterSchema(db) {
     `).run();
   } catch (_) {}
   try { await db.prepare("ALTER TABLE survey_reminder_settings ADD COLUMN channel TEXT NOT NULL DEFAULT 'all'").run(); } catch (_) {}
+  try { await db.prepare("ALTER TABLE survey_reminder_settings ADD COLUMN message TEXT NOT NULL DEFAULT ''").run(); } catch (_) {}
   try {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS reminder_dedup_runs (
@@ -973,7 +975,7 @@ async function loadRows(db, rev) {
     db.prepare('SELECT * FROM care_surveys ORDER BY seq ASC, created_at ASC').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM course_schedule').all().catch(() => ({ results: [] })),
     // 刻意不選取 screenshot 欄位：課表截圖為 base64 大字串，輪詢資料不應承載圖片內容
-    db.prepare('SELECT course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, self_checkin, geo_lat, geo_lng, geo_radius, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
+    db.prepare('SELECT course_id, enabled, message, vice_message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, self_checkin, geo_lat, geo_lng, geo_radius, screenshot_name, updated_at, LENGTH(screenshot) AS screenshot_len FROM attendance_reminder_settings').all().catch(() => ({ results: [] })),
     db.prepare('SELECT * FROM survey_reminder_settings').all().catch(() => ({ results: [] })),
   ]);
   _raw = { rev, time: now, rows };
@@ -1143,7 +1145,8 @@ export async function loadState(db, rev = null) {
     const reminderRow = (reminderSettingsRows.results || []).find(x => x.course_id === c.id);
     courseObj.attendanceReminder = {
       enabled: reminderRow ? !!reminderRow.enabled : true,
-      message: (reminderRow && reminderRow.message) || DEFAULT_REMINDER_MESSAGE,
+      message: (reminderRow && reminderRow.message) || '',
+      viceMessage: (reminderRow && reminderRow.vice_message) || '',
       offsetMinutes: reminderRow && reminderRow.offset_minutes !== undefined && reminderRow.offset_minutes !== null ? Number(reminderRow.offset_minutes) : 10,
       viceDelayMinutes: reminderRow && reminderRow.vice_delay_minutes !== undefined && reminderRow.vice_delay_minutes !== null ? Number(reminderRow.vice_delay_minutes) : 5,
       startDate: (reminderRow && reminderRow.start_date) || '',
@@ -1163,9 +1166,9 @@ export async function loadState(db, rev = null) {
     const srsRows = (surveyReminderRows.results || []).filter(x => x.course_id === c.id);
     const careSrs = srsRows.find(x => x.kind === 'care');
     courseObj.surveyReminderSettings = {
-      care: { enabled: !!(careSrs && careSrs.enabled), sendTime: (careSrs && careSrs.send_time) || '09:00', channel: (careSrs && careSrs.channel) === 'cadre' ? 'cadre' : 'all' },
+      care: { enabled: !!(careSrs && careSrs.enabled), sendTime: (careSrs && careSrs.send_time) || '09:00', channel: (careSrs && careSrs.channel) === 'cadre' ? 'cadre' : 'all', message: (careSrs && careSrs.message) || '' },
       absence: Object.fromEntries(
-        srsRows.filter(x => x.kind === 'absence').map(x => [x.survey_id, { enabled: !!x.enabled, sendTime: x.send_time || '09:00', channel: x.channel === 'cadre' ? 'cadre' : 'all' }])
+        srsRows.filter(x => x.kind === 'absence').map(x => [x.survey_id, { enabled: !!x.enabled, sendTime: x.send_time || '09:00', channel: x.channel === 'cadre' ? 'cadre' : 'all', message: x.message || '' }])
       ),
     };
 
@@ -1589,15 +1592,16 @@ export async function upsertSurveyReminderSettings(db, courseId, kind, surveyId,
     enabled: existing ? existing.enabled : 0,
     send_time: existing ? existing.send_time : '09:00',
     channel: existing && existing.channel === 'cadre' ? 'cadre' : 'all',
+    message: patch.message !== undefined ? String(patch.message || '') : (existing ? (existing.message || '') : ''),
     ...patch,
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO survey_reminder_settings (course_id, kind, survey_id, enabled, send_time, updated_at, channel)
-    VALUES (?,?,?,?,?,?,?)
+    INSERT INTO survey_reminder_settings (course_id, kind, survey_id, enabled, send_time, updated_at, channel, message)
+    VALUES (?,?,?,?,?,?,?,?)
     ON CONFLICT(course_id, kind, survey_id) DO UPDATE SET
-      enabled = excluded.enabled, send_time = excluded.send_time, updated_at = excluded.updated_at, channel = excluded.channel
-  `).bind(courseId, kind, surveyId, next.enabled, next.send_time, next.updated_at, next.channel).run();
+      enabled = excluded.enabled, send_time = excluded.send_time, updated_at = excluded.updated_at, channel = excluded.channel, message = excluded.message
+  `).bind(courseId, kind, surveyId, next.enabled, next.send_time, next.updated_at, next.channel, next.message).run();
   return next;
 }
 
@@ -1662,6 +1666,7 @@ export async function upsertReminderSettings(db, courseId, patch) {
   const next = {
     enabled: existing ? existing.enabled : 1,
     message: existing ? existing.message : '',
+    vice_message: existing ? (existing.vice_message || '') : '',
     offset_minutes: existing ? existing.offset_minutes : 10,
     vice_delay_minutes: existing && existing.vice_delay_minutes !== undefined && existing.vice_delay_minutes !== null ? existing.vice_delay_minutes : 5,
     start_date: existing && existing.start_date ? existing.start_date : '',
@@ -1678,15 +1683,15 @@ export async function upsertReminderSettings(db, courseId, patch) {
     updated_at: Date.now(),
   };
   await db.prepare(`
-    INSERT INTO attendance_reminder_settings (course_id, enabled, message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot, screenshot_name, updated_at, self_checkin, geo_lat, geo_lng, geo_radius)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO attendance_reminder_settings (course_id, enabled, message, vice_message, offset_minutes, vice_delay_minutes, start_date, end_date, excluded_dates, line_group_id, screenshot, screenshot_name, updated_at, self_checkin, geo_lat, geo_lng, geo_radius)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(course_id) DO UPDATE SET
-      enabled = excluded.enabled, message = excluded.message, offset_minutes = excluded.offset_minutes, vice_delay_minutes = excluded.vice_delay_minutes,
+      enabled = excluded.enabled, message = excluded.message, vice_message = excluded.vice_message, offset_minutes = excluded.offset_minutes, vice_delay_minutes = excluded.vice_delay_minutes,
       start_date = excluded.start_date, end_date = excluded.end_date, excluded_dates = excluded.excluded_dates,
       line_group_id = excluded.line_group_id, screenshot = excluded.screenshot, screenshot_name = excluded.screenshot_name,
       updated_at = excluded.updated_at, self_checkin = excluded.self_checkin,
       geo_lat = excluded.geo_lat, geo_lng = excluded.geo_lng, geo_radius = excluded.geo_radius
-  `).bind(courseId, next.enabled, next.message, next.offset_minutes, next.vice_delay_minutes, next.start_date, next.end_date, next.excluded_dates, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at, next.self_checkin, next.geo_lat, next.geo_lng, next.geo_radius).run();
+  `).bind(courseId, next.enabled, next.message, next.vice_message, next.offset_minutes, next.vice_delay_minutes, next.start_date, next.end_date, next.excluded_dates, next.line_group_id, next.screenshot, next.screenshot_name, next.updated_at, next.self_checkin, next.geo_lat, next.geo_lng, next.geo_radius).run();
   return next;
 }
 
@@ -1928,6 +1933,8 @@ export async function sendCareSurveyReminder(db, env, courseId) {
   }
 
   const courseTitle = [c.year, c.subject].filter(Boolean).join(' ') || c.id;
+  const careSrs = await getSurveyReminderSettings(db, courseId, 'care', '').catch(() => null);
+  const careMsg = (careSrs && careSrs.message && careSrs.message.trim()) || '您尚未填寫生活關懷問卷，請儘速登入系統完成填寫。';
   let sentCount = 0, failCount = 0;
   const errors = [];
 
@@ -1935,7 +1942,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
     const text = [
       `【${courseTitle}】生活關懷問卷填寫提醒`,
       `${s.name} 同學您好：`,
-      `您尚未填寫生活關懷問卷，請儘速登入系統完成填寫。`,
+      careMsg,
       `問卷填寫網址：https://groupmyclass.clare8628.workers.dev/`,
     ].join('\n');
     try {
@@ -2000,6 +2007,8 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
     return { sent: false, detail: `需填寫同學皆未綁定 LINE（${unbound.map(s => s.name).join('、')} 共 ${unbound.length} 人），無法發送 1 對 1 私訊` };
   }
 
+  const absSrs = await getSurveyReminderSettings(db, courseId, 'absence', surveyId).catch(() => null);
+  const absMsg = (absSrs && absSrs.message && absSrs.message.trim()) || '您在課程中的缺曠累計已達調查門檻，請儘速登入系統說明缺曠原因。';
   let sentCount = 0, failCount = 0;
   const errors = [];
 
@@ -2007,7 +2016,7 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
     const text = [
       `【缺曠原因調查－${sv.subtitle}】填寫提醒`,
       `${s.name} 同學您好：`,
-      `您在課程中的缺曠累計已達調查門檻，請儘速登入系統說明缺曠原因。`,
+      absMsg,
       `填寫網址：https://groupmyclass.clare8628.workers.dev/`,
     ].join('\n');
     try {
@@ -2109,7 +2118,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
 
   const rows = await db.prepare(`
     SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
-           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id,
+           r.enabled AS global_enabled, r.message AS message, r.vice_message AS vice_message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id,
            c.year AS year, c.subject AS subject
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
@@ -2158,11 +2167,12 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
             } else {
               let sentCount = 0, failCount = 0;
               const errors = [];
+              const viceMsg = (row.vice_message && row.vice_message.trim()) || '今日組長尚未完成點名，請協助登入系統完成點名。';
               for (const l of bound) {
                 const text = [
                   `【${courseTitle}】點名提醒（副組長協助）`,
                   `第 ${l.groupName} 組 ${l.name} 副組長您好：`,
-                  `今日組長尚未完成組員點名，請協助登入系統完成點名。`,
+                  viceMsg,
                   `點名系統：https://groupmyclass.clare8628.workers.dev/`,
                 ].join('\n');
                 try {
@@ -2190,14 +2200,14 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
           } else {
             let sentCount = 0, failCount = 0;
             const errors = [];
-            const customMsg = row.message ? `${row.message}\n` : '';
+            const leaderMsg = (row.message && row.message.trim()) || '今日尚未完成組員點名，請儘速登入系統完成點名。';
             for (const l of bound) {
               const text = [
                 `【${courseTitle}】點名提醒`,
                 `第 ${l.groupName} 組 ${l.name} 您好：`,
-                `${customMsg}今日尚未完成組員點名，請儘速登入系統完成點名。`,
+                leaderMsg,
                 `點名系統：https://groupmyclass.clare8628.workers.dev/`,
-              ].filter(Boolean).join('\n');
+              ].join('\n');
               try {
                 await sendLinePush(env, l.lineUserId, text);
                 sentCount++;
