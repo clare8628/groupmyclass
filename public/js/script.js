@@ -1,6 +1,6 @@
 /* 113入學行銷真班分組與點名系統 Group My Class — 單頁前端，狀態存於 Cloudflare D1 */
 const APP_NAME = '113入學行銷真班';
-let APP_VERSION = 'v2.166.20261020.165847';   // 顯示於前台標題列，隨後端 API 自動同步更新
+let APP_VERSION = 'v2.168.20261022.114801';   // 顯示於前台標題列，隨後端 API 自動同步更新
 
 const CURRENT_KEY = 'groupmyclass_current_course';   // 僅記住「目前檢視哪一門課」，其餘資料都在伺服器
 const PREVIEW_KEY = 'groupmyclass_teacher_preview_mode'; // 記住老師切換之視角模式，重新整理不遺失
@@ -4448,7 +4448,7 @@ function teacherCareReminderBlock() {
   return `
   <div class="teacher-section">
     <h2>📋 問卷提醒（生活關懷問卷）</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該課程是否仍有學生未填寫生活關懷問卷，若有則自動推播提醒至所選發送管道（全體群組＝LINE 群組 ID(全體)、幹部群組＝該課程 LINE 群組 ID(幹部)）；全數完成則不發送。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該課程是否仍有學生未填寫生活關懷問卷，若有則自動以 LINE 1 對 1 私訊推播提醒尚未填寫的學生（節省群組推播額度）；全數完成則不發送。</p>
     ${rows ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
@@ -4478,7 +4478,7 @@ function teacherAbsenceReminderBlock() {
   return `
   <div class="teacher-section">
     <h2>📋 缺曠提醒（缺曠原因調查）</h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該批次缺曠原因調查是否仍有學生未填寫，若有則自動推播提醒至所選發送管道（全體群組＝LINE 群組 ID(全體)、幹部群組＝該課程 LINE 群組 ID(幹部)）；全數完成則不發送。</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">啟用後，系統每日於指定時間檢查該批次缺曠原因調查是否仍有學生未填寫，若有則自動以 LINE 1 對 1 私訊推播提醒尚未說明的學生（節省群組推播額度）；全數完成則不發送。</p>
     ${rows.length ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
@@ -5208,7 +5208,7 @@ function teacherAbsenceCard(c, sv) {
       <button class="btn btn-secondary btn-sm" type="submit" style="margin:0;">💾 儲存</button>
       <button class="btn btn-primary btn-sm" type="button" data-act="open-abs-picker" data-survey="${esc(sv.id)}" style="margin:0;">👥 選擇需填寫學生</button>
       <button class="btn btn-success btn-sm" type="button" data-act="export-absence-csv" data-survey="${esc(sv.id)}" style="margin:0;">📥 匯出填寫內容</button>
-      <button class="btn btn-secondary btn-sm" type="button" data-act="send-absence-survey-reminder" data-survey="${esc(sv.id)}" style="margin:0;">📢 發送 LINE 缺曠填寫提醒（至全體群組）</button>
+      <button class="btn btn-secondary btn-sm" type="button" data-act="send-absence-survey-reminder" data-survey="${esc(sv.id)}" style="margin:0;">📢 發送 LINE 缺曠填寫提醒（1對1私訊未填學生）</button>
     </form>
     <h4 style="margin:0.5rem 0 0.3rem;">⏳ 尚未填寫（${pending.length} 位，依所屬組長）</h4>
     ${pending.length ? Object.keys(byLeader).sort().map(l => `
@@ -5334,7 +5334,7 @@ function teacherWellbeingBlock(c) {
       </div>
       <div style="display:flex;gap:0.5rem;align-items:center;">
         <button class="btn btn-secondary btn-sm" type="button" data-act="send-care-survey-reminder" data-id="${esc(c0.id)}">
-          📢 發送 LINE 問卷填寫提醒（至全體群組）
+          📢 發送 LINE 問卷填寫提醒（1對1私訊未填學生）
         </button>
         <button class="btn btn-success btn-sm" type="button" data-act="export-survey-csv">
           📥 匯出問卷紀錄（Excel/CSV）
@@ -7126,15 +7126,12 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     return act('teacher:send-attendance-binding-instructions', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'send-care-survey-reminder') {
-    const careCh = courseById(id) && courseById(id).surveyReminderSettings && courseById(id).surveyReminderSettings.care.channel;
-    if (!confirm(`確定要發送「生活關懷問卷填寫提醒」至 LINE 群組 ID(${careCh === 'cadre' ? '幹部' : '全體'}) 嗎？`)) return;
+    if (!confirm('確定要以 LINE 1 對 1 私訊發送「生活關懷問卷填寫提醒」給尚未填寫的學生嗎？')) return;
     return act('teacher:send-care-survey-reminder', { courseId: id }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'send-absence-survey-reminder') {
     const surveyId = btn.dataset.survey || '';
-    const absC = cur() || courseById(id);
-    const absCh = absC && absC.surveyReminderSettings && (absC.surveyReminderSettings.absence[surveyId] || {}).channel;
-    if (!confirm(`確定要發送「缺曠原因調查填寫提醒」至 LINE 群組 ID(${absCh === 'cadre' ? '幹部' : '全體'}) 嗎？`)) return;
+    if (!confirm('確定要以 LINE 1 對 1 私訊發送「缺曠原因調查填寫提醒」給尚未說明的學生嗎？')) return;
     return act('teacher:send-absence-survey-reminder', { courseId: (cur() && cur().id) || id, surveyId }, { after: data => alert(`${data && data.sent ? '✅' : 'ℹ️'} ${(data && data.detail) || '已處理'}`) });
   }
   if (a === 'attendance-unlock-all') {

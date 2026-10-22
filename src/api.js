@@ -931,7 +931,7 @@ export async function handleAction(request, env, db, body) {
           operatorId: 'teacher',
           operatorName: '老師',
           actionType: 'survey-care-reminder',
-          detail: `老師發送生活關懷問卷填寫提醒至 LINE 群組 ID(全體)：${result.detail}`,
+          detail: `老師以 LINE 1 對 1 私訊發送生活關懷問卷填寫提醒：${result.detail}`,
         });
         return ok(result);
       } catch (err) {
@@ -950,7 +950,7 @@ export async function handleAction(request, env, db, body) {
           operatorId: 'teacher',
           operatorName: '老師',
           actionType: 'survey-absence-reminder',
-          detail: `老師發送缺曠原因調查提醒至 LINE 群組 ID(全體)：${result.detail}`,
+          detail: `老師以 LINE 1 對 1 私訊發送缺曠原因調查提醒：${result.detail}`,
         });
         return ok(result);
       } catch (err) {

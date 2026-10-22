@@ -1496,7 +1496,7 @@ const REMINDER_CHECK_WINDOW_MINUTES = 5;
 /* 以 Worker Secret（LINE_CHANNEL_ACCESS_TOKEN）推送文字訊息給指定 LINE 使用者／群組 */
 export async function sendLinePush(env, to, text, mentionUserIds = []) {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) throw new Error('尚未設定 LINE_CHANNEL_ACCESS_TOKEN（請於 Cloudflare Worker 以 wrangler secret put 設定）');
-  if (!to) throw new Error('缺少 LINE 群組 ID');
+  if (!to) throw new Error('缺少 LINE 目標 ID（群組或使用者 ID）');
   /* 有要 tag 的人時改用 textV2：文字中的 {m0}{m1}… 會被替換為 @mention */
   const message = mentionUserIds.length
     ? {
@@ -1731,9 +1731,9 @@ async function groupLeadersByGroup(db, courseId) {
   return byGroup;
 }
 
-/* 找出當天尚未完成點名的組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成。
-   stage='leader'（第一次提醒）：tag 已綁定的組長；組長未綁定但副組長已綁定時改 tag 副組長（否則該組無人可通知）。
-   stage='vice'（組長逾時仍未點名的再提醒）：只 tag 兩位都已綁定之組的副組長。兩位都未綁定才以文字列出。 */
+/* 找出當天尚未完成點名的組長與副組長：該組在當天任何點名時段（含虛擬的 daily-日期）皆無點名紀錄即視為未完成。
+   stage='leader'（第一次提醒）：優先私訊已綁定的組長；若組長未綁定但副組長已綁定則改為副組長。
+   stage='vice'（組長逾時仍未點名的再提醒）：私訊該組副組長協助點名。 */
 async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
   await ensureSchema(db);
   const byGroup = await groupLeadersByGroup(db, courseId);
@@ -1750,13 +1750,17 @@ async function findPendingLeaders(db, courseId, dateStr, stage = 'leader') {
     const leaderBound = !!g.leader.line_user_id;
     const viceBound = !!(g.vice && g.vice.line_user_id);
     if (stage === 'vice') {
-      if (leaderBound && viceBound) pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName });
+      if (viceBound) {
+        pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName, role: '副組長' });
+      } else {
+        pending.push({ name: (g.vice && g.vice.name) || '未設定副組長', lineUserId: '', groupName, role: '副組長（未綁定）' });
+      }
     } else if (leaderBound) {
-      pending.push({ name: g.leader.name, lineUserId: g.leader.line_user_id, groupName });
+      pending.push({ name: g.leader.name, lineUserId: g.leader.line_user_id, groupName, role: '組長' });
     } else if (viceBound) {
-      pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName });
+      pending.push({ name: g.vice.name, lineUserId: g.vice.line_user_id, groupName, role: '副組長（代理）' });
     } else {
-      pending.push({ name: [g.leader, g.vice].filter(Boolean).map(x => x.name).join('／'), lineUserId: '', groupName });
+      pending.push({ name: [g.leader, g.vice].filter(Boolean).map(x => x.name).join('／'), lineUserId: '', groupName, role: '未綁定' });
     }
   }
   return { hasLeaders: true, leaders: pending };
@@ -1894,12 +1898,9 @@ export async function sendLineBindingInstructions(db, env, courseId) {
   return { sent: true, detail: `已推播至全體群組，通知 ${unbound.length} 人尚未綁定` };
 }
 
-/* 老師後台：推播「生活關懷問卷填寫提醒」至 LINE 群組 ID(全體) */
+/* 老師後台 / 排程：以 1 對 1 私訊推播「生活關懷問卷填寫提醒」給未填寫的學生（節省群組推播額度） */
 export async function sendCareSurveyReminder(db, env, courseId) {
   await ensureSchema(db);
-  const target = await resolveSurveyReminderTarget(db, courseId, 'care', '');
-  const targetGroupId = target.groupId;
-  if (!targetGroupId) throw new Error(`尚未設定 ${target.field}`);
 
   const c = await db.prepare('SELECT id, year, subject, care_subtitle FROM courses WHERE id = ?').bind(courseId).first();
   if (!c) throw new Error('課程不存在');
@@ -1922,24 +1923,51 @@ export async function sendCareSurveyReminder(db, env, courseId) {
     else unbound.push(s);
   }
 
-  const courseTitle = [c.year, c.subject].filter(Boolean).join(' ') || c.id;
-  const head = `【${courseTitle}】生活關懷問卷填寫提醒：\n請以下尚未填寫生活關懷問卷的同學，儘速登入系統完成填寫：`;
-  const tail = [
-    `問卷填寫網址：https://groupmyclass.clare8628.workers.dev/`,
-    unbound.length ? `尚未綁定 LINE（請於本群組輸入「綁定 學號」）：${unbound.map(s => `${s.name}（${s.id}）`).join('、')}` : '',
-  ].filter(Boolean).join('\n');
+  if (!bound.length) {
+    return { sent: false, detail: `未填寫同學皆未綁定 LINE（${unbound.map(s => s.name).join('、')} 共 ${unbound.length} 人），無法發送 1 對 1 私訊` };
+  }
 
-  await pushWithMentions(env, targetGroupId, head, bound, tail);
-  await logLinePush(db, { courseId, kind: 'survey-care', channel: target.channel, groupId: targetGroupId, summary: `生活關懷問卷填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
-  return { sent: true, detail: `已推播至${target.label}，提醒 ${pending.length} 位同學填寫生活關懷問卷（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+  const courseTitle = [c.year, c.subject].filter(Boolean).join(' ') || c.id;
+  let sentCount = 0, failCount = 0;
+  const errors = [];
+
+  for (const s of bound) {
+    const text = [
+      `【${courseTitle}】生活關懷問卷填寫提醒`,
+      `${s.name} 同學您好：`,
+      `您尚未填寫生活關懷問卷，請儘速登入系統完成填寫。`,
+      `問卷填寫網址：https://groupmyclass.clare8628.workers.dev/`,
+    ].join('\n');
+    try {
+      await sendLinePush(env, s.line_user_id, text);
+      sentCount++;
+    } catch (err) {
+      failCount++;
+      errors.push(`${s.name}(${err.message || err})`);
+    }
+  }
+
+  const detail = `生活關懷問卷 1 對 1 私訊送出 ${sentCount} 人` + (failCount ? `、失敗 ${failCount} 人(${errors.join(';')})` : '') + (unbound.length ? `、未綁定 ${unbound.length} 人` : '');
+  const status = failCount === 0 ? 'ok' : (sentCount > 0 ? 'partial' : 'error');
+
+  await logLinePush(db, {
+    courseId,
+    kind: 'survey-care',
+    channel: 'direct',
+    groupId: '1對1私訊',
+    summary: detail,
+    status,
+  });
+
+  return {
+    sent: sentCount > 0,
+    detail,
+  };
 }
 
-/* 老師後台：推播「缺曠原因調查填寫提醒」至 LINE 群組 ID(全體) */
+/* 老師後台 / 排程：以 1 對 1 私訊推播「缺曠原因調查填寫提醒」給缺曠嚴重尚未填寫的學生（節省群組推播額度） */
 export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
   await ensureSchema(db);
-  const target = await resolveSurveyReminderTarget(db, courseId, 'absence', surveyId);
-  const targetGroupId = target.groupId;
-  if (!targetGroupId) throw new Error(`尚未設定 ${target.field}`);
 
   const sv = await db.prepare('SELECT id, subtitle, student_ids, threshold FROM absence_surveys WHERE course_id = ? AND id = ?').bind(courseId, surveyId).first();
   if (!sv) throw new Error('缺曠調查問卷不存在');
@@ -1968,15 +1996,45 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
     else unbound.push({ id, name });
   }
 
-  const head = `【缺曠原因調查－${sv.subtitle}】填寫提醒：\n請以下同學儘速登入系統說明缺曠原因：`;
-  const tail = [
-    `填寫網址：https://groupmyclass.clare8628.workers.dev/`,
-    unbound.length ? `尚未綁定 LINE（請於本群組輸入「綁定 學號」）：${unbound.map(s => `${s.name}（${s.id}）`).join('、')}` : '',
-  ].filter(Boolean).join('\n');
+  if (!bound.length) {
+    return { sent: false, detail: `需填寫同學皆未綁定 LINE（${unbound.map(s => s.name).join('、')} 共 ${unbound.length} 人），無法發送 1 對 1 私訊` };
+  }
 
-  await pushWithMentions(env, targetGroupId, head, bound, tail);
-  await logLinePush(db, { courseId, kind: 'survey-absence', channel: target.channel, groupId: targetGroupId, summary: `缺曠原因調查（${sv.subtitle}）填寫提醒，tag ${bound.length} 人、未綁定 ${unbound.length} 人` });
-  return { sent: true, detail: `已推播至${target.label}，提醒 ${pendingIds.length} 位同學填寫缺曠原因（tag ${bound.length} 人、未綁定 ${unbound.length} 人）` };
+  let sentCount = 0, failCount = 0;
+  const errors = [];
+
+  for (const s of bound) {
+    const text = [
+      `【缺曠原因調查－${sv.subtitle}】填寫提醒`,
+      `${s.name} 同學您好：`,
+      `您在課程中的缺曠累計已達調查門檻，請儘速登入系統說明缺曠原因。`,
+      `填寫網址：https://groupmyclass.clare8628.workers.dev/`,
+    ].join('\n');
+    try {
+      await sendLinePush(env, s.line_user_id, text);
+      sentCount++;
+    } catch (err) {
+      failCount++;
+      errors.push(`${s.name}(${err.message || err})`);
+    }
+  }
+
+  const detail = `缺曠原因調查（${sv.subtitle}）1 對 1 私訊送出 ${sentCount} 人` + (failCount ? `、失敗 ${failCount} 人(${errors.join(';')})` : '') + (unbound.length ? `、未綁定 ${unbound.length} 人` : '');
+  const status = failCount === 0 ? 'ok' : (sentCount > 0 ? 'partial' : 'error');
+
+  await logLinePush(db, {
+    courseId,
+    kind: 'survey-absence',
+    channel: 'direct',
+    groupId: '1對1私訊',
+    summary: detail,
+    status,
+  });
+
+  return {
+    sent: sentCount > 0,
+    detail,
+  };
 }
 
 /* Cron（每 5 分鐘）：問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）自動排程。
@@ -2041,7 +2099,7 @@ export async function runSurveyReminders(db, env, now = Date.now()) {
 }
 
 /* Cron（每 5 分鐘）：比對台北時間是否已達「當天第一節上課時間＋提醒延遲分鐘」（含 REMINDER_CHECK_WINDOW_MINUTES 容許視窗），
-   命中即發送；以 attendance_reminder_runs 保證當天每門課只發送一次，不受視窗寬度影響 */
+   命中即以 1 對 1 私訊推播給尚未完成點名的組長／副組長；以 attendance_reminder_runs 保證當天每門課各階段只發送一次 */
 export async function runAttendanceReminders(db, env, now = Date.now()) {
   const tw = new Date(now + 8 * 3600 * 1000); // 位移至台北時區後，以 UTC 欄位讀出之值即為台北當地時間
   const weekday = tw.getUTCDay();
@@ -2051,30 +2109,34 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
 
   const rows = await db.prepare(`
     SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
-           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id
+           r.enabled AS global_enabled, r.message AS message, r.offset_minutes AS offset_minutes, r.vice_delay_minutes AS vice_delay_minutes, r.start_date AS start_date, r.end_date AS end_date, r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id,
+           c.year AS year, c.subject AS subject
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
+    LEFT JOIN courses c ON c.id = s.course_id
     WHERE s.weekday = ? AND COALESCE(r.self_checkin, 0) = 0
   `).bind(weekday).all().catch(() => ({ results: [] }));
 
   const results = [];
   for (const row of (rows.results || [])) {
     if (!row.day_enabled || !row.global_enabled) continue;
-    if (!row.first_period_time || !row.line_group_id) continue;
+    if (!row.first_period_time) continue;
     // 有效日期區間（開學日～課程結束日）與排除日（國定假日等）：不在區間內或命中排除日則不發送
     if (row.start_date && dateStr < row.start_date) continue;
     if (row.end_date && dateStr > row.end_date) continue;
     if (parseJsonArray(row.excluded_dates).includes(dateStr)) continue;
     const viceDelay = row.vice_delay_minutes === null || row.vice_delay_minutes === undefined ? 5 : Number(row.vice_delay_minutes);
     const baseHm = addMinutesToHm(row.first_period_time, row.offset_minutes);
-    // 兩個階段：組長提醒（key＝日期）；組長逾時未點名後再 tag 副組長（key＝日期:vice），各自每天只發一次
+    const courseTitle = [row.year, row.subject].filter(Boolean).join(' ') || row.course_id;
+
+    // 兩個階段：組長提醒（key＝日期）；組長逾時未點名後再私訊副組長（key＝日期:vice），各自每天只發一次
     const stages = [
       { stage: 'leader', key: dateStr, hm: baseHm },
       { stage: 'vice', key: `${dateStr}:vice`, hm: addMinutesToHm(baseHm, viceDelay) },
     ];
     for (const st of stages) {
       const elapsed = ((nowMinutes - hmToMinutes(st.hm)) % 1440 + 1440) % 1440;
-      if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue; // 尚未到時間，或已超出本次 cron 視窗（下一輪會判斷下一個目標）
+      if (elapsed >= REMINDER_CHECK_WINDOW_MINUTES) continue; // 尚未到時間，或已超出本次 cron 視窗
 
       const already = await db.prepare('SELECT 1 FROM attendance_reminder_runs WHERE course_id = ? AND send_date = ?')
         .bind(row.course_id, st.key).first();
@@ -2086,34 +2148,74 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
         if (st.stage === 'vice') {
           if (!pending.leaders.length) {
             status = 'skipped';
-            detail = '無需再提醒副組長';
+            detail = '無需再提醒副組長（所有組皆已完成點名）';
           } else {
-            const tags = pending.leaders.map((_, i) => `{m${i}}`).join(' ');
-            await sendLinePush(env, row.line_group_id, `組長尚未完成點名，請副組長協助：\n${tags}`, pending.leaders.map(l => l.lineUserId));
-            pushed = true;
-            detail = `副組長 tag ${pending.leaders.length} 人`;
+            const bound = pending.leaders.filter(l => l.lineUserId);
+            const unbound = pending.leaders.filter(l => !l.lineUserId);
+            if (!bound.length) {
+              status = 'skipped';
+              detail = `未點名組之副組長皆未綁定 LINE（${unbound.map(u => `第${u.groupName}組${u.name}`).join('、')}）`;
+            } else {
+              let sentCount = 0, failCount = 0;
+              const errors = [];
+              for (const l of bound) {
+                const text = [
+                  `【${courseTitle}】點名提醒（副組長協助）`,
+                  `第 ${l.groupName} 組 ${l.name} 副組長您好：`,
+                  `今日組長尚未完成組員點名，請協助登入系統完成點名。`,
+                  `點名系統：https://groupmyclass.clare8628.workers.dev/`,
+                ].join('\n');
+                try {
+                  await sendLinePush(env, l.lineUserId, text);
+                  sentCount++;
+                } catch (err) {
+                  failCount++;
+                  errors.push(`${l.name}(${err.message || err})`);
+                }
+              }
+              pushed = sentCount > 0;
+              detail = `副組長 1 對 1 私訊送出 ${sentCount} 人` + (failCount ? `、失敗 ${failCount} 人(${errors.join(';')})` : '') + (unbound.length ? `、未綁定 ${unbound.length} 人` : '');
+              if (failCount > 0 && sentCount === 0) status = 'error';
+            }
           }
         } else if (pending.hasLeaders && !pending.leaders.length) {
           status = 'skipped';
           detail = '所有組長皆已完成點名';
-        } else if (!pending.leaders.length) {
-          await sendLinePush(env, row.line_group_id, row.message || DEFAULT_REMINDER_MESSAGE);
-          pushed = true;
         } else {
           const bound = pending.leaders.filter(l => l.lineUserId);
           const unbound = pending.leaders.filter(l => !l.lineUserId);
-          const tags = bound.map((_, i) => `{m${i}}`).join(' ');
-          const names = unbound.map(l => `${l.name}（第${l.groupName}組）`).join('、');
-          const body = [row.message || DEFAULT_REMINDER_MESSAGE, '尚未完成點名：', tags, names && `${names}（尚未綁定 LINE，請於群組輸入「綁定 學號」）`].filter(Boolean).join('\n');
-          await sendLinePush(env, row.line_group_id, body, bound.map(l => l.lineUserId));
-          pushed = true;
-          detail = `tag ${bound.length} 人、未綁定 ${unbound.length} 人`;
+          if (!bound.length) {
+            status = 'skipped';
+            detail = `未點名組長皆未綁定 LINE（${unbound.map(u => `第${u.groupName}組${u.name}`).join('、')}）`;
+          } else {
+            let sentCount = 0, failCount = 0;
+            const errors = [];
+            const customMsg = row.message ? `${row.message}\n` : '';
+            for (const l of bound) {
+              const text = [
+                `【${courseTitle}】點名提醒`,
+                `第 ${l.groupName} 組 ${l.name} 您好：`,
+                `${customMsg}今日尚未完成組員點名，請儘速登入系統完成點名。`,
+                `點名系統：https://groupmyclass.clare8628.workers.dev/`,
+              ].filter(Boolean).join('\n');
+              try {
+                await sendLinePush(env, l.lineUserId, text);
+                sentCount++;
+              } catch (err) {
+                failCount++;
+                errors.push(`${l.name}(${err.message || err})`);
+              }
+            }
+            pushed = sentCount > 0;
+            detail = `組長 1 對 1 私訊送出 ${sentCount} 人` + (failCount ? `、失敗 ${failCount} 人(${errors.join(';')})` : '') + (unbound.length ? `、未綁定 ${unbound.length} 人` : '');
+            if (failCount > 0 && sentCount === 0) status = 'error';
+          }
         }
       } catch (err) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
-      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: st.stage === 'vice' ? 'attendance-cadre-vice' : 'attendance-cadre', channel: 'cadre', groupId: row.line_group_id, summary: detail, status });
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: st.stage === 'vice' ? 'attendance-cadre-vice' : 'attendance-cadre', channel: 'direct', groupId: '1對1私訊', summary: detail, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, st.key, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, status, detail });
