@@ -4,7 +4,7 @@ import {
   applyDeadline, publicize, resolveStudent, canGroupLeaderEdit,
   makeLogStmt, logActivity, evalDeadlinePassed, isAttendanceEditable,
   isDailySession, todayDateStr, getDataRev, markDataChanged, getCourseLogs, LOG_CATEGORY_WHERE, getSystemStatus,
-  getBulletinPageSize, setBulletinPageSize, getMenuTitles, setMenuTitles, getDefaultCourseId, setDefaultCourseId, DEFAULT_CARE_ID,
+  getPublicSettings, getBulletinPageSize, setBulletinPageSize, getMenuTitles, setMenuTitles, getDefaultCourseId, setDefaultCourseId, DEFAULT_CARE_ID,
   WEEKDAY_LABELS, isValidHm, validateScreenshotDataUrl, upsertReminderSettings, getReminderSettingsRow, sendLinePush, DEFAULT_REMINDER_MESSAGE,
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
   sendCareSurveyReminder, sendAbsenceSurveyReminder, logLinePush, listLinePushLogs, deleteLinePushLog, clearLinePushLogs,
@@ -52,12 +52,12 @@ export async function handleState(request, env, db) {
   }
 
   const courses = await applyDeadline(db, await loadState(db, rev));
-  const [bulletin, bulletinPageSize] = await Promise.all([
+  const [bulletin, pub] = await Promise.all([
     fetchNotionBulletin(),
-    getBulletinPageSize(db),
+    getPublicSettings(db, !!(session && session.role === 'teacher'), rev),
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), menuTitles: await getMenuTitles(db), allGroupId: session && session.role === 'teacher' ? await getAllStudentsLineGroupId(db) : undefined },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize: pub.bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -74,7 +74,8 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: await getDefaultCourseId(db), menuTitles: await getMenuTitles(db), allGroupId: session && session.role === 'teacher' ? await getAllStudentsLineGroupId(db) : undefined, ...extra }, 200, headers);
+    const pub = await getPublicSettings(db, !!(session && session.role === 'teacher'));
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {

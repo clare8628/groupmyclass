@@ -833,14 +833,23 @@ const RAW_CACHE_MAX_AGE = 15 * 60 * 1000; // 保險：即使版本未變，15 �
 let _raw = null;          // { rev, time, rows }
 let _recentLogs = null;   // { rev, logs }
 
+/* data_rev 在本 isolate 內短暫快取：多人同時輪詢時共用一次讀取；本 isolate 自己寫入時會立即失效 */
+const REV_CACHE_MS = 8000;
+let _rev = null; // { value, time }
 export async function getDataRev(db) {
+  const now = Date.now();
+  if (_rev && now - _rev.time < REV_CACHE_MS) return _rev.value;
   const row = await db.prepare("SELECT value FROM settings WHERE key = 'data_rev'").first().catch(() => null);
-  return row ? String(row.value) : '0';
+  const value = row ? String(row.value) : '0';
+  _rev = { value, time: now };
+  return value;
 }
 
 /* 資料已異動：遞增全域版本並清除本 isolate 快取 */
 export async function markDataChanged(db) {
   _raw = null;
+  _rev = null;
+  _pubSettings = null;
   _recentLogs = null;
   try {
     await db.prepare(`
@@ -1448,6 +1457,26 @@ export async function getBulletinPageSize(db) {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('bulletin_page_size').first().catch(() => null);
   const n = row ? parseInt(row.value, 10) : 10;
   return (n > 0 && n <= 100) ? n : 10;
+}
+
+/* /api/state 與 action 回應所需的 4 項設定，合併為 1 次查詢；傳入 rev 時依資料版本快取 */
+let _pubSettings = null; // { rev, data }
+export async function getPublicSettings(db, withGroupId, rev = null) {
+  if (rev !== null && _pubSettings && _pubSettings.rev === rev && (!withGroupId || _pubSettings.data.allGroupId !== undefined)) return _pubSettings.data;
+  const rows = (await db.prepare("SELECT key, value FROM settings WHERE key IN ('bulletin_page_size','default_course_id','menu_titles','all_students_line_group_id')").all().catch(() => ({ results: [] }))).results || [];
+  const m = {};
+  for (const r of rows) m[r.key] = r.value;
+  const n = parseInt(m.bulletin_page_size, 10);
+  let menuTitles = {};
+  try { const o = m.menu_titles ? JSON.parse(m.menu_titles) : {}; if (o && typeof o === 'object') menuTitles = o; } catch (_) {}
+  const data = {
+    bulletinPageSize: (n > 0 && n <= 100) ? n : 10,
+    defaultCourseId: m.default_course_id || '',
+    menuTitles,
+    allGroupId: withGroupId ? (m.all_students_line_group_id || await getAllStudentsLineGroupId(db)) : undefined,
+  };
+  if (rev !== null) _pubSettings = { rev, data };
+  return data;
 }
 
 export async function getDefaultCourseId(db) {
