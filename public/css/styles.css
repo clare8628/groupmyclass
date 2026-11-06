@@ -1761,34 +1761,52 @@ h3 small { font-size: .75rem; font-weight: normal; color: #888; }
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.6rem;
   background: #fff;
   border: 1px solid #e2e8f0;
-  border-left: 4px solid #3498db;
+  border-left: 4px solid #3b82f6;
   border-radius: 8px;
-  padding: 0.75rem 1.25rem;
-  margin-bottom: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  padding: 0.55rem 1rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.teacher-subpage-nav .nav-breadcrumbs {
+  font-size: 0.92rem;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.teacher-subpage-nav .crumb-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: color 0.15s;
+}
+.teacher-subpage-nav .crumb-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+.teacher-subpage-nav .crumb-sep {
+  color: #cbd5e1;
+  font-weight: 400;
+}
+.teacher-subpage-nav .crumb-parent {
+  color: #475569;
+  font-weight: 600;
+}
+.teacher-subpage-nav .crumb-current {
+  color: #0f172a;
+  font-weight: 700;
 }
 .teacher-subpage-nav .nav-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.teacher-subpage-nav .nav-breadcrumbs {
-  font-size: 0.88rem;
-  color: #64748b;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.teacher-subpage-nav .crumb-sep {
-  color: #cbd5e1;
-}
-.teacher-subpage-nav .crumb-current {
-  color: #1e293b;
 }
 
 /* ===== 分組管理 Grouping 重構樣式 ===== */
