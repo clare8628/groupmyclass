@@ -253,7 +253,8 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
   const rows = (await db.prepare(`
     SELECT s.course_id AS course_id, s.first_period_time AS first_period_time, s.enabled AS day_enabled,
            r.enabled AS global_enabled, r.offset_minutes AS offset_minutes, r.start_date AS start_date, r.end_date AS end_date,
-           r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id, c.year AS year, c.subject AS subject
+           r.excluded_dates AS excluded_dates, r.line_group_id AS line_group_id, c.year AS year, c.subject AS subject,
+           r.message AS custom_msg, r.vice_message AS custom_msg2
     FROM course_schedule s
     JOIN attendance_reminder_settings r ON r.course_id = s.course_id
     JOIN courses c ON c.id = s.course_id
@@ -262,7 +263,7 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
 
   const results = [];
   for (const row of rows) {
-    if (!row.day_enabled || !row.global_enabled || !row.first_period_time || !row.line_group_id) continue;
+    if (!row.day_enabled || !row.global_enabled || !row.first_period_time) continue;
     if ((row.start_date && date < row.start_date) || (row.end_date && date > row.end_date) || parseJsonArray(row.excluded_dates).includes(date)) continue;
     const base = addMinutesToHm(row.first_period_time, row.offset_minutes);
     const link = `${env.PUBLIC_BASE_URL || DEFAULT_BASE_URL}/checkin.html?c=${encodeURIComponent(row.course_id)}`;
@@ -284,27 +285,47 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
         if (!p.total) {
           status = 'skipped';
           detail = '全員已完成自主點名';
-          if (st.key === 'selffinal') {
-            await sendLinePush(env, row.line_group_id, `【${label}】今日全員已完成自主點名 ✅`);
-            pushed = true;
-          }
         } else if (st.key === 'selffinal') {
-          const names = [...p.bound, ...p.unbound].map(x => x.name).join('、');
-          await sendLinePush(env, row.line_group_id, `【${label}】自主點名時間已過，以下 ${p.total} 位同學尚未完成：\n${names}`);
-          pushed = true;
-          detail = `列出未完成 ${p.total} 人`;
+          // 第三階段截止：依指示 aid 不可在大群發訊列出名單，記錄日誌供後台檢視
+          status = 'ok';
+          detail = `自主點名截止，未完成 ${p.total} 人（已綁定 ${p.bound.length} 人、未綁定 ${p.unbound.length} 人）`;
         } else {
-          const head = `${st.key === 'self2' ? '【第二次提醒】' : ''}【${label}】上課了，請以手機拍攝教室畫面完成自主點名\n尚未完成：`;
-          const tail = [`點名連結（需登入）：${link}`, p.unbound.length ? `${p.unbound.map(x => x.name).join('、')}（尚未綁定 LINE，請於群組輸入「綁定 學號」）` : ''].filter(Boolean).join('\n');
-          await pushWithMentions(env, row.line_group_id, head, p.bound, tail);
-          pushed = true;
-          detail = `tag ${p.bound.length} 人、未綁定 ${p.unbound.length} 人`;
+          // 第一階段 (self1) 與第二階段 (self2)：改為個別 1 對 1 私訊未完成學生，不發大群以節省額度
+          if (!p.bound.length) {
+            status = 'skipped';
+            detail = `未完成同學皆尚未綁定 LINE（共 ${p.unbound.length} 人）`;
+          } else {
+            let sentCount = 0, failCount = 0;
+            const errors = [];
+            const defaultMsg = st.key === 'self2'
+              ? '【第二次提醒】上課了，請儘速以手機拍攝教室畫面完成自主點名。'
+              : '上課了，請以手機拍攝教室畫面完成自主點名。';
+            const msgBody = (st.key === 'self2' ? (row.custom_msg2 && row.custom_msg2.trim()) : (row.custom_msg && row.custom_msg.trim())) || defaultMsg;
+            for (const s of p.bound) {
+              const text = [
+                `【${label}】自主點名提醒`,
+                `${s.name} 同學您好：`,
+                msgBody,
+                `點名連結（需登入）：${link}`,
+              ].join('\n');
+              try {
+                await sendLinePush(env, s.line_user_id, text);
+                sentCount++;
+              } catch (err) {
+                failCount++;
+                errors.push(`${s.name}(${err.message || err})`);
+              }
+            }
+            pushed = sentCount > 0;
+            detail = `自主點名 1 對 1 私訊送出 ${sentCount} 人` + (failCount ? `、失敗 ${failCount} 人(${errors.join(';')})` : '') + (p.unbound.length ? `、未綁定 ${p.unbound.length} 人` : '');
+            if (failCount > 0 && sentCount === 0) status = 'error';
+          }
         }
       } catch (err) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
-      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: `selfcheckin-${st.key}`, channel: 'all', groupId: row.line_group_id, summary: detail, status });
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: `selfcheckin-${st.key}`, channel: 'direct', groupId: '1對1私訊', summary: detail, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, runKey, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, stage: st.key, status, detail });

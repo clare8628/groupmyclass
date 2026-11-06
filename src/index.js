@@ -1,6 +1,6 @@
 /* 學生分組系統 — Worker 進入點
    /api/state、/api/action、/api/bulletin；其餘交給靜態資源（public/）。 */
-import { json, bad, runScheduledCleanup, runAttendanceReminders, runSurveyReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader, getLineUserProfile, recordLineUserStatus } from './lib.js';
+import { json, bad, runScheduledCleanup, runAttendanceReminders, runSurveyReminders, readSession, getReminderSettingsRow, verifyLineSignature, replyLineMessage, bindLineLeader, getLineUserProfile, recordLineUserStatus, setTeacherLineUserId } from './lib.js';
 import { handleState, handleAction } from './api.js';
 import { fetchNotionBulletin } from './bulletin.js';
 import { handleCheckin, runSelfCheckinReminders, getSelfCheckinPhoto } from './checkin.js';
@@ -82,6 +82,15 @@ export default {
             const rawText = (evt.message && evt.message.text) || '';
             const normalizedText = typeof rawText.normalize === 'function' ? rawText.normalize('NFKC') : rawText;
             const askId = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(群組\s*id|group\s*id)\s*$/i.test(normalizedText);
+            /* 老師快速綁定指令（支援私訊或群組中輸入「我是老師」「綁定 老師」「clare8628」） */
+            const isTeacherBind = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*(我是老師|老師綁定|綁定\s*老師|clare8628)\s*$/i.test(normalizedText);
+            if (isTeacherBind && src.userId) {
+              await setTeacherLineUserId(env.DB, src.userId);
+              await recordLineUserStatus(env.DB, src.userId, 'friend');
+              await replyLineMessage(env, evt.replyToken, `👨‍🏫 老師您好！\n已成功將您的 LINE 帳號綁定為測試接收者！\n\n日後在「提醒管理」後台點擊發送測試提醒（幹部訊息／B1自主點名訊息），系統都會直接私訊發送至您的 LINE，方便您即時預覽學生收到的訊息內容。`);
+              continue;
+            }
+
             /* 容忍「綁定:學號」「綁定－學號」等標點變體，降低打錯格式的機率；允許群組或私訊皆可綁定 */
             const bindM = evt.type === 'message' && evt.message && evt.message.type === 'text' && /^\s*綁定\s*[:：\-－]?\s*([A-Za-z0-9]+)\s*$/.exec(normalizedText);
             if (bindM && src.userId) {

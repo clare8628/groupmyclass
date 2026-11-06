@@ -42,7 +42,7 @@ function applySectionsFromHash(parsed) {
     wbSection = s1; wbTreeOpen = true;
     if (s1.startsWith('care:')) careAdminId = s1.slice(5);
   } else if (parsed.view === 'reminders') {
-    reminderSection = ['atd', 'b1', 'channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
+    reminderSection = ['atd', 'b1', 'messages', 'channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
     if (s1 === 'log') loadPushLogs();
   }
 }
@@ -132,7 +132,7 @@ let b1Section = 'roster';               // 老師後台「華語B1輔導課修�
 let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
 let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | bindings | b1 | records | progress | leaderboard | log
 let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
-let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | atd | b1 | channels | bindings | care | absence | log
+let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | messages | atd | b1 | channels | bindings | care | absence | log
 let remTreeOpen = false;                // 左側樹狀選單「提醒管理」子項目是否展開
 let pushLogs = null;                    // Bot 發送紀錄（逐次自後端載入）
 let pushLogsLoading = false;
@@ -2912,8 +2912,9 @@ function reminderSubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}" ${mAttr('r:' + key, label)}>${mt('r:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('groupids', 'LINE 群組 ID 設定')}
-    ${node('atd', '點名自動提醒（LINE 群組 ID(幹部)）')}
-    ${node('b1', '🗣️ 華語B1輔導課自主點名提醒（LINE 群組 ID(全體)）')}
+    ${node('messages', '💬 提醒訊息設定與即時測試')}
+    ${node('atd', '點名自動提醒（幹部私訊）')}
+    ${node('b1', '🗣️ 華語B1輔導課自主點名提醒')}
     ${node('channels', '訊息發送管道設定與呈現')}
     ${node('bindings', '綁定查詢與統計')}
     ${node('care', '問卷提醒（生活關懷問卷）')}
@@ -3873,9 +3874,14 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       <div class="form-group full">
         <label><input type="checkbox" name="enabled" ${r.enabled ? 'checked' : ''}> 啟用自動提醒（遇寒暑假可取消勾選並儲存，暫停發送）</label>
       </div>
+      ${b1 ? `
+      <div class="form-group full"><label>華語B1輔導班 第一次自主點名提醒私訊內容（留白＝系統預設）</label><textarea name="message" rows="2" style="width:100%;" placeholder="上課了，請以手機拍攝教室畫面完成自主點名。">${esc(r.message || '')}</textarea></div>
+      <div class="form-group"><label>第一節上課後幾分鐘發送（第一次提醒）</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
+      <input type="hidden" name="viceDelayMinutes" value="10">
+      <div class="form-group full"><label>華語B1輔導班 第二次自主點名提醒私訊內容（留白＝系統預設，第一次提醒後 10 分鐘發送）</label><textarea name="viceMessage" rows="2" style="width:100%;" placeholder="【第二次提醒】上課了，請儘速以手機拍攝教室畫面完成自主點名。">${esc(r.viceMessage || '')}</textarea></div>
+      ` : `
       <div class="form-group full"><label>組長提醒私訊內容（留白＝系統預設）</label><textarea name="message" rows="2" style="width:100%;" placeholder="今日尚未完成組員點名，請儘速登入系統完成點名。">${esc(r.message || '')}</textarea></div>
       <div class="form-group"><label>第一節上課後幾分鐘發送</label><input type="number" name="offsetMinutes" min="0" max="120" value="${esc(String(r.offsetMinutes !== undefined ? r.offsetMinutes : 10))}"></div>
-      ${b1 ? `<input type="hidden" name="viceDelayMinutes" value="5">` : `
       <div class="form-group"><label>組長逾幾分鐘未點名，再私訊副組長協助</label><input type="number" name="viceDelayMinutes" min="0" max="120" value="${esc(String(r.viceDelayMinutes !== undefined ? r.viceDelayMinutes : 5))}"></div>
       <div class="form-group full"><label>副組長協助階段私訊內容（留白＝系統預設）</label><textarea name="viceMessage" rows="2" style="width:100%;" placeholder="今日組長尚未完成點名，請協助登入系統完成組員點名。">${esc(r.viceMessage || '')}</textarea></div>
       `}
@@ -3935,7 +3941,7 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
       ` : ''}
       <div class="form-group full">
         <button class="btn btn-primary" type="submit">儲存提醒設定</button>
-        <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息</button>
+        <button class="btn btn-secondary" type="button" data-act="send-attendance-reminder-test" data-id="${esc(c.id)}">📨 立即發送測試訊息至老師 LINE</button>
         ${b1 ? `
         <button class="btn btn-primary" type="button" data-act="copy-attendance-binding-instructions" data-id="${esc(c.id)}">📋 一鍵複製綁定與加好友教學（0 額度）</button>
         <button class="btn btn-secondary" type="button" data-act="verify-line-friends" data-id="${esc(c.id)}">🔍 在線檢測好友狀態</button>
@@ -3950,7 +3956,7 @@ function teacherAttendanceReminderBlock(c, b1 = false) {
   return `
   <div class="teacher-section">
     <h2>🔔 ${b1 ? '華語B1輔導課點名自動提醒' : '點名自動提醒'} <small>${esc(courseLabel(c))}</small></h2>
-    <p class="file-path" style="margin:0 0 0.75rem 0;">${b1 ? '依輔導班每週課表，於上課後提醒修課學生上網自主點名（第二次提醒後列出未完成者於本班專屬 LINE 群組）；寒暑假可暫停發送。' : '依每週課表，於當天第一節上課時間加上延遲分鐘數後，自動發送 LINE 群組訊息提醒組長／副組長點名；寒暑假可暫停發送。'}</p>
+    <p class="file-path" style="margin:0 0 0.75rem 0;">${b1 ? '依輔導班每週課表，於上課後 1 對 1 私訊個別提醒修課學生上網自主點名（不發大群以節省額度）；寒暑假可暫停發送。' : '依每週課表，於當天第一節上課時間加上延遲分鐘數後，以 1 對 1 私訊自動提醒組長／副組長點名；寒暑假可暫停發送。'}</p>
     ${setupHint}
     ${scheduleForm}
     ${screenshotSection}
@@ -4469,15 +4475,176 @@ function teacherAttendanceBlock(c) {
    集中管理所有提醒相關的共用設定：LINE 群組 ID、訊息發送管道、綁定查詢與統計、Bot 發送紀錄，
    以及問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）的自動排程。
    另含幹部點名提醒（atd）與華語B1輔導課自主點名提醒（b1）之排程設定；點名本身（時段、紀錄、審核）仍在「點名管理」。 */
+let cachedLineQuota = null;
+let loadingLineQuota = false;
+let hasRequestedQuota = false;
+
+async function refreshLineQuota() {
+  loadingLineQuota = true;
+  render();
+  try {
+    const res = await api('/api/action', { action: 'teacher:get-line-quota' });
+    if (res && res.quota) {
+      cachedLineQuota = res.quota;
+    }
+    if (res && res.teacherLineUserId !== undefined) {
+      state.teacherLineUserId = res.teacherLineUserId;
+    }
+  } catch (e) {
+    console.error('refreshLineQuota error', e);
+  } finally {
+    loadingLineQuota = false;
+    render();
+  }
+}
+
+function ensureLineQuotaLoaded() {
+  if (!hasRequestedQuota && !loadingLineQuota) {
+    hasRequestedQuota = true;
+    refreshLineQuota();
+  }
+}
+
+function teacherLineQuotaBanner() {
+  const q = cachedLineQuota;
+  const limit = q && q.limit >= 0 ? q.limit : 200;
+  const used = q ? q.used : null;
+  const remaining = q && q.remaining !== undefined ? q.remaining : null;
+  const isOut = remaining !== null && remaining <= 0;
+  const isLow = remaining !== null && remaining <= 30 && remaining > 0;
+  const bgColor = isOut ? '#fef2f2' : (isLow ? '#fffbeb' : '#f0fdf4');
+  const borderColor = isOut ? '#ef4444' : (isLow ? '#f59e0b' : '#10b981');
+  const textColor = isOut ? '#991b1b' : (isLow ? '#92400e' : '#065f46');
+  const badge = isOut ? '🚨 本月免費額度已用罄' : (isLow ? '⚠️ 額度偏低' : '✅ 正常');
+
+  return `
+  <div style="background:${bgColor};border:1.5px solid ${borderColor};border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:1.2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+    <div>
+      <div style="display:flex;align-items:center;gap:0.5rem;">
+        <span style="font-weight:700;font-size:1.02rem;color:${textColor};">📊 LINE 官方帳號免費訊息額度</span>
+        <span class="badge" style="background:${borderColor};color:#fff;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:4px;">${badge}</span>
+      </div>
+      <div style="font-size:0.9rem;margin-top:0.35rem;color:#334155;">
+        ${q ? `剩餘免費通知次數：<b style="font-size:1.2rem;color:${textColor};">${remaining}</b> / ${limit} 則（本月已發送 <b>${used}</b> 則）` : '正在查詢目前剩餘之 LINE 免費推播額度…'}
+      </div>
+      <div style="font-size:0.78rem;color:#64748b;margin-top:0.2rem;">
+        💡 系統所有提醒已升級為 <b>1 對 1 私訊通知</b>（不發送至 75 人大群），每次提醒僅計算實際未完成人數，大幅節省 80% 以上額度。
+      </div>
+    </div>
+    <div>
+      <button class="btn btn-secondary btn-sm" type="button" data-act="refresh-line-quota" ${loadingLineQuota ? 'disabled' : ''} style="display:flex;align-items:center;gap:0.3rem;">
+        🔄 ${loadingLineQuota ? '查詢中...' : '重新整理額度'}
+      </button>
+    </div>
+  </div>`;
+}
+
+/* ---- 提醒管理專項：點名與輔導班提醒訊息設定與即時測試 ---- */
+function teacherMessagesBlock() {
+  const generalCourses = state.courses.filter(x => x.id !== state.selfCheckinCourseId);
+  const selectedCourseId = state.currentId && state.currentId !== state.selfCheckinCourseId
+    ? state.currentId
+    : (generalCourses[0] ? generalCourses[0].id : '');
+  const generalCourse = courseById(selectedCourseId) || generalCourses[0];
+  const b1Course = courseById(state.selfCheckinCourseId);
+
+  const gr = (generalCourse && generalCourse.attendanceReminder) || { message: '', viceMessage: '' };
+  const br = (b1Course && b1Course.attendanceReminder) || { message: '', viceMessage: '' };
+  const teacherBound = !!state.teacherLineUserId;
+
+  return `
+  <div class="teacher-section">
+    <h2>💬 提醒訊息設定與即時測試</h2>
+    <p class="file-path" style="margin:0 0 1rem 0;">此處集中調整 aid 發送給「幹部」及「B1 輔導班」的私訊提醒文字，並可一鍵私訊發送測試至老師 LINE，方便確認排版與文字格式。</p>
+
+    <!-- 老師測試接收者綁定區塊 -->
+    <div style="background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:1.2rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+          <span style="font-weight:700;font-size:0.98rem;color:#1e293b;">📱 測試接收者 LINE 設定（LINE ID: clare8628）</span>
+          <span class="badge" style="background:${teacherBound ? '#10b981' : '#f59e0b'};color:#fff;font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:4px;">
+            ${teacherBound ? '✅ 已綁定測試帳號' : '⚠️ 尚未綁定'}
+          </span>
+        </div>
+      </div>
+      <p class="file-path" style="margin:0.35rem 0 0.5rem;color:#475569;font-size:0.84rem;line-height:1.5;">
+        ${teacherBound ? `目前綁定接收 User ID：<code>${esc(state.teacherLineUserId)}</code>。下方測試按鈕會將預覽私訊直接推播至此 LINE 帳號。` : `<b>快速綁定：</b>請以老師的 LINE（<code>clare8628</code>）私訊 <b>aid 機器人</b>，發送「<code>我是老師</code>」或「<code>clare8628</code>」，系統即可瞬間自動綁定！`}
+      </p>
+      <form data-act="save-teacher-line-user-id" style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;">
+        <input name="teacherLineUserId" value="${esc(state.teacherLineUserId || '')}" placeholder="或直接在此貼上您的 LINE User ID（U 開頭 33 碼字元）" style="flex:1;min-width:260px;font-size:0.85rem;padding:0.3rem 0.5rem;">
+        <button class="btn btn-secondary btn-sm" type="submit">儲存 User ID</button>
+      </form>
+    </div>
+
+    <!-- 區塊一：幹部點名提醒訊息 -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:1.1rem;margin-bottom:1.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+        <h3 style="margin:0;font-size:1.02rem;color:#1e40af;">👨‍💼 幹部點名提醒訊息（一般課程）</h3>
+        ${generalCourses.length > 1 ? `
+        <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;">
+          <span>選擇課程：</span>
+          <select class="input-select" data-act="switch-message-course" style="padding:0.2rem 0.4rem;">
+            ${generalCourses.map(x => `<option value="${esc(x.id)}" ${x.id === generalCourse.id ? 'selected' : ''}>${esc(courseLabel(x))}</option>`).join('')}
+          </select>
+        </div>` : ''}
+      </div>
+      <p class="file-path" style="margin:0 0 0.75rem 0;">每週課表命中上課時間時，aid 會先 1 對 1 私訊組長；逾時未完成則 1 對 1 私訊副組長協助。</p>
+      
+      <form data-act="save-cadre-messages" data-id="${esc(generalCourse ? generalCourse.id : '')}">
+        <div class="form-group full" style="margin-bottom:0.75rem;">
+          <label style="font-weight:600;">1. 組長提醒私訊內容（留白＝系統預設）</label>
+          <textarea name="leaderMessage" rows="2" style="width:100%;font-size:0.9rem;" placeholder="今日尚未完成組員點名，請儘速登入系統完成點名。">${esc(gr.message || '')}</textarea>
+        </div>
+        <div class="form-group full" style="margin-bottom:0.75rem;">
+          <label style="font-weight:600;">2. 副組長協助提醒私訊內容（留白＝系統預設）</label>
+          <textarea name="viceMessage" rows="2" style="width:100%;font-size:0.9rem;" placeholder="今日組長尚未完成點名，請協助登入系統完成組員點名。">${esc(gr.viceMessage || '')}</textarea>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary btn-sm" type="submit">💾 儲存幹部訊息設定</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-act="send-test-reminder" data-type="cadre-leader" data-id="${esc(generalCourse ? generalCourse.id : '')}">📨 測試發送：組長訊息（私訊給老師）</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-act="send-test-reminder" data-type="cadre-vice" data-id="${esc(generalCourse ? generalCourse.id : '')}">📨 測試發送：副組長訊息（私訊給老師）</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- 區塊二：華語B1輔導班自主點名提醒訊息 -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:1.1rem;margin-bottom:1.5rem;">
+      <h3 style="margin:0 0 0.4rem 0;font-size:1.02rem;color:#047857;">🗣️ 華語B1輔導班 自主點名提醒訊息（${esc(b1Course ? courseLabel(b1Course) : '115-1華語B1輔導班')}）</h3>
+      <p class="file-path" style="margin:0 0 0.75rem 0;">上課後系統以 <b>1 對 1 私訊個別通知</b>尚未拍照點名的學生（不發大群）。10 分鐘後發送第二次提醒；再 10 分鐘後截止並於後台彙整名單。</p>
+      
+      <form data-act="save-b1-messages" data-id="${esc(state.selfCheckinCourseId || 'c_hb1_1151')}">
+        <div class="form-group full" style="margin-bottom:0.75rem;">
+          <label style="font-weight:600;">1. 第一次自主點名提醒內容（留白＝系統預設）</label>
+          <textarea name="b1FirstMessage" rows="2" style="width:100%;font-size:0.9rem;" placeholder="上課了，請以手機拍攝教室畫面完成自主點名。">${esc(br.message || '')}</textarea>
+        </div>
+        <div class="form-group full" style="margin-bottom:0.75rem;">
+          <label style="font-weight:600;">2. 第二次自主點名提醒內容（留白＝系統預設）</label>
+          <textarea name="b1SecondMessage" rows="2" style="width:100%;font-size:0.9rem;" placeholder="【第二次提醒】上課了，請儘速以手機拍攝教室畫面完成自主點名。">${esc(br.viceMessage || '')}</textarea>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary btn-sm" type="submit">💾 儲存 B1 訊息設定</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-act="send-test-reminder" data-type="b1-first" data-id="${esc(state.selfCheckinCourseId || 'c_hb1_1151')}">📨 測試發送：第一次提醒（私訊給老師）</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-act="send-test-reminder" data-type="b1-second" data-id="${esc(state.selfCheckinCourseId || 'c_hb1_1151')}">📨 測試發送：第二次提醒（私訊給老師）</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
 function teacherReminderBlock(c) {
-  if (reminderSection === 'atd') return teacherAttendanceReminderBlock(c);
-  if (reminderSection === 'b1') return teacherAttendanceReminderBlock(c, true);
-  if (reminderSection === 'channels') return teacherChannelBlock();
-  if (reminderSection === 'bindings') return teacherBindingStatsBlock(c);
-  if (reminderSection === 'care') return teacherCareReminderBlock();
-  if (reminderSection === 'absence') return teacherAbsenceReminderBlock();
-  if (reminderSection === 'log') return teacherPushLogBlock();
-  return teacherGroupIdBlock();
+  ensureLineQuotaLoaded();
+  const quotaBanner = teacherLineQuotaBanner();
+  let content = '';
+  if (reminderSection === 'atd') content = teacherAttendanceReminderBlock(c);
+  else if (reminderSection === 'b1') content = teacherAttendanceReminderBlock(c, true);
+  else if (reminderSection === 'messages') content = teacherMessagesBlock();
+  else if (reminderSection === 'channels') content = teacherChannelBlock();
+  else if (reminderSection === 'bindings') content = teacherBindingStatsBlock(c);
+  else if (reminderSection === 'care') content = teacherCareReminderBlock();
+  else if (reminderSection === 'absence') content = teacherAbsenceReminderBlock();
+  else if (reminderSection === 'log') content = teacherPushLogBlock();
+  else content = teacherGroupIdBlock();
+  return quotaBanner + content;
 }
 
 /* ---- 提醒管理專項：LINE 群組 ID 設定（集中管理所有課程之幹部群組 ID 與全體群組 ID）---- */
@@ -6723,8 +6890,54 @@ app.addEventListener('submit', e => {
     const courseId = e.target.dataset.id;
     return act('teacher:save-cadre-group-id', { courseId, lineGroupId: f.lineGroupId.value.trim() }, { after: () => alert('✅ 已儲存') });
   }
-  if (a === 'save-all-group-id') {
-    return act('teacher:save-all-group-id', { groupId: f.allGroupId.value.trim() }, { after: () => alert('✅ 已儲存') });
+  if (a === 'save-cadre-messages') {
+    const cid = e.target.dataset.id;
+    const c = courseById(cid);
+    if (!c) return alert('找不到課程');
+    const existing = c.attendanceReminder || {};
+    return act('teacher:save-attendance-reminder', {
+      courseId: c.id,
+      enabled: existing.enabled !== false,
+      message: f.leaderMessage.value.trim(),
+      viceMessage: f.viceMessage.value.trim(),
+      offsetMinutes: existing.offsetMinutes !== undefined ? existing.offsetMinutes : 10,
+      viceDelayMinutes: existing.viceDelayMinutes !== undefined ? existing.viceDelayMinutes : 5,
+      startDate: existing.startDate || '',
+      endDate: existing.endDate || '',
+      excludedDates: existing.excludedDates || [],
+      lineGroupId: existing.lineGroupId || '',
+      selfCheckin: false,
+    }, { after: () => alert('✅ 幹部提醒訊息已成功儲存！') });
+  }
+  if (a === 'save-b1-messages') {
+    const cid = e.target.dataset.id || state.selfCheckinCourseId;
+    const c = courseById(cid);
+    const existing = (c && c.attendanceReminder) || {};
+    return act('teacher:save-attendance-reminder', {
+      courseId: cid,
+      enabled: existing.enabled !== false,
+      message: f.b1FirstMessage.value.trim(),
+      viceMessage: f.b1SecondMessage.value.trim(),
+      offsetMinutes: existing.offsetMinutes !== undefined ? existing.offsetMinutes : 10,
+      viceDelayMinutes: 10,
+      startDate: existing.startDate || '',
+      endDate: existing.endDate || '',
+      excludedDates: existing.excludedDates || [],
+      lineGroupId: existing.lineGroupId || '',
+      selfCheckin: true,
+      geoLat: existing.geoLat || 0,
+      geoLng: existing.geoLng || 0,
+      geoRadius: existing.geoRadius || 0,
+    }, { after: () => alert('✅ 華語B1輔導班提醒訊息已成功儲存！') });
+  }
+  if (a === 'save-teacher-line-user-id') {
+    const uid = f.teacherLineUserId.value.trim();
+    return act('teacher:save-teacher-line-user-id', { teacherLineUserId: uid }, {
+      after: res => {
+        state.teacherLineUserId = (res && res.teacherLineUserId) || uid;
+        alert('✅ 老師 LINE User ID 已成功儲存！');
+      }
+    });
   }
   if (a === 'save-attendance-reminder') {
     const c = needCourse(); if (!c) return;
@@ -7227,8 +7440,20 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (!confirm('確定刪除課表截圖？')) return;
     return act('teacher:delete-attendance-schedule-screenshot', { courseId: id });
   }
+  if (a === 'refresh-line-quota') {
+    return refreshLineQuota();
+  }
+  if (a === 'send-test-reminder') {
+    const type = btn.dataset.type;
+    const courseId = btn.dataset.id;
+    return act('teacher:send-test-reminder', { type, courseId }, {
+      after: res => alert((res && res.message) || '✅ 測試訊息已成功發送至老師 LINE 私訊！')
+    });
+  }
   if (a === 'send-attendance-reminder-test') {
-    return act('teacher:send-attendance-reminder-test', { courseId: id }, { after: () => alert('✅ 已送出測試訊息，請確認 LINE 群組是否收到') });
+    return act('teacher:send-attendance-reminder-test', { courseId: id }, {
+      after: res => alert((res && res.message) || '✅ 已送出測試訊息至老師 LINE，請查收私訊！')
+    });
   }
   if (a === 'geocode-address') {
     // 直接呼叫 API（不走 act()/render()），避免整個表單重繪時被 state 中尚未儲存的舊座標覆蓋掉剛帶入的值
@@ -7888,6 +8113,10 @@ app.addEventListener('change', e => {
   const id = t.dataset.id;
   const c = cur();
 
+  if (a === 'switch-message-course') {
+    state.currentId = t.value;
+    return render();
+  }
   if (a === 'change-binding-filter') {
     bindingCourseFilter = t.value;
     ensureBindingsLoaded(bindingCourseFilter);

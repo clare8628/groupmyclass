@@ -1911,6 +1911,48 @@ export async function getLineBotInfo(env) {
   };
 }
 
+/* 查詢 LINE Messaging API 本月免費訊息額度與已使用則數 */
+export async function getLineMessageQuota(env) {
+  if (!env || !env.LINE_CHANNEL_ACCESS_TOKEN) return null;
+  try {
+    const auth = { authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` };
+    const [quotaRes, consRes] = await Promise.all([
+      fetch('https://api.line.me/v2/bot/message/quota', { headers: auth }),
+      fetch('https://api.line.me/v2/bot/message/quota/consumption', { headers: auth }),
+    ]);
+    if (!quotaRes.ok || !consRes.ok) {
+      console.error('getLineMessageQuota failed', quotaRes.status, consRes.status);
+      return null;
+    }
+    const quotaData = await quotaRes.json().catch(() => null);
+    const consData = await consRes.json().catch(() => null);
+    if (!quotaData || !consData) return null;
+    const limit = quotaData.type === 'limited' ? quotaData.value : -1;
+    const used = consData.totalUsage || 0;
+    const remaining = limit >= 0 ? Math.max(0, limit - used) : -1;
+    return {
+      type: quotaData.type,
+      limit,
+      used,
+      remaining,
+    };
+  } catch (err) {
+    console.error('getLineMessageQuota error', err);
+    return null;
+  }
+}
+
+export async function getTeacherLineUserId(db) {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'teacher_line_user_id'").first().catch(() => null);
+  return row ? row.value : '';
+}
+
+export async function setTeacherLineUserId(db, lineUserId) {
+  const clean = String(lineUserId || '').trim();
+  await db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('teacher_line_user_id', ?)").bind(clean).run();
+  return clean;
+}
+
 /* 記錄或更新 LINE 使用者好友與封鎖狀態 */
 export async function recordLineUserStatus(db, lineUserId, status, displayName = '', pictureUrl = '') {
   if (!lineUserId) return;

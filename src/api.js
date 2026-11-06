@@ -9,7 +9,7 @@ import {
   sendLineBindingInstructions, listAttendanceBindings, SELF_CHECKIN_COURSE_ID, geocodeAddress,
   sendCareSurveyReminder, sendAbsenceSurveyReminder, logLinePush, listLinePushLogs, deleteLinePushLog, clearLinePushLogs,
   getAllStudentsLineGroupId, setAllStudentsLineGroupId, upsertSurveyReminderSettings,
-  getLineBotInfo, verifyLineFriends,
+  getLineBotInfo, verifyLineFriends, getLineMessageQuota, getTeacherLineUserId, setTeacherLineUserId,
 } from './lib.js';
 import { APP_VERSION } from './version.js';
 import { listSelfCheckin, reviewSelfCheckin, sendSelfCheckinInstructions } from './checkin.js';
@@ -52,12 +52,14 @@ export async function handleState(request, env, db) {
   }
 
   const courses = await applyDeadline(db, await loadState(db, rev));
-  const [bulletin, pub] = await Promise.all([
+  const isTeacher = !!(session && session.role === 'teacher');
+  const [bulletin, pub, teacherLineUserId] = await Promise.all([
     fetchNotionBulletin(),
-    getPublicSettings(db, !!(session && session.role === 'teacher'), rev),
+    getPublicSettings(db, isTeacher, rev),
+    isTeacher ? getTeacherLineUserId(db) : undefined,
   ]);
   return json(
-    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize: pub.bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId },
+    { courses: await publicize(db, env, courses, session), session, version: APP_VERSION, bulletin, bulletinPageSize: pub.bulletinPageSize, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId, teacherLineUserId },
     200,
     { 'etag': etag, 'cache-control': 'private, no-cache' }
   );
@@ -74,8 +76,12 @@ export async function handleAction(request, env, db, body) {
   const ok = async (extra = {}, headers = {}) => {
     if (!readOnly) await markDataChanged(db);
     const view = extra.session !== undefined ? extra.session : session;
-    const pub = await getPublicSettings(db, !!(session && session.role === 'teacher'));
-    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId, ...extra }, 200, headers);
+    const isTeacher = !!(session && session.role === 'teacher');
+    const [pub, teacherLineUserId] = await Promise.all([
+      getPublicSettings(db, isTeacher),
+      isTeacher ? getTeacherLineUserId(db) : undefined,
+    ]);
+    return json({ ok: true, courses: await publicize(db, env, await loadState(db), view), version: APP_VERSION, lineConfigured: !!env.LINE_CHANNEL_ACCESS_TOKEN, selfCheckinCourseId: SELF_CHECKIN_COURSE_ID, defaultCourseId: pub.defaultCourseId, menuTitles: pub.menuTitles, allGroupId: pub.allGroupId, teacherLineUserId, ...extra }, 200, headers);
   };
 
   const saveSnapshot = async (db, courseId) => {
@@ -865,19 +871,100 @@ export async function handleAction(request, env, db, body) {
       });
       return ok();
     }
+    if (op === 'get-line-quota') {
+      const [quota, teacherLineUserId] = await Promise.all([
+        getLineMessageQuota(env),
+        getTeacherLineUserId(db),
+      ]);
+      return json({ ok: true, quota, teacherLineUserId });
+    }
+    if (op === 'save-teacher-line-user-id') {
+      const uid = await setTeacherLineUserId(db, body.teacherLineUserId);
+      return json({ ok: true, teacherLineUserId: uid });
+    }
+    if (op === 'send-test-reminder') {
+      const teacherLineUserId = await getTeacherLineUserId(db);
+      if (!teacherLineUserId) {
+        return bad('尚未綁定老師 LINE 帳號！請先以老師手機 LINE 私訊 aid 輸入「我是老師」或「clare8628」，或於下方設定欄位貼上您的 LINE User ID（U 開頭）儲存！', 400);
+      }
+      const type = String(body.type || 'cadre-leader');
+      const isB1 = type.startsWith('b1');
+      const courseId = body.courseId || (isB1 ? SELF_CHECKIN_COURSE_ID : (courses.find(x => x.id !== SELF_CHECKIN_COURSE_ID) || courses[0]).id);
+      const c = course(courseId);
+      const row = await getReminderSettingsRow(db, courseId);
+      const label = c ? `${c.year} ${c.subject}` : '課程名稱';
+      const baseUrl = (env && env.PUBLIC_BASE_URL) || 'https://groupmyclass.clare8628.workers.dev';
+      let text = '', summary = '';
+
+      if (type === 'cadre-leader') {
+        const leaderMsg = (row && row.message && row.message.trim()) || '今日尚未完成組員點名，請儘速登入系統完成點名。';
+        text = [
+          `【${label}】點名提醒（測試訊息）`,
+          `第 1 組 王大明 您好：`,
+          leaderMsg,
+          `點名系統：${baseUrl}/`,
+        ].join('\n');
+        summary = '發送幹部組長點名測試訊息至老師 LINE';
+      } else if (type === 'cadre-vice') {
+        const viceMsg = (row && row.vice_message && row.vice_message.trim()) || '今日組長尚未完成點名，請協助登入系統完成組員點名。';
+        text = [
+          `【${label}】點名提醒（副組長協助）（測試訊息）`,
+          `第 1 組 陳小華 副組長您好：`,
+          viceMsg,
+          `點名系統：${baseUrl}/`,
+        ].join('\n');
+        summary = '發送幹部副組長點名測試訊息至老師 LINE';
+      } else if (type === 'b1-first') {
+        const b1Msg = (row && row.message && row.message.trim()) || '上課了，請以手機拍攝教室畫面完成自主點名。';
+        text = [
+          `【${label}】自主點名提醒（測試訊息）`,
+          `王同學 您好：`,
+          b1Msg,
+          `點名連結（需登入）：${baseUrl}/checkin.html?c=${encodeURIComponent(courseId)}`,
+        ].join('\n');
+        summary = '發送 B1 自主點名第 1 次測試訊息至老師 LINE';
+      } else if (type === 'b1-second') {
+        const b1Msg2 = (row && row.vice_message && row.vice_message.trim()) || '【第二次提醒】上課了，請儘速以手機拍攝教室畫面完成自主點名。';
+        text = [
+          `【${label}】自主點名提醒（第二次）（測試訊息）`,
+          `王同學 您好：`,
+          b1Msg2,
+          `點名連結（需登入）：${baseUrl}/checkin.html?c=${encodeURIComponent(courseId)}`,
+        ].join('\n');
+        summary = '發送 B1 自主點名第 2 次測試訊息至老師 LINE';
+      } else {
+        return bad('未知的測試類型', 400);
+      }
+
+      try {
+        await sendLinePush(env, teacherLineUserId, text);
+      } catch (err) {
+        return bad(`LINE 推送失敗 (${(err && err.message) || err})`, 502);
+      }
+      await logLinePush(db, { courseId, kind: `test-${type}`, channel: 'direct', groupId: '老師測試私訊', summary });
+      return json({ ok: true, message: '✅ 測試訊息已成功發送至老師 LINE 私訊！' });
+    }
     if (op === 'send-attendance-reminder-test') {
+      const teacherLineUserId = await getTeacherLineUserId(db);
       const c = course(body.courseId);
       if (!c) return bad('課程不存在', 404);
       const row = await getReminderSettingsRow(db, c.id);
-      const lineGroupId = (row && row.line_group_id) || '';
-      if (!lineGroupId) return bad('請先設定 LINE 群組 ID', 400);
-      try {
-        await sendLinePush(env, lineGroupId, (row && row.message) || DEFAULT_REMINDER_MESSAGE);
-      } catch (err) {
-        return bad(String((err && err.message) || err), 502);
+      const baseUrl = (env && env.PUBLIC_BASE_URL) || 'https://groupmyclass.clare8628.workers.dev';
+      const label = `${c.year} ${c.subject}`;
+
+      if (teacherLineUserId) {
+        const text = c.id === SELF_CHECKIN_COURSE_ID
+          ? `【${label}】自主點名提醒（測試訊息）\n王同學 您好：\n${(row && row.message) || '上課了，請以手機拍攝教室畫面完成自主點名。'}\n點名連結（需登入）：${baseUrl}/checkin.html?c=${encodeURIComponent(c.id)}`
+          : `【${label}】點名提醒（測試訊息）\n第 1 組 王大明 您好：\n${(row && row.message) || DEFAULT_REMINDER_MESSAGE}\n點名系統：${baseUrl}/`;
+        try {
+          await sendLinePush(env, teacherLineUserId, text);
+        } catch (err) {
+          return bad(`LINE 發送失敗：${(err && err.message) || err}`, 502);
+        }
+        await logLinePush(db, { courseId: c.id, kind: 'attendance-test-teacher', channel: 'direct', groupId: '老師測試私訊', summary: '老師手動發送測試訊息至老師 LINE' });
+        return ok({ message: '測試訊息已成功私訊發送至老師 LINE！' });
       }
-      await logLinePush(db, { courseId: c.id, kind: 'attendance-cadre-test', channel: row && row.self_checkin ? 'all' : 'cadre', groupId: lineGroupId, summary: '老師手動發送測試訊息' });
-      return ok();
+      return bad('尚未綁定老師 LINE 帳號！請先以老師手機 LINE 私訊 aid 輸入「我是老師」或「clare8628」完成綁定！', 400);
     }
     if (op === 'list-attendance-bindings') {
       const cid = body.courseId;
