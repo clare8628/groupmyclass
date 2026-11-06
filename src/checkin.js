@@ -218,7 +218,7 @@ export async function sendSelfCheckinInstructions(db, env, courseId) {
     '若逾時未點名，系統會於群組自動提醒；如有疑問請洽老師。',
   ].join('\n');
   await sendLinePush(env, set.line_group_id, text);
-  await logLinePush(db, { courseId, kind: 'selfcheckin-instructions', channel: 'all', groupId: set.line_group_id, summary: '發送自主點名流程說明給全班' });
+  await logLinePush(db, { courseId, kind: 'selfcheckin-instructions', channel: 'all', groupId: set.line_group_id, summary: '發送自主點名流程說明給全班', message: text });
   await logActivity(db, {
     courseId, operatorRole: 'teacher', operatorId: 'teacher', operatorName: '老師',
     actionType: 'attendance-selfcheckin-instructions', detail: '老師發送自主點名流程說明給全班',
@@ -301,6 +301,7 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
               ? '【第二次提醒】上課了，請儘速以手機拍攝教室畫面完成自主點名。'
               : '上課了，請以手機拍攝教室畫面完成自主點名。';
             const msgBody = (st.key === 'self2' ? (row.custom_msg2 && row.custom_msg2.trim()) : (row.custom_msg && row.custom_msg.trim())) || defaultMsg;
+            let sampleMsgText = '';
             for (const s of p.bound) {
               const text = [
                 `【${label}】自主點名提醒`,
@@ -308,6 +309,7 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
                 msgBody,
                 `點名連結（需登入）：${link}`,
               ].join('\n');
+              if (!sampleMsgText) sampleMsgText = text;
               try {
                 await sendLinePush(env, s.line_user_id, text);
                 sentCount++;
@@ -325,7 +327,7 @@ export async function runSelfCheckinReminders(db, env, now = Date.now()) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
-      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: `selfcheckin-${st.key}`, channel: 'direct', groupId: '1對1私訊', summary: detail, status });
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: `selfcheckin-${st.key}`, channel: 'direct', groupId: '1對1私訊', summary: detail, message: sampleMsgText, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, runKey, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, stage: st.key, status, detail });

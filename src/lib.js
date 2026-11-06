@@ -388,11 +388,13 @@ async function ensureReminderCenterSchema(db) {
         channel         TEXT NOT NULL DEFAULT '',
         target_group_id TEXT NOT NULL DEFAULT '',
         summary         TEXT NOT NULL DEFAULT '',
+        message         TEXT NOT NULL DEFAULT '',
         status          TEXT NOT NULL DEFAULT 'ok',
         created_at      INTEGER NOT NULL
       )
     `).run();
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_line_push_log_created ON line_push_log(created_at DESC)').run();
+    try { await db.prepare('ALTER TABLE line_push_log ADD COLUMN message TEXT NOT NULL DEFAULT ""').run(); } catch (_) {}
   } catch (_) {}
   _ensuredReminderCenterSchema = true;
 }
@@ -1596,20 +1598,27 @@ export async function setAllStudentsLineGroupId(db, groupId) {
 }
 
 /* 提醒管理：集中記錄每一次 LINE 推播（供老師查詢與刪除），記錄失敗不影響原推播流程 */
-export async function logLinePush(db, { courseId = '', kind = '', channel = '', groupId = '', summary = '', status = 'ok' } = {}) {
+export async function logLinePush(db, { courseId = '', kind = '', channel = '', groupId = '', summary = '', message = '', status = 'ok' } = {}) {
   try {
     await db.prepare(`
-      INSERT INTO line_push_log (course_id, kind, channel, target_group_id, summary, status, created_at)
-      VALUES (?,?,?,?,?,?,?)
-    `).bind(String(courseId || ''), String(kind || ''), String(channel || ''), String(groupId || ''), String(summary || '').slice(0, 500), status, Date.now()).run();
-  } catch (_) {}
+      INSERT INTO line_push_log (course_id, kind, channel, target_group_id, summary, message, status, created_at)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).bind(String(courseId || ''), String(kind || ''), String(channel || ''), String(groupId || ''), String(summary || '').slice(0, 500), String(message || '').slice(0, 2000), status, Date.now()).run();
+  } catch (_) {
+    try {
+      await db.prepare(`
+        INSERT INTO line_push_log (course_id, kind, channel, target_group_id, summary, status, created_at)
+        VALUES (?,?,?,?,?,?,?)
+      `).bind(String(courseId || ''), String(kind || ''), String(channel || ''), String(groupId || ''), String(summary || '').slice(0, 500), status, Date.now()).run();
+    } catch (_) {}
+  }
 }
 
 export async function listLinePushLogs(db, limit = 200) {
   const rows = (await db.prepare('SELECT * FROM line_push_log ORDER BY created_at DESC LIMIT ?').bind(limit).all().catch(() => ({ results: [] }))).results || [];
   return rows.map(r => ({
     id: r.id, courseId: r.course_id, kind: r.kind, channel: r.channel,
-    targetGroupId: r.target_group_id, summary: r.summary, status: r.status, createdAt: r.created_at,
+    targetGroupId: r.target_group_id, summary: r.summary, message: r.message || '', status: r.status, createdAt: r.created_at,
   }));
 }
 
@@ -2155,7 +2164,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
   const careMsg = (careSrs && careSrs.message && careSrs.message.trim()) || '您尚未填寫生活關懷問卷，請儘速登入系統完成填寫。';
   let sentCount = 0, failCount = 0;
   const errors = [];
-
+  let sampleCareText = '';
   for (const s of bound) {
     const text = [
       `【${courseTitle}】生活關懷問卷填寫提醒`,
@@ -2163,6 +2172,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
       careMsg,
       `問卷填寫網址：https://groupmyclass.clare8628.workers.dev/`,
     ].join('\n');
+    if (!sampleCareText) sampleCareText = text;
     try {
       await sendLinePush(env, s.line_user_id, text);
       sentCount++;
@@ -2181,6 +2191,7 @@ export async function sendCareSurveyReminder(db, env, courseId) {
     channel: 'direct',
     groupId: '1對1私訊',
     summary: detail,
+    message: sampleCareText,
     status,
   });
 
@@ -2229,7 +2240,7 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
   const absMsg = (absSrs && absSrs.message && absSrs.message.trim()) || '您在課程中的缺曠累計已達調查門檻，請儘速登入系統說明缺曠原因。';
   let sentCount = 0, failCount = 0;
   const errors = [];
-
+  let sampleAbsText = '';
   for (const s of bound) {
     const text = [
       `【缺曠原因調查－${sv.subtitle}】填寫提醒`,
@@ -2237,6 +2248,7 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
       absMsg,
       `填寫網址：https://groupmyclass.clare8628.workers.dev/`,
     ].join('\n');
+    if (!sampleAbsText) sampleAbsText = text;
     try {
       await sendLinePush(env, s.line_user_id, text);
       sentCount++;
@@ -2255,6 +2267,7 @@ export async function sendAbsenceSurveyReminder(db, env, courseId, surveyId) {
     channel: 'direct',
     groupId: '1對1私訊',
     summary: detail,
+    message: sampleAbsText,
     status,
   });
 
@@ -2419,6 +2432,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
             let sentCount = 0, failCount = 0;
             const errors = [];
             const leaderMsg = (row.message && row.message.trim()) || '今日尚未完成組員點名，請儘速登入系統完成點名。';
+            let sampleCadreText = '';
             for (const l of bound) {
               const text = [
                 `【${courseTitle}】點名提醒`,
@@ -2426,6 +2440,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
                 leaderMsg,
                 `點名系統：https://groupmyclass.clare8628.workers.dev/`,
               ].join('\n');
+              if (!sampleCadreText) sampleCadreText = text;
               try {
                 await sendLinePush(env, l.lineUserId, text);
                 sentCount++;
@@ -2443,7 +2458,7 @@ export async function runAttendanceReminders(db, env, now = Date.now()) {
         status = 'error';
         detail = String((err && err.message) || err);
       }
-      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: st.stage === 'vice' ? 'attendance-cadre-vice' : 'attendance-cadre', channel: 'direct', groupId: '1對1私訊', summary: detail, status });
+      if (pushed) await logLinePush(db, { courseId: row.course_id, kind: st.stage === 'vice' ? 'attendance-cadre-vice' : 'attendance-cadre', channel: 'direct', groupId: '1對1私訊', summary: detail, message: sampleCadreText, status });
       await db.prepare('INSERT OR REPLACE INTO attendance_reminder_runs (course_id, send_date, status, detail, created_at) VALUES (?, ?, ?, ?, ?)')
         .bind(row.course_id, st.key, status, detail, Date.now()).run();
       results.push({ courseId: row.course_id, status, detail });

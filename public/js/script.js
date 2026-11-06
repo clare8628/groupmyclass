@@ -436,6 +436,37 @@ function generateBindingInstructionsText(l) {
   return lines.join('\n');
 }
 
+let bindingTableTab = 'need-attention';
+
+function generateSingleStudentBindingText(studentId, studentName, botInfo) {
+  const b = getBotInfo();
+  const bot = botInfo || b;
+  const addUrl = bot.addFriendUrl || b.addFriendUrl || 'https://line.me/R/ti/p/@087vttuk';
+  const botId = bot.basicId || b.basicId || '@087vttuk';
+
+  const lines = [
+    `【課堂小幫手 (aid) 好友加入與個人綁定通知】`,
+    `${studentName} 同學您好：`,
+    `本學期課堂點名、華語輔導班自主點名、生活關懷問卷與缺曠通知已全面升級為「課堂小幫手」1 對 1 私訊推播。`,
+    `系統檢測您目前尚未完成好友加入或學號綁定，為避免漏接個人重要訊息，請撥空 1 分鐘依下列步驟完成設定：`,
+    ``,
+    `📱 步驟一：加課堂小幫手為 LINE 好友`,
+    `👉 點此連結直接加好友：${addUrl}`,
+    `👉 或在 LINE「加入好友 → 搜尋」輸入 ID：${botId}`,
+    `（亦可在班級 LINE 群組成員清單中直接點選小幫手加入好友）`,
+    ``,
+    `💬 步驟二：開啟與課堂小幫手的「1 對 1 私訊」聊天室`,
+    `加為好友後，請點開與小幫手的個人聊天室（⚠️ 切勿在班群發送學號以維護隱私）。`,
+    ``,
+    `🔑 步驟三：發送您的專屬綁定指令`,
+    `請在私訊聊天室中直接複製並送出：`,
+    `綁定 ${studentId}`,
+    ``,
+    `送出後收到小幫手回覆「✅ 已成功綁定」即完成！謝謝您的配合。`
+  ];
+  return lines.join('\n');
+}
+
 function bindingListHtml(l, courseId) {
   if (courseId && !l) ensureBindingsLoaded(courseId);
   if (!l) return '<div class="form-group full" style="margin-top:0.6rem;color:#64748b;font-weight:500;">⏳ 正在自動載入全班學生綁定名單...</div>';
@@ -448,101 +479,136 @@ function bindingListHtml(l, courseId) {
   const friends = bound.filter(x => x.friendStatus === 'friend');
   const blocked = bound.filter(x => x.friendStatus === 'blocked');
   const unknown = bound.filter(x => x.friendStatus === 'unknown' || !x.friendStatus);
+  const needAttention = [...blocked, ...unbound, ...unknown];
 
-  const label = x => x.groupName ? `第${esc(x.groupName)}組 ${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）` : `${x.role ? esc(x.role) + ' ' : ''}${esc(x.name)}（${esc(x.id)}）`;
+  // 依當前 Tab 選取對應清單
+  let currentList = [];
+  if (bindingTableTab === 'need-attention') currentList = needAttention;
+  else if (bindingTableTab === 'unbound') currentList = unbound;
+  else if (bindingTableTab === 'blocked') currentList = blocked;
+  else if (bindingTableTab === 'unknown') currentList = unknown;
+  else if (bindingTableTab === 'friends') currentList = friends;
+  else currentList = [...bound, ...unbound]; // 'all'
 
   const renderBadge = x => {
     if (!x.isBound) {
-      return '<span class="status-badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-weight:600;">⚪ 未綁定學號</span>';
+      return '<span class="status-badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-weight:600;">⚪ 尚未綁定</span>';
     }
     if (x.friendStatus === 'friend') {
       return '<span class="status-badge" style="background:#dcfce7;color:#15803d;border:1px solid #86efac;font-weight:600;">🟢 好友正常</span>';
     }
     if (x.friendStatus === 'blocked') {
-      return '<span class="status-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:600;">🔴 已封鎖／未加好友</span>';
+      return '<span class="status-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:600;">🔴 封鎖／未加好友</span>';
     }
-    return '<span class="status-badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-weight:600;">🟡 待檢測</span>';
+    return '<span class="status-badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-weight:600;">🟡 待檢測好友</span>';
   };
 
-  const renderStudentRow = (x, withTime) => {
-    const lineName = x.lineDisplayName ? `<span style="display:inline-flex;align-items:center;gap:0.25rem;background:#f8fafc;padding:0.1rem 0.4rem;border-radius:4px;border:1px solid #e2e8f0;font-size:0.8rem;color:#475569;">LINE: ${esc(x.lineDisplayName)}</span>` : '';
-    const timeStr = withTime && x.boundAt ? `<small style="color:#059669;">（綁定於 ${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}）</small>` : '';
-    return `<li style="display:flex;align-items:center;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.35rem;">
-      <span>${label(x)}</span>
-      ${renderBadge(x)}
-      ${lineName}
-      ${timeStr}
-    </li>`;
+  const renderActionCol = x => {
+    const cannotReceive = !x.isBound || x.friendStatus === 'blocked' || x.friendStatus === 'unknown' || !x.friendStatus;
+    if (cannotReceive) {
+      return `
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-single-binding" data-id="${esc(x.id)}" data-name="${esc(x.name)}" title="複製包含加好友連結與自動替換學號的引導私訊" style="font-size:0.8rem;padding:0.25rem 0.55rem;background:#eff6ff;color:#1d4ed8;border:1px solid #93c5fd;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;gap:0.3rem;">
+          📋 複製此生專屬引導
+        </button>
+      `;
+    }
+    return `<span style="color:#16a34a;font-size:0.82rem;font-weight:600;display:inline-flex;align-items:center;gap:0.2rem;">✅ 私訊暢通</span>`;
   };
 
-  const needAttention = [...blocked, ...unbound];
+  const tableRows = currentList.map((x, idx) => {
+    const groupStr = x.groupName ? `<span class="badge" style="background:#f1f5f9;color:#475569;font-size:0.75rem;padding:0.1rem 0.35rem;border-radius:3px;">第${esc(x.groupName)}組</span> ` : '';
+    const roleStr = x.role ? `<span class="badge" style="background:#dbeafe;color:#1d4ed8;font-size:0.75rem;padding:0.1rem 0.35rem;border-radius:3px;">${esc(x.role)}</span> ` : '';
+    const lineName = x.lineDisplayName ? `<span style="font-size:0.82rem;color:#334155;background:#f8fafc;padding:0.1rem 0.4rem;border-radius:4px;border:1px solid #e2e8f0;">${esc(x.lineDisplayName)}</span>` : '<span style="color:#94a3b8;font-size:0.8rem;">—</span>';
+    const timeStr = x.boundAt ? `<span style="font-size:0.78rem;color:#64748b;">${esc(new Date(x.boundAt).toLocaleString('zh-TW'))}</span>` : '<span style="color:#94a3b8;font-size:0.8rem;">—</span>';
+
+    return `
+      <tr>
+        <td style="color:#64748b;font-size:0.8rem;text-align:center;">${idx + 1}</td>
+        <td>
+          <div style="font-weight:600;color:#1e293b;display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;">
+            ${groupStr}${roleStr}<span>${esc(x.name)}</span>
+          </div>
+          <div style="font-size:0.8rem;color:#64748b;font-family:monospace;margin-top:0.1rem;">${esc(x.id)}</div>
+        </td>
+        <td>${lineName}</td>
+        <td>${renderBadge(x)}</td>
+        <td>${timeStr}</td>
+        <td>${renderActionCol(x)}</td>
+      </tr>
+    `;
+  }).join('');
 
   return `
   <div class="form-group full" style="margin-top:0.6rem;">
-    <!-- 統計數據卡片 -->
+    <!-- 統計數據卡片 (點擊可直接切換分類) -->
     <div style="display:flex;flex-wrap:wrap;gap:0.6rem;margin-bottom:1rem;">
-      <div style="flex:1;min-width:130px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.65rem 0.85rem;">
-        <div style="font-size:0.8rem;color:#64748b;font-weight:600;">全班總學生數</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#1e293b;margin-top:0.15rem;">${total} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      <div style="flex:1;min-width:130px;background:#fff1f2;border:1.5px solid ${bindingTableTab === 'need-attention' ? '#e11d48' : '#fda4af'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;transition:all 0.15s;" data-act="set-binding-tab" data-tab="need-attention">
+        <div style="font-size:0.8rem;color:#be123c;font-weight:700;">⚠️ 無法正常接收私訊</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#9f1239;margin-top:0.15rem;">${needAttention.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
       </div>
-      <div style="flex:1;min-width:130px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:0.65rem 0.85rem;">
-        <div style="font-size:0.8rem;color:#166534;font-weight:600;">🔗 已綁定學號</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#15803d;margin-top:0.15rem;">${bound.length} <span style="font-size:0.8rem;font-weight:500;">人 (${rate}%)</span></div>
-      </div>
-      <div style="flex:1;min-width:130px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:0.65rem 0.85rem;">
-        <div style="font-size:0.8rem;color:#065f46;font-weight:600;">🟢 好友正常 (私訊通)</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#047857;margin-top:0.15rem;">${friends.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
-      </div>
-      <div style="flex:1;min-width:130px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:0.65rem 0.85rem;">
-        <div style="font-size:0.8rem;color:#991b1b;font-weight:600;">🔴 封鎖/未加 (無法通)</div>
+      <div style="flex:1;min-width:130px;background:#fef2f2;border:1.5px solid ${bindingTableTab === 'blocked' ? '#b91c1c' : '#fecaca'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;" data-act="set-binding-tab" data-tab="blocked">
+        <div style="font-size:0.8rem;color:#991b1b;font-weight:600;">🔴 封鎖／未加好友</div>
         <div style="font-size:1.3rem;font-weight:700;color:#b91c1c;margin-top:0.15rem;">${blocked.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
       </div>
-      <div style="flex:1;min-width:130px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:0.65rem 0.85rem;">
-        <div style="font-size:0.8rem;color:#92400e;font-weight:600;">🟡 待檢測好友</div>
-        <div style="font-size:1.3rem;font-weight:700;color:#b45309;margin-top:0.15rem;">${unknown.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
-      </div>
-      <div style="flex:1;min-width:130px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:0.65rem 0.85rem;">
+      <div style="flex:1;min-width:130px;background:#f1f5f9;border:1.5px solid ${bindingTableTab === 'unbound' ? '#334155' : '#cbd5e1'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;" data-act="set-binding-tab" data-tab="unbound">
         <div style="font-size:0.8rem;color:#475569;font-weight:600;">⚪ 尚未綁定學號</div>
         <div style="font-size:1.3rem;font-weight:700;color:#334155;margin-top:0.15rem;">${unbound.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
       </div>
+      <div style="flex:1;min-width:130px;background:#fffbeb;border:1.5px solid ${bindingTableTab === 'unknown' ? '#b45309' : '#fde68a'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;" data-act="set-binding-tab" data-tab="unknown">
+        <div style="font-size:0.8rem;color:#92400e;font-weight:600;">🟡 待檢測好友</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#b45309;margin-top:0.15rem;">${unknown.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#ecfdf5;border:1.5px solid ${bindingTableTab === 'friends' ? '#047857' : '#a7f3d0'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;" data-act="set-binding-tab" data-tab="friends">
+        <div style="font-size:0.8rem;color:#065f46;font-weight:600;">🟢 好友正常 (私訊通)</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#047857;margin-top:0.15rem;">${friends.length} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
+      <div style="flex:1;min-width:130px;background:#f8fafc;border:1.5px solid ${bindingTableTab === 'all' ? '#1e293b' : '#e2e8f0'};border-radius:8px;padding:0.65rem 0.85rem;cursor:pointer;" data-act="set-binding-tab" data-tab="all">
+        <div style="font-size:0.8rem;color:#64748b;font-weight:600;">🌟 全班總學生數</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#1e293b;margin-top:0.15rem;">${total} <span style="font-size:0.8rem;font-weight:500;">人</span></div>
+      </div>
     </div>
 
-    ${needAttention.length ? `
-    <div style="background:#fff1f2;border:1px solid #fda4af;border-radius:8px;padding:0.85rem 1rem;margin-bottom:1rem;color:#9f1239;font-size:0.88rem;line-height:1.5;">
-      ⚠️ <b>無法接收 1 對 1 私訊提醒（共 ${needAttention.length} 人）</b>：包含 ${blocked.length} 位封鎖/未加好友、${unbound.length} 位尚未綁定學號之學生。<br>
-      💡 <b>零推播額度建議</b>：請點擊上方「📋 一鍵複製加好友與綁定教學」，將說明文字直接貼至班級 LINE 群組，讓同學主動點擊加入小幫手好友並輸入綁定學號！
-    </div>` : ''}
-
-    ${blocked.length ? `
-    <div style="font-weight:600;color:#b91c1c;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
-      🔴 已綁定但「封鎖／未加好友」學生（共 ${blocked.length} 人，私訊無法送達）
+    <!-- 分類切換按鈕列 -->
+    <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.75rem;">
+      <span style="font-size:0.85rem;font-weight:600;color:#475569;margin-right:0.25rem;">分類表格篩選：</span>
+      <button type="button" class="tab-btn ${bindingTableTab === 'need-attention' ? 'active' : ''}" data-act="set-binding-tab" data-tab="need-attention" style="${bindingTableTab === 'need-attention' ? 'background:#e11d48;color:#fff;border-color:#be123c;' : 'background:#fff1f2;color:#be123c;border-color:#fecdd3;'}font-weight:600;border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        ⚠️ 無法正常接收私訊 (${needAttention.length}人)
+      </button>
+      <button type="button" class="tab-btn ${bindingTableTab === 'unbound' ? 'active' : ''}" data-act="set-binding-tab" data-tab="unbound" style="border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        ⚪ 尚未綁定學號 (${unbound.length}人)
+      </button>
+      <button type="button" class="tab-btn ${bindingTableTab === 'blocked' ? 'active' : ''}" data-act="set-binding-tab" data-tab="blocked" style="border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        🔴 封鎖／未加好友 (${blocked.length}人)
+      </button>
+      <button type="button" class="tab-btn ${bindingTableTab === 'unknown' ? 'active' : ''}" data-act="set-binding-tab" data-tab="unknown" style="border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        🟡 待檢測好友 (${unknown.length}人)
+      </button>
+      <button type="button" class="tab-btn ${bindingTableTab === 'friends' ? 'active' : ''}" data-act="set-binding-tab" data-tab="friends" style="border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        🟢 好友正常通暢 (${friends.length}人)
+      </button>
+      <button type="button" class="tab-btn ${bindingTableTab === 'all' ? 'active' : ''}" data-act="set-binding-tab" data-tab="all" style="border-radius:6px;padding:0.35rem 0.7rem;font-size:0.85rem;">
+        🌟 全部學生 (${total}人)
+      </button>
     </div>
-    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
-      ${blocked.map(x => renderStudentRow(x, true)).join('')}
-    </ul>` : ''}
 
-    ${unbound.length ? `
-    <div style="font-weight:600;color:#475569;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
-      ⚪ 尚未綁定學號學生（共 ${unbound.length} 人）
+    <!-- 表格呈現名單 -->
+    <div class="table-wrap" style="box-shadow:0 1px 3px rgba(0,0,0,0.05);border-radius:8px;overflow:hidden;border:1px solid #e2e8f0;">
+      <table class="roster" style="background:#fff;margin:0;width:100%;">
+        <thead>
+          <tr style="background:#f8fafc;">
+            <th style="width:40px;text-align:center;">#</th>
+            <th style="min-width:140px;">學生資訊</th>
+            <th style="min-width:110px;">LINE 暱稱</th>
+            <th style="min-width:120px;">接收狀態</th>
+            <th style="min-width:130px;">綁定時間</th>
+            <th style="min-width:170px;">專屬加好友與綁定引導</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows || `<tr><td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8;font-size:0.95rem;">🎉 目前分類中無學生名單</td></tr>`}
+        </tbody>
+      </table>
     </div>
-    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
-      ${unbound.map(x => renderStudentRow(x, false)).join('')}
-    </ul>` : ''}
-
-    ${unknown.length ? `
-    <div style="font-weight:600;color:#b45309;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
-      🟡 待檢測好友狀態學生（共 ${unknown.length} 人，請點擊上方「在線檢測」）
-    </div>
-    <ul style="margin:0.35rem 0 0.85rem 1.25rem;line-height:1.8;">
-      ${unknown.map(x => renderStudentRow(x, true)).join('')}
-    </ul>` : ''}
-
-    <div style="font-weight:600;color:#15803d;margin-top:0.75rem;display:flex;align-items:center;gap:0.4rem;">
-      🟢 好友正常學生（共 ${friends.length} 人，可正常接收私訊推播）
-    </div>
-    <ul style="margin:0.35rem 0 0.5rem 1.25rem;line-height:1.8;">
-      ${friends.length ? friends.map(x => renderStudentRow(x, true)).join('') : '<li style="color:#94a3b8;">（目前尚無檢測為正常好友的學生，請點擊上方「在線檢測」同步）</li>'}
-    </ul>
   </div>`;
 }
 
@@ -4890,7 +4956,6 @@ function aidQrModalHtml() {
 function teacherReminderBlock(c) {
   ensureLineQuotaLoaded();
   const quotaBanner = teacherLineQuotaBanner();
-  const aidCard = reminderSection === 'aidguide' ? '' : teacherAidFriendGuideCard();
   let content = '';
   if (reminderSection === 'aidguide') content = teacherAidGuideBlock(c);
   else if (reminderSection === 'atd') content = teacherAttendanceReminderBlock(c);
@@ -4902,7 +4967,7 @@ function teacherReminderBlock(c) {
   else if (reminderSection === 'absence') content = teacherAbsenceReminderBlock();
   else if (reminderSection === 'log') content = teacherPushLogBlock();
   else content = teacherGroupIdBlock();
-  return quotaBanner + aidCard + content;
+  return quotaBanner + content;
 }
 
 /* ---- 提醒管理專項：LINE 群組 ID 設定（集中管理所有課程之幹部群組 ID 與全體群組 ID）---- */
@@ -5074,7 +5139,15 @@ function teacherPushLogBlock() {
       <td>${esc(PUSH_LOG_KIND_LABEL[l.kind] || l.kind)}</td>
       <td>${l.courseId && l.courseId !== 'all' ? esc((courseById(l.courseId) && courseLabel(courseById(l.courseId))) || l.courseId) : '（全體）'}</td>
       <td><span class="status-badge" style="background:${l.channel === 'cadre' ? '#eff6ff' : '#f0fdf4'};">${l.channel === 'cadre' ? '幹部' : '全體'}</span></td>
-      <td style="font-size:0.85rem;">${esc(l.summary)}</td>
+      <td style="font-size:0.85rem;min-width:130px;">${esc(l.summary)}</td>
+      <td style="font-size:0.82rem;min-width:240px;max-width:380px;">
+        ${l.message ? `
+          <details style="cursor:pointer;">
+            <summary style="font-weight:600;color:#2563eb;user-select:none;margin-bottom:0.25rem;">📄 查看私訊訊息 (${esc(l.message.replace(/\s+/g, ' ').slice(0, 22))}…)</summary>
+            <div style="white-space:pre-wrap;background:#f8fafc;padding:0.5rem;border-radius:4px;border:1px solid #e2e8f0;font-family:monospace;font-size:0.78rem;color:#1e293b;max-height:180px;overflow-y:auto;line-height:1.45;">${esc(l.message)}</div>
+          </details>
+        ` : '<span style="color:#94a3b8;font-size:0.8rem;">（無詳細訊息文字）</span>'}
+      </td>
       <td>${l.status === 'ok' ? '✅' : l.status === 'error' ? '❌' : '➖'}</td>
       <td><button class="tab-btn" data-act="delete-push-log" data-id="${l.id}">🗑️ 刪除</button></td>
     </tr>`).join('');
@@ -5087,11 +5160,11 @@ function teacherPushLogBlock() {
         <button class="btn btn-secondary btn-sm" type="button" data-act="clear-push-log">🗑️ 清空全部</button>
       </div>
     </div>
-    <p class="file-path" style="margin:0.5rem 0 0.75rem;">記錄所有自動與手動發送的 LINE 推播（最近 200 筆），可逐筆或整批刪除。</p>
+    <p class="file-path" style="margin:0.5rem 0 0.75rem;">記錄所有自動與手動發送的 LINE 推播紀錄（最近 200 筆，包含發給學生的一對一私訊與群組訊息完整內容），可逐筆或整批刪除。</p>
     ${pushLogs === null ? '<p class="file-path">⏳ 載入中…</p>' : rows ? `
     <div class="table-wrap">
       <table class="roster" style="background:#fff;">
-        <thead><tr><th>時間</th><th>類型</th><th>課程</th><th>管道</th><th>摘要</th><th>結果</th><th>操作</th></tr></thead>
+        <thead><tr><th>時間</th><th>類型</th><th>課程</th><th>管道</th><th>摘要</th><th style="min-width:240px;">發送訊息內容</th><th>結果</th><th>操作</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>` : '<p class="file-path">目前尚無發送紀錄。</p>'}
@@ -7794,6 +7867,18 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     bindingCourseFilter = 'all';
     remTreeOpen = true;
     return goSection('reminders');
+  }
+  if (a === 'set-binding-tab') {
+    bindingTableTab = btn.dataset.tab || 'need-attention';
+    return render();
+  }
+  if (a === 'copy-single-binding') {
+    const studentId = btn.dataset.id;
+    const studentName = btn.dataset.name;
+    const b = getBotInfo();
+    const text = generateSingleStudentBindingText(studentId, studentName, b);
+    copyTextToClipboard(text, `✅ 已複製【${studentName}（${studentId}）】專屬加好友與綁定引導！\n\n學號已自動帶入「綁定 ${studentId}」，可直接私訊發給該位學生。`);
+    return;
   }
   if (a === 'copy-attendance-binding-instructions') {
     const list = bindingLists[id] || bindingLists['all'];

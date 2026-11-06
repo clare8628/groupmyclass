@@ -309,6 +309,7 @@ CREATE TABLE IF NOT EXISTS line_push_log (
   channel         TEXT NOT NULL DEFAULT '',   -- 'cadre' | 'all'
   target_group_id TEXT NOT NULL DEFAULT '',
   summary         TEXT NOT NULL DEFAULT '',
+  message         TEXT NOT NULL DEFAULT '',
   status          TEXT NOT NULL DEFAULT 'ok', -- 'ok' | 'error'
   created_at      INTEGER NOT NULL
 );

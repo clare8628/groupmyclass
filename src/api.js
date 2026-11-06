@@ -942,7 +942,7 @@ export async function handleAction(request, env, db, body) {
       } catch (err) {
         return bad(`LINE 推送失敗 (${(err && err.message) || err})`, 502);
       }
-      await logLinePush(db, { courseId, kind: `test-${type}`, channel: 'direct', groupId: '老師測試私訊', summary });
+      await logLinePush(db, { courseId, kind: `test-${type}`, channel: 'direct', groupId: '老師測試私訊', summary, message: text });
       return json({ ok: true, message: '✅ 測試訊息已成功發送至老師 LINE 私訊！' });
     }
     if (op === 'send-attendance-reminder-test') {
@@ -962,7 +962,7 @@ export async function handleAction(request, env, db, body) {
         } catch (err) {
           return bad(`LINE 發送失敗：${(err && err.message) || err}`, 502);
         }
-        await logLinePush(db, { courseId: c.id, kind: 'attendance-test-teacher', channel: 'direct', groupId: '老師測試私訊', summary: '老師手動發送測試訊息至老師 LINE' });
+        await logLinePush(db, { courseId: c.id, kind: 'attendance-test-teacher', channel: 'direct', groupId: '老師測試私訊', summary: '老師手動發送測試訊息至老師 LINE', message: text });
         return ok({ message: '測試訊息已成功私訊發送至老師 LINE！' });
       }
       return bad('尚未綁定老師 LINE 帳號！請先以老師手機 LINE 私訊 aid 輸入「我是老師」或「clare8628」完成綁定！', 400);
