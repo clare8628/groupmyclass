@@ -42,7 +42,7 @@ function applySectionsFromHash(parsed) {
     wbSection = s1; wbTreeOpen = true;
     if (s1.startsWith('care:')) careAdminId = s1.slice(5);
   } else if (parsed.view === 'reminders') {
-    reminderSection = ['atd', 'b1', 'messages', 'channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
+    reminderSection = ['aidguide', 'atd', 'b1', 'messages', 'channels', 'bindings', 'care', 'absence', 'log'].includes(s1) ? s1 : 'groupids'; remTreeOpen = true;
     if (s1 === 'log') loadPushLogs();
   }
 }
@@ -132,7 +132,7 @@ let b1Section = 'roster';               // 老師後台「華語B1輔導課修�
 let lastGeneralCourseId = null;         // 離開B1專區時還原一般課程用
 let atdSection = 'sessions';            // 老師後台「點名管理」目前顯示的樹狀子節點：sessions | bindings | b1 | records | progress | leaderboard | log
 let b1TreeOpen = false;                 // 左側樹狀選單「華語B1輔導課修課點名」子項目是否展開
-let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | messages | atd | b1 | channels | bindings | care | absence | log
+let reminderSection = 'groupids';       // 老師後台「提醒管理」目前顯示的樹狀子節點：groupids | aidguide | messages | atd | b1 | channels | bindings | care | absence | log
 let remTreeOpen = false;                // 左側樹狀選單「提醒管理」子項目是否展開
 let pushLogs = null;                    // Bot 發送紀錄（逐次自後端載入）
 let pushLogsLoading = false;
@@ -361,6 +361,10 @@ function ensureBindingsLoaded(courseId) {
   loadingBindings[courseId] = true;
   apiPost('teacher:list-attendance-bindings', { courseId }).then(data => {
     bindingLists[courseId] = data;
+    if (data && data.botInfo) {
+      cachedBotInfo = data.botInfo;
+      state.botInfo = data.botInfo;
+    }
     render();
   }).catch(err => {
     console.error('Failed to load bindings:', err);
@@ -369,49 +373,64 @@ function ensureBindingsLoaded(courseId) {
   });
 }
 
+function getBotInfo() {
+  const b = cachedBotInfo || (state && state.botInfo) || (bindingLists['all'] && bindingLists['all'].botInfo) || {};
+  const basicId = b.basicId || '';
+  const addFriendUrl = b.addFriendUrl || (basicId ? `https://line.me/R/ti/p/${encodeURIComponent(basicId)}` : '');
+  const displayName = b.displayName || '課堂小幫手 (aid)';
+  const pictureUrl = b.pictureUrl || '';
+  return { basicId, addFriendUrl, displayName, pictureUrl };
+}
+
 function generateBindingInstructionsText(l) {
+  const b = getBotInfo();
+  const botInfo = (l && l.botInfo) || b;
+  const addUrl = botInfo.addFriendUrl || b.addFriendUrl || '';
+  const botId = botInfo.basicId || b.basicId || '';
   const unbound = (l && l.unbound) || [];
   const bound = (l && l.bound) || [];
   const blocked = bound.filter(x => x.friendStatus === 'blocked');
-  const botInfo = (l && l.botInfo) || {};
-  const addUrl = botInfo.addFriendUrl || '';
-  const botId = botInfo.basicId || '';
 
   const lines = [
-    '【課堂小幫手 — LINE 綁定與加好友通知】',
-    '同學您好！為能即時收到課堂點名、缺曠通知與生活關懷問卷提醒，請尚未完成的同學依下列步驟設定：',
+    '【📢 課堂小幫手 — LINE 好友加入與個人綁定通知】',
+    '同學您好！本學期課堂點名、華語輔導班自主點名、缺曠通知及生活關懷問卷提醒已全面升級為「課堂小幫手」1 對 1 私訊通知。',
+    '為保障您的權益並即時接收個人通知，請尚未綁定的同學撥空 1 分鐘依下列 3 步驟完成設定：',
     '',
-    '📱 步驟一：加課堂小幫手為好友',
+    '📱 步驟一：加課堂小幫手為 LINE 好友',
   ];
   if (addUrl) {
     lines.push(`👉 點此連結直接加好友：${addUrl}`);
   }
   if (botId) {
-    lines.push(`👉 或於 LINE 搜尋好友 ID：${botId}`);
+    lines.push(`👉 或於 LINE「加入好友 → 搜尋」輸入 ID：${botId}`);
   }
-  lines.push('（也可在班級 LINE 群組內直接點擊小幫手頭像加入好友）');
+  lines.push('（也可在班級 LINE 大群組成員名單中直接點擊小幫手頭像加入好友）');
   lines.push('');
-  lines.push('💬 步驟二：發送學號綁定');
-  lines.push('加為好友後，請在與小幫手的 1 對 1 私訊中輸入：');
-  lines.push('「綁定 您的學號」（例如：綁定 41461D01）');
-  lines.push('收到小幫手回覆「已成功綁定」即大功告成！');
+  lines.push('💬 步驟二：開啟與小幫手的 1 對 1 私訊聊天室');
+  lines.push('加為好友後，請點開與小幫手的「個人聊天室」進行對話。');
+  lines.push('⚠️ 請務必在 1 對 1 私訊中綁定，切勿在班級大群發送學號以維護個人隱私！');
+  lines.push('');
+  lines.push('🔑 步驟三：發送「綁定 您的學號」');
+  lines.push('請在私訊聊天室中直接輸入並送出：');
+  lines.push('👉 綁定 您的學號（範例：綁定 41461D01）');
+  lines.push('收到小幫手回覆「✅ 已成功綁定」即大功告成！');
   lines.push('');
 
   if (unbound.length) {
-    lines.push(`⚠️ 尚未綁定學號名單（共 ${unbound.length} 位）：`);
+    lines.push(`⚠️ 目前尚未綁定學號名單（共 ${unbound.length} 位同學，請儘速綁定）：`);
     lines.push(unbound.map(s => `${s.name}（${s.id}）`).join('、'));
     lines.push('');
   }
   if (blocked.length) {
-    lines.push(`🔴 已綁定但「尚未加好友或已封鎖」名單（共 ${blocked.length} 位，無法收到私訊提醒）：`);
+    lines.push(`🔴 已綁定但「尚未加好友或已封鎖」名單（共 ${blocked.length} 位同學，私訊無法送達）：`);
     lines.push(blocked.map(s => `${s.name}（${s.id}）`).join('、'));
-    lines.push('👉 請上述同學開啟與小幫手的對話框解除封鎖或加入好友！');
+    lines.push('👉 請上述同學開啟與小幫手的私訊對話框解除封鎖或加入好友！');
     lines.push('');
   }
-  if (!unbound.length && !blocked.length) {
+  if (!unbound.length && !blocked.length && l && l.total) {
     lines.push('🎉 太棒了！全體同學皆已完成綁定且好友狀態正常！');
   } else {
-    lines.push('請上述同學儘速撥空完成，謝謝大家的配合！');
+    lines.push('💡 綁定完成後，日後點名與各項提醒皆會直接私訊給您，不會漏接重要訊息。謝謝大家的配合！');
   }
 
   return lines.join('\n');
@@ -2912,6 +2931,7 @@ function reminderSubTree() {
   const node = (key, label) => `<li class="${sec === key ? 'active' : ''}"><button data-act="rem-section" data-sec="${esc(key)}" ${mAttr('r:' + key, label)}>${mt('r:' + key, label)}</button></li>`;
   return `<ul class="tree-sub">
     ${node('groupids', 'LINE 群組 ID 設定')}
+    ${node('aidguide', '🤖 小幫手加好友與學生綁定教學')}
     ${node('messages', '💬 提醒訊息設定與即時測試')}
     ${node('atd', '點名自動提醒（幹部私訊）')}
     ${node('b1', '🗣️ 華語B1輔導課自主點名提醒')}
@@ -4476,8 +4496,11 @@ function teacherAttendanceBlock(c) {
    以及問卷提醒（生活關懷問卷）／缺曠提醒（缺曠原因調查）的自動排程。
    另含幹部點名提醒（atd）與華語B1輔導課自主點名提醒（b1）之排程設定；點名本身（時段、紀錄、審核）仍在「點名管理」。 */
 let cachedLineQuota = null;
+let cachedBotInfo = null;
 let loadingLineQuota = false;
 let hasRequestedQuota = false;
+let aidGuideCollapsed = false;
+let showAidQrModal = false;
 
 async function refreshLineQuota() {
   loadingLineQuota = true;
@@ -4489,6 +4512,10 @@ async function refreshLineQuota() {
     }
     if (res && res.teacherLineUserId !== undefined) {
       state.teacherLineUserId = res.teacherLineUserId;
+    }
+    if (res && res.botInfo) {
+      cachedBotInfo = res.botInfo;
+      state.botInfo = res.botInfo;
     }
   } catch (e) {
     console.error('refreshLineQuota error', e);
@@ -4631,11 +4658,242 @@ function teacherMessagesBlock() {
   </div>`;
 }
 
+/* ---- 提醒管理專項：課堂小幫手（aid）加好友連結與學生綁定步驟說明卡片 ---- */
+function teacherAidFriendGuideCard({ standalone = false } = {}) {
+  const b = getBotInfo();
+  const botId = b.basicId || '';
+  const addUrl = b.addFriendUrl || '';
+  const displayName = b.displayName || '課堂小幫手 (aid)';
+  const picUrl = b.pictureUrl || '';
+
+  return `
+  <div class="teacher-aid-guide-card" style="background:#ffffff;border:1.5px solid #10b981;border-radius:10px;padding:1.1rem 1.25rem;margin-bottom:1.3rem;box-shadow:0 2px 8px rgba(16,185,129,0.08);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.75rem;margin-bottom:0.9rem;border-bottom:1px solid #ecfdf5;padding-bottom:0.75rem;">
+      <div>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <span style="font-size:1.08rem;font-weight:700;color:#065f46;">🤖 課堂小幫手（aid）加好友連結與加入綁定步驟說明</span>
+          <span class="badge" style="background:#10b981;color:#fff;font-size:0.75rem;padding:0.2rem 0.5rem;border-radius:4px;">📱 1 對 1 私訊通知專用</span>
+          <span class="badge" style="background:#047857;color:#fff;font-size:0.75rem;padding:0.2rem 0.5rem;border-radius:4px;">💡 零推播額度消耗</span>
+        </div>
+        <p style="margin:0.35rem 0 0;font-size:0.86rem;color:#475569;">
+          提供給學生加入課堂小幫手為 LINE 好友，並於 1 對 1 私訊中綁定學號，以順暢接收點名、問卷與缺曠提醒。
+        </p>
+      </div>
+      <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" type="button" data-act="copy-aid-instructions" style="background:#059669;border-color:#047857;font-weight:600;display:flex;align-items:center;gap:0.3rem;">
+          📋 一鍵複製教學給學生
+        </button>
+        ${!standalone ? `
+        <button class="btn btn-secondary btn-sm" type="button" data-act="toggle-aid-guide" style="padding:0.25rem 0.6rem;font-size:0.8rem;">
+          ${aidGuideCollapsed ? '▼ 展開說明' : '▲ 收折說明'}
+        </button>` : ''}
+      </div>
+    </div>
+
+    ${aidGuideCollapsed && !standalone ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;font-size:0.88rem;color:#334155;background:#f0fdf4;padding:0.6rem 0.9rem;border-radius:6px;">
+      <div>
+        🤖 小幫手 ID：<code style="background:#e2e8f0;padding:0.1rem 0.4rem;border-radius:4px;font-weight:600;">${esc(botId || '@...')}</code> ｜ 加好友網址：${addUrl ? `<a href="${esc(addUrl)}" target="_blank" rel="noopener" style="color:#059669;font-weight:600;">${esc(addUrl)}</a>` : '<span style="color:#64748b;">取得中…</span>'}
+      </div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-url">🔗 複製加好友連結</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-instructions">📋 複製學生教學</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="open-aid-qr-modal">🔍 投影 QR Code</button>
+      </div>
+    </div>` : `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(310px, 1fr));gap:1.25rem;align-items:stretch;">
+      <!-- 左側：Bot 資訊、加好友連結與 QR Code -->
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:1rem;display:flex;flex-direction:column;justify-content:space-between;">
+        <div>
+          <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;">
+            ${picUrl ? `<img src="${esc(picUrl)}" alt="aid avatar" style="width:48px;height:48px;border-radius:50%;border:2px solid #10b981;object-fit:cover;">` : `<div style="width:48px;height:48px;border-radius:50%;background:#d1fae5;color:#047857;display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;">🤖</div>`}
+            <div>
+              <div style="font-weight:700;font-size:1rem;color:#1e293b;">${esc(displayName)}</div>
+              <div style="font-size:0.82rem;color:#64748b;display:flex;align-items:center;gap:0.35rem;margin-top:0.15rem;">
+                <span>LINE 官方帳號 ID：</span>
+                <code style="background:#e2e8f0;padding:0.1rem 0.4rem;border-radius:4px;color:#0f172a;font-weight:600;">${esc(botId || '載入中...')}</code>
+                ${botId ? `<button type="button" data-act="copy-aid-id" class="btn btn-secondary" style="padding:0.1rem 0.4rem;font-size:0.72rem;margin:0;">複製</button>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-bottom:0.85rem;">
+            <label style="font-weight:600;font-size:0.85rem;color:#334155;display:block;margin-bottom:0.3rem;">🔗 學生直接加好友專屬連結：</label>
+            <div style="display:flex;gap:0.35rem;align-items:center;">
+              <input type="text" readonly value="${esc(addUrl || '正在取得加好友網址...')}" style="flex:1;font-size:0.84rem;padding:0.35rem 0.55rem;background:#fff;border:1px solid #cbd5e1;border-radius:4px;color:#1e293b;cursor:text;">
+              <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-url" title="複製加好友連結">🔗 複製</button>
+              ${addUrl ? `<a href="${esc(addUrl)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="display:inline-flex;align-items:center;text-decoration:none;padding:0.35rem 0.6rem;" title="在新分頁打開">📲 開啟</a>` : ''}
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:1rem;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:0.6rem 0.75rem;">
+            ${addUrl ? `
+            <div style="text-align:center;">
+              <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(addUrl)}" alt="加好友 QR Code" style="width:96px;height:96px;border-radius:4px;border:1px solid #cbd5e1;display:block;margin:0 auto;cursor:pointer;" data-act="open-aid-qr-modal" title="點擊放大 / 課堂投影">
+              <span style="font-size:0.72rem;color:#64748b;margin-top:0.25rem;display:block;">點擊放大 QR</span>
+            </div>` : ''}
+            <div style="flex:1;font-size:0.82rem;color:#475569;line-height:1.45;">
+              <b style="color:#1e293b;">📱 課堂投影或截圖掃碼：</b><br>
+              學生使用手機相機掃描 QR Code 或點擊連結，即可直接開啟 LINE 並跳轉至「加入好友」畫面。<br>
+              <button class="btn btn-secondary btn-sm" type="button" data-act="open-aid-qr-modal" style="margin-top:0.4rem;font-size:0.78rem;padding:0.2rem 0.5rem;">🖨️ 投影大螢幕 QR Code</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右側：學生加入與綁定 3 步驟說明 -->
+      <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:1rem;display:flex;flex-direction:column;justify-content:space-between;">
+        <div>
+          <h3 style="margin:0 0 0.65rem 0;font-size:0.98rem;color:#065f46;display:flex;align-items:center;gap:0.4rem;">
+            📝 學生加入與綁定 3 步驟說明（轉發學生文字說明）
+          </h3>
+          
+          <div style="display:flex;flex-direction:column;gap:0.6rem;font-size:0.87rem;color:#1e293b;">
+            <div style="display:flex;align-items:flex-start;gap:0.5rem;">
+              <div style="background:#10b981;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem;flex-shrink:0;margin-top:1px;">1</div>
+              <div>
+                <b style="color:#065f46;">加課堂小幫手為 LINE 好友</b><br>
+                <span style="color:#475569;font-size:0.82rem;">點擊加好友連結、掃描 QR Code，或在 LINE「加入好友 → 搜尋」輸入 ID 加入好友（亦可在班級大群成員清單中點擊小幫手加入）。</span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;gap:0.5rem;">
+              <div style="background:#10b981;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem;flex-shrink:0;margin-top:1px;">2</div>
+              <div>
+                <b style="color:#065f46;">開啟與小幫手的 1 對 1 私訊聊天室</b><br>
+                <span style="color:#475569;font-size:0.82rem;">在 LINE 好友清單中點擊「課堂小幫手」進入個別私訊。<br><b style="color:#b91c1c;">⚠️ 重要：請在私訊中綁定，切勿在班級大群發送學號以維護個人隱私！</b></span>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:flex-start;gap:0.5rem;">
+              <div style="background:#10b981;color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.75rem;flex-shrink:0;margin-top:1px;">3</div>
+              <div>
+                <b style="color:#065f46;">私訊發送「綁定 您的學號」</b><br>
+                <span style="color:#475569;font-size:0.82rem;">在私訊直接輸入並發送：<code>綁定 41461D01</code>（請替換為學生本人真實學號）。小幫手將自動驗證並回覆：<code style="color:#047857;background:#dcfce7;padding:0.1rem 0.35rem;border-radius:3px;">✅ 已成功綁定</code>。</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:0.75rem;background:#ffffff;border:1px dashed #10b981;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.8rem;color:#065f46;">
+            💡 <b>綁定效益</b>：完成後，課堂點名通知、華語 B1 輔導課自主點名提醒、生活關懷問卷及缺曠調查皆由小幫手個別 1 對 1 私訊提醒，學生不漏接，且<b>完全不消耗官方帳號多人群組推播額度</b>！
+          </div>
+        </div>
+
+        <div style="margin-top:0.85rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary btn-sm" type="button" data-act="copy-aid-instructions" style="background:#059669;border-color:#047857;">
+            📋 一鍵複製給學生的教學文字（可直接貼班群）
+          </button>
+          <button class="btn btn-secondary btn-sm" type="button" data-act="go-bindings-section">
+            👥 查看全班綁定狀態
+          </button>
+        </div>
+      </div>
+    </div>`}
+  </div>`;
+}
+
+function teacherAidGuideBlock(c) {
+  const b = getBotInfo();
+  const botId = b.basicId || '';
+  const addUrl = b.addFriendUrl || '';
+  const instructionsText = generateBindingInstructionsText(bindingLists['all'] || (c && bindingLists[c.id]) || null);
+
+  return `
+  <div class="teacher-section">
+    <h2>🤖 課堂小幫手（aid）加好友連結與學生綁定教學</h2>
+    <p class="file-path" style="margin:0 0 1rem 0;">此處提供課堂小幫手的官方帳號專屬加好友網址、加好友 QR Code 與學生綁定步驟說明。老師可直接複製文字轉發班群，或在教室投影大螢幕供全班學生現場掃碼加好友。</p>
+
+    ${teacherAidFriendGuideCard({ standalone: true })}
+
+    <!-- 課堂大螢幕投影專用面板 -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:1.25rem;margin-bottom:1.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem;">
+        <h3 style="margin:0;font-size:1.05rem;color:#1e40af;">📺 課堂大螢幕投影專用面板（適合課堂播放給全班掃碼）</h3>
+        <button class="btn btn-primary btn-sm" type="button" data-act="open-aid-qr-modal">🖨️ 彈窗全螢幕投影模式</button>
+      </div>
+      <div style="display:flex;gap:1.5rem;align-items:center;flex-wrap:wrap;background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:8px;padding:1.2rem;">
+        <div style="text-align:center;">
+          ${addUrl ? `<img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(addUrl)}" alt="加好友 QR Code" style="width:180px;height:180px;border-radius:8px;border:2px solid #10b981;background:#fff;padding:6px;box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">` : '<div style="width:180px;height:180px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px dashed #94a3b8;border-radius:8px;">取得 QR 中…</div>'}
+          <div style="margin-top:0.5rem;font-weight:700;font-size:0.9rem;color:#1e293b;">掃描 QR Code 加好友</div>
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div style="font-size:1.15rem;font-weight:700;color:#065f46;margin-bottom:0.5rem;">
+            加入小幫手 3 步驟（1 分鐘完成）：
+          </div>
+          <ol style="margin:0 0 0.8rem 1.2rem;padding:0;line-height:1.7;font-size:0.95rem;color:#1e293b;">
+            <li>打開手機相機掃描左側 <b>QR Code</b>（或於 LINE 搜尋 ID：<b style="color:#047857;">${esc(botId || '@...')}</b>）加入好友。</li>
+            <li>點開與「課堂小幫手」的 <b>1 對 1 私訊聊天室</b>。</li>
+            <li>私訊發送：<code style="background:#dcfce7;color:#065f46;padding:0.2rem 0.5rem;font-size:1rem;font-weight:700;border-radius:4px;">綁定 您的學號</code>（例如：綁定 41461D01）。</li>
+          </ol>
+          <div style="color:#475569;font-size:0.88rem;background:#f0fdf4;padding:0.6rem 0.85rem;border-radius:6px;border:1px solid #bbf7d0;">
+            ✅ 收到小幫手回覆「已成功綁定」即完成！日後課堂點名通知、華語 B1 輔導課自主點名提醒、問卷與缺曠通知將直接透過 LINE 私訊通知您。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 給學生之文字通知草稿預覽與自訂複製 -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:1.25rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+        <h3 style="margin:0;font-size:1.02rem;color:#1e293b;">📋 給學生之加入與綁定教學訊息範本（可直接複製或轉貼）</h3>
+        <button class="btn btn-primary btn-sm" type="button" data-act="copy-aid-instructions">📋 一鍵複製以下全文</button>
+      </div>
+      <p class="file-path" style="margin:0 0 0.75rem 0;">這段文字已包含加好友專屬連結、LINE ID 與操作步驟，您可以直接複製發送到班級 LINE 大群或課程公告：</p>
+      <textarea id="aidInstructionsPreviewTextarea" rows="12" style="width:100%;font-size:0.9rem;line-height:1.55;font-family:monospace;padding:0.75rem;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;" readonly>${esc(instructionsText)}</textarea>
+      <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-primary btn-sm" type="button" data-act="copy-aid-instructions">📋 一鍵複製給學生教學文案</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-url">🔗 複製加好友連結</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-id">📋 複製 LINE ID</button>
+        <button class="btn btn-secondary btn-sm" type="button" data-act="go-bindings-section">👥 前往綁定查詢與統計名單</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function aidQrModalHtml() {
+  if (!showAidQrModal) return '';
+  const b = getBotInfo();
+  const addUrl = b.addFriendUrl || '';
+  const botId = b.basicId || '';
+  const displayName = b.displayName || '課堂小幫手 (aid)';
+  return `
+  <div class="absence-modal-overlay" data-act="close-aid-qr-modal-bg">
+    <div class="absence-modal-content" style="max-width:540px;text-align:center;">
+      <div class="absence-modal-header" style="justify-content:space-between;">
+        <span style="font-weight:700;font-size:1.05rem;color:#065f46;">🤖 課堂小幫手（aid）加好友與綁定 QR Code</span>
+        <button class="absence-modal-close-btn" type="button" data-act="close-aid-qr-modal">✕</button>
+      </div>
+      <div class="absence-modal-body" style="padding:1.5rem 1rem;">
+        <div style="font-size:1.1rem;font-weight:700;color:#1e293b;margin-bottom:0.25rem;">${esc(displayName)}</div>
+        <div style="font-size:0.85rem;color:#64748b;margin-bottom:1rem;">LINE ID：<code style="background:#e2e8f0;padding:0.15rem 0.45rem;border-radius:4px;color:#0f172a;font-weight:700;">${esc(botId || '@...')}</code></div>
+        
+        <div style="display:inline-block;padding:12px;background:#fff;border:2px solid #10b981;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);margin-bottom:1rem;">
+          ${addUrl ? `<img src="https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(addUrl)}" alt="加好友 QR Code" style="width:240px;height:240px;display:block;">` : '<div style="width:240px;height:240px;display:flex;align-items:center;justify-content:center;">載入 QR 中…</div>'}
+        </div>
+
+        <div style="text-align:left;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:0.85rem 1rem;font-size:0.88rem;line-height:1.6;color:#1e293b;max-width:420px;margin:0 auto;">
+          <b style="color:#065f46;">學生 3 步驟完成綁定：</b><br>
+          1. 手機掃描上方 <b>QR Code</b> 加小幫手為好友<br>
+          2. 點開與小幫手的 <b>1 對 1 私訊聊天室</b>（勿在大群發送學號）<br>
+          3. 私訊發送：<b style="color:#047857;">綁定 您的學號</b>（例如：綁定 41461D01）<br>
+          收到小幫手回覆「已成功綁定」即完成！
+        </div>
+      </div>
+      <div class="absence-modal-footer" style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;">
+        <button class="btn btn-secondary btn-sm" type="button" data-act="copy-aid-instructions">📋 複製學生教學文案</button>
+        <button class="btn btn-primary btn-sm" type="button" data-act="close-aid-qr-modal">關閉</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function teacherReminderBlock(c) {
   ensureLineQuotaLoaded();
   const quotaBanner = teacherLineQuotaBanner();
+  const aidCard = reminderSection === 'aidguide' ? '' : teacherAidFriendGuideCard();
   let content = '';
-  if (reminderSection === 'atd') content = teacherAttendanceReminderBlock(c);
+  if (reminderSection === 'aidguide') content = teacherAidGuideBlock(c);
+  else if (reminderSection === 'atd') content = teacherAttendanceReminderBlock(c);
   else if (reminderSection === 'b1') content = teacherAttendanceReminderBlock(c, true);
   else if (reminderSection === 'messages') content = teacherMessagesBlock();
   else if (reminderSection === 'channels') content = teacherChannelBlock();
@@ -4644,7 +4902,7 @@ function teacherReminderBlock(c) {
   else if (reminderSection === 'absence') content = teacherAbsenceReminderBlock();
   else if (reminderSection === 'log') content = teacherPushLogBlock();
   else content = teacherGroupIdBlock();
-  return quotaBanner + content;
+  return quotaBanner + aidCard + content;
 }
 
 /* ---- 提醒管理專項：LINE 群組 ID 設定（集中管理所有課程之幹部群組 ID 與全體群組 ID）---- */
@@ -6628,7 +6886,7 @@ function render() {
   const treeEl = document.querySelector('.tree');
   const treeScroll = treeEl ? treeEl.scrollTop : 0;
   document.getElementById('app').innerHTML =
-    nav() + teacherPreviewBanner() + '<div class="container">' + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml();
+    nav() + teacherPreviewBanner() + '<div class="container">' + body + '</div>' + absenceDetailModalHtml() + surveyModalsHtml() + aidQrModalHtml();
   const newTree = document.querySelector('.tree');
   if (newTree && treeScroll) newTree.scrollTop = treeScroll;
   if (!state.session && loginMode) {
@@ -7501,15 +7759,47 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
       alert(`🔍 好友與封鎖狀態檢測完成！\n\n共檢測：${(data && data.verifiedCount) || 0} 位學生\n🟢 好友正常：${(data && data.friendCount) || 0} 位（私訊暢通）\n🔴 已封鎖／未加好友：${(data && data.blockedCount) || 0} 位（無法接收私訊）`);
     } });
   }
-  if (a === 'copy-attendance-binding-instructions') {
-    const list = bindingLists[id];
-    if (!list) {
-      alert('正在載入名單，請稍候重試...');
-      ensureBindingsLoaded(id);
-      return;
-    }
+  if (a === 'toggle-aid-guide') {
+    aidGuideCollapsed = !aidGuideCollapsed;
+    return render();
+  }
+  if (a === 'open-aid-qr-modal') {
+    showAidQrModal = true;
+    return render();
+  }
+  if (a === 'close-aid-qr-modal' || a === 'close-aid-qr-modal-bg') {
+    showAidQrModal = false;
+    return render();
+  }
+  if (a === 'copy-aid-instructions') {
+    const list = (id && bindingLists[id]) || bindingLists['all'] || (state.currentId && bindingLists[state.currentId]) || null;
     const text = generateBindingInstructionsText(list);
-    copyTextToClipboard(text, '✅ 已複製「課堂小幫手加好友與綁定教學」至剪貼簿！\n可直接貼至 LINE 班級大群、幹部群或公告，完全不消耗推播額度！');
+    copyTextToClipboard(text, '✅ 已複製「課堂小幫手加好友與學生綁定教學」完整文字！\n可直接貼至 LINE 班級大群、幹部群或公告，完全不消耗推播額度！');
+    return;
+  }
+  if (a === 'copy-aid-url') {
+    const b = getBotInfo();
+    if (!b.addFriendUrl) return alert('尚未取得加好友連結，請稍候重試');
+    copyTextToClipboard(b.addFriendUrl, '✅ 已複製課堂小幫手加好友專屬連結：\n' + b.addFriendUrl);
+    return;
+  }
+  if (a === 'copy-aid-id') {
+    const b = getBotInfo();
+    if (!b.basicId) return alert('尚未取得 LINE ID，請稍候重試');
+    copyTextToClipboard(b.basicId, '✅ 已複製課堂小幫手 LINE ID：\n' + b.basicId);
+    return;
+  }
+  if (a === 'go-bindings-section') {
+    reminderSection = 'bindings';
+    bindingCourseFilter = 'all';
+    remTreeOpen = true;
+    return goSection('reminders');
+  }
+  if (a === 'copy-attendance-binding-instructions') {
+    const list = bindingLists[id] || bindingLists['all'];
+    const text = generateBindingInstructionsText(list);
+    copyTextToClipboard(text, '✅ 已複製「課堂小幫手加好友與學生綁定教學」至剪貼簿！\n可直接貼至 LINE 班級大群、幹部群或公告，完全不消耗推播額度！');
+    if (!bindingLists[id] && id) ensureBindingsLoaded(id);
     return;
   }
   if (a === 'send-attendance-binding-instructions') {

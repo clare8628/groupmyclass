@@ -872,11 +872,12 @@ export async function handleAction(request, env, db, body) {
       return ok();
     }
     if (op === 'get-line-quota') {
-      const [quota, teacherLineUserId] = await Promise.all([
+      const [quota, teacherLineUserId, botInfo] = await Promise.all([
         getLineMessageQuota(env),
         getTeacherLineUserId(db),
+        getLineBotInfo(env).catch(() => null),
       ]);
-      return json({ ok: true, quota, teacherLineUserId });
+      return json({ ok: true, quota, teacherLineUserId, botInfo });
     }
     if (op === 'save-teacher-line-user-id') {
       const uid = await setTeacherLineUserId(db, body.teacherLineUserId);
