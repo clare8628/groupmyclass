@@ -3066,20 +3066,35 @@ function getWellbeingSubTitle(sec, c) {
   return '';
 }
 
-function teacherSubpageNav(viewTitle, c, subTitle = '') {
+function teacherSubpageNav(viewTitle, c, subTitle = '', viewKey = teacherView) {
+  let parentHref = `#${viewKey}`;
+  let parentAct = 'nav-teacher-view';
+  let parentCourseId = '';
+  if (viewKey === 'logs') {
+    parentHref = c ? `#course/${encodeURIComponent(c.id)}` : '#course';
+    parentAct = 'back-to-course';
+    parentCourseId = c ? c.id : '';
+  } else if (viewKey === 'reminders') {
+    parentHref = '#reminders/bindings';
+  } else if (viewKey === 'attendance') {
+    parentHref = '#attendance/sessions';
+  } else if (viewKey === 'wellbeing') {
+    parentHref = '#wellbeing/cards';
+  }
+
+  let parentNode = `<span class="crumb-current"><b>${esc(viewTitle)}</b></span>`;
+  if (subTitle) {
+    parentNode = `<a href="${parentHref}" class="crumb-link" data-act="${parentAct}" data-view="${esc(viewKey)}" ${parentCourseId ? `data-id="${esc(parentCourseId)}"` : ''} title="前往${esc(viewTitle)}">${esc(viewTitle)}</a>`;
+  }
+
   return `
   <div class="teacher-subpage-nav">
     <div class="nav-breadcrumbs">
       <a href="#course" class="crumb-link" data-act="back-to-course" title="返回老師後台分組主頁">🏠 老師後台</a>
       <span class="crumb-sep">/</span>
       ${c ? `<a href="#course/${encodeURIComponent(c.id)}" class="crumb-link" data-act="back-to-course" data-id="${esc(c.id)}" title="檢視此課程分組">${esc(courseLabel(c))}</a><span class="crumb-sep">/</span>` : ''}
-      <span class="crumb-parent">${esc(viewTitle)}</span>
+      ${parentNode}
       ${subTitle ? `<span class="crumb-sep">/</span><span class="crumb-current"><b>${esc(subTitle)}</b></span>` : ''}
-    </div>
-    <div class="nav-actions">
-      <button class="btn btn-secondary btn-sm" type="button" data-act="history-back" title="回到上一頁" style="font-size:0.8rem;padding:0.25rem 0.6rem;font-weight:600;display:inline-flex;align-items:center;gap:0.25rem;">
-        ↩️ 回上一頁
-      </button>
     </div>
   </div>`;
 }
@@ -3088,21 +3103,21 @@ function teacherScreen() {
   const c = cur();
   let main;
   if (teacherView === 'settings') {
-    main = teacherSubpageNav('密碼與安全性管理', c) + teacherPasswordBlock(c);
+    main = teacherSubpageNav('密碼與安全性管理', c, '', 'settings') + teacherPasswordBlock(c);
   } else if (teacherView === 'eval') {
-    main = teacherSubpageNav('學期成績加減分與組長評分控制', c) + teacherPeerEvalBlock(c);
+    main = teacherSubpageNav('學期成績加減分與組長評分控制', c, '', 'eval') + teacherPeerEvalBlock(c);
   } else if (teacherView === 'logs') {
-    main = teacherSubpageNav('分組管理', c, '異動日誌') + activityLogPanel(c, 'group');
+    main = teacherSubpageNav('分組管理', c, '異動日誌', 'logs') + activityLogPanel(c, 'group');
   } else if (teacherView === 'reminders') {
-    main = teacherSubpageNav('提醒管理', c, getReminderSubTitle(reminderSection)) + teacherReminderBlock(c);
+    main = teacherSubpageNav('提醒管理', c, getReminderSubTitle(reminderSection), 'reminders') + teacherReminderBlock(c);
   } else if (teacherView === 'attendance') {
-    main = teacherSubpageNav('點名管理', c, getAttendanceSubTitle(atdSection)) + teacherAttendanceBlock(c) + (atdSection === 'log' ? activityLogPanel(c, 'attendance') : '');
+    main = teacherSubpageNav('點名管理', c, getAttendanceSubTitle(atdSection), 'attendance') + teacherAttendanceBlock(c) + (atdSection === 'log' ? activityLogPanel(c, 'attendance') : '');
   } else if (teacherView === 'wellbeing') {
-    main = teacherSubpageNav('問卷管理', c, getWellbeingSubTitle(wbSec(c), c)) + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
+    main = teacherSubpageNav('問卷管理', c, getWellbeingSubTitle(wbSec(c), c), 'wellbeing') + `<div class="block-identifier-tag"><span class="block-tag-code">[Block S]</span> <span class="block-tag-name">問卷管理</span></div>` + teacherWellbeingBlock(c) + (wbSec(c) === 'log' ? activityLogPanel(c, 'survey') : '');
   } else if (teacherView === 'bulletin') {
-    main = teacherSubpageNav('公佈欄管理', c) + teacherBulletinBlock();
+    main = teacherSubpageNav('公佈欄管理', c, '', 'bulletin') + teacherBulletinBlock();
   } else if (teacherView === 'system') {
-    main = teacherSubpageNav('系統運行紀錄', c) + teacherSystemBlock(c);
+    main = teacherSubpageNav('系統運行紀錄', c, '', 'system') + teacherSystemBlock(c);
   } else {
     main = c ? teacherCourse(c) : teacherNoCourse();
   }
@@ -4599,7 +4614,7 @@ async function refreshLineQuota() {
   loadingLineQuota = true;
   render();
   try {
-    const res = await api('/api/action', { action: 'teacher:get-line-quota' });
+    const res = await apiPost('teacher:get-line-quota', {});
     if (res && res.quota) {
       cachedLineQuota = res.quota;
     }
@@ -4800,17 +4815,17 @@ function teacherMessagesBlock() {
 /* ---- 提醒管理專項：LINE 官方帳號狀態與額度（專屬獨立子頁面）---- */
 function teacherLineStatusBlock() {
   ensureLineQuotaLoaded();
-  const q = lineQuotaData;
+  const q = cachedLineQuota;
   const remaining = q ? q.remaining : '...';
   const used = q ? q.used : '...';
-  const limit = q ? (q.limit || 1000) : 1000;
-  const rate = (q && q.limit) ? Math.round((q.used / q.limit) * 100) : 0;
+  const limit = q ? (q.limit >= 0 ? q.limit : '無上限') : 1000;
+  const rate = (q && typeof q.limit === 'number' && q.limit > 0) ? Math.round((q.used / q.limit) * 100) : 0;
   const b = getBotInfo();
 
   let statusBadge = '<span class="status-badge" style="background:#dcfce7;color:#15803d;border:1px solid #86efac;font-weight:700;">🟢 額度充足</span>';
-  if (q && q.remaining <= 100) {
+  if (q && typeof q.remaining === 'number' && q.remaining <= 100) {
     statusBadge = '<span class="status-badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:700;">🔴 額度告急</span>';
-  } else if (q && q.remaining <= 300) {
+  } else if (q && typeof q.remaining === 'number' && q.remaining <= 300) {
     statusBadge = '<span class="status-badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-weight:700;">🟡 額度偏低</span>';
   }
 
@@ -7991,7 +8006,39 @@ function setTeacherView(newView, courseId = null, pushHistory = true) {
     if (c) loadCourseLogs(c.id, true);
     return;
   }
-  if (a === 'back-to-course') { return setTeacherView('course', id || null); }
+  if (a === 'back-to-course') {
+    if (btn.tagName === 'A') e.preventDefault();
+    return setTeacherView('course', id || null);
+  }
+  if (a === 'nav-teacher-view') {
+    if (btn.tagName === 'A') e.preventDefault();
+    const targetView = btn.dataset.view;
+    if (targetView === 'reminders') {
+      reminderSection = 'bindings';
+      remTreeOpen = true;
+      if (teacherView !== 'reminders') return setTeacherView('reminders');
+      try { window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.pathname + window.location.search + '#reminders/bindings'); } catch (_) {}
+      return render();
+    }
+    if (targetView === 'attendance') {
+      atdSection = 'sessions';
+      atdTreeOpen = true;
+      if (teacherView !== 'attendance') return setTeacherView('attendance');
+      try { window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.pathname + window.location.search + '#attendance/sessions'); } catch (_) {}
+      return render();
+    }
+    if (targetView === 'wellbeing') {
+      wbSection = 'cards';
+      wbTreeOpen = true;
+      if (teacherView !== 'wellbeing') return setTeacherView('wellbeing');
+      try { window.history.pushState({ teacherView, currentId: state.currentId }, '', window.location.pathname + window.location.search + '#wellbeing/cards'); } catch (_) {}
+      return render();
+    }
+    if (targetView === 'course') {
+      return setTeacherView('course', id || null);
+    }
+    return setTeacherView(targetView);
+  }
   if (a === 'history-back') { window.history.back(); return; }
   if (a === 'reset-log-filter') { logSearchText = ''; logActionFilter = 'all'; resetLogPages(); return render(); }
   if (a === 'export-logs-csv') { return c && exportLogsCSV(c, btn.dataset.category); }
